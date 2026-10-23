@@ -431,6 +431,10 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/alive") return json(res, 200, { ok: true });
   lastPing = Date.now();
 
+  if (req.method === "GET" && (url.pathname === "/settings" || url.pathname === "/settings.html")) {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    return res.end(fs.readFileSync(path.join(dir, "settings.html")));
+  }
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     return res.end(fs.readFileSync(path.join(dir, "index.html")));

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Joe Settings</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙</text></svg>">
+<style>
+  /* Same palette as the call screen (index.html). */
+  :root {
+    --bg: #1d1712; --panel: #2a211a; --ink: #f4ead9; --muted: #b8a68c;
+    --accent: #d98c3f; --green: #3fae5a; --red: #d9443a; --line: #4a3b2e;
+    --bezel: #0e0c0b; --screen: #221b15;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(circle at 50% 0%, #3a2a1c, var(--bg) 75%);
+    color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif;
+    display: grid; place-items: center; padding: 16px; overflow: hidden;
+  }
+  [hidden] { display: none !important; }
+
+  /* ---------- The tablet ---------- */
+  .tablet {
+    width: min(1000px, 100%); height: min(700px, 100%);
+    background: var(--bezel); border-radius: 34px; padding: 18px;
+    box-shadow: 0 30px 60px rgba(0,0,0,.55), inset 0 0 0 2px #2b2622, inset 0 0 0 4px #000;
+    position: relative; display: flex;
+  }
+  .camera {
+    position: absolute; top: 7px; left: 50%; width: 6px; height: 6px; margin-left: -3px;
+    border-radius: 50%; background: #1f2a33; box-shadow: 0 0 0 1px #2d3741;
+  }
+  .screen {
+    flex: 1; min-width: 0; background: var(--screen); border-radius: 18px; overflow: hidden;
+    display: grid; grid-template-rows: 28px 1fr;
+  }
+  .statusbar {
+    display: flex; align-items: center; justify-content: space-between; padding: 0 18px;
+    font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .statusbar .icons { display: flex; gap: 8px; align-items: center; }
+  .battery { width: 22px; height: 10px; border: 1.5px solid var(--muted); border-radius: 3px; position: relative; }
+  .battery::before { content: ""; position: absolute; inset: 1.5px; right: 4px; background: var(--green); border-radius: 1px; }
+  .battery::after { content: ""; position: absolute; right: -4px; top: 2px; width: 2px; height: 4px; background: var(--muted); border-radius: 0 1px 1px 0; }
+
+  .body { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+
+  /* ---------- Side menu ---------- */
+  nav {
+    border-right: 1px solid var(--line); padding: 10px 10px 16px; display: flex; flex-direction: column; gap: 4px;
+    background: rgba(0,0,0,.12); overflow-y: auto;
+  }
+  nav h1 { font-size: 20px; margin: 6px 10px 14px; }
+  nav button {
+    display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-radius: 12px;
+    background: none; color: var(--ink); font: inherit; font-size: 15px; cursor: pointer; text-align: left;
+  }
+  nav button:hover { background: rgba(255,255,255,.04); }
+  nav button[aria-current="page"] { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
+  nav .ico {
+    width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-size: 16px; flex: none;
+  }
+  nav .count { margin-left: auto; font-size: 12px; color: var(--muted); }
+  nav .spacer { flex: 1; }
+  nav .foot { font-size: 11px; color: var(--muted); padding: 0 12px; line-height: 1.5; }
+
+  /* ---------- Panels ---------- */
+  main { overflow-y: auto; padding: 22px 28px 28px; min-width: 0; }
+  main h2 { margin: 0 0 4px; font-size: 24px; }
+  .lead { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 0 0 20px; max-width: 60ch; }
+  .group-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 22px 0 8px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .item { display: flex; align-items: center; gap: 14px; padding: 12px 16px; }
+  .item + .item { border-top: 1px solid var(--line); }
+  .item .text { flex: 1; min-width: 0; }
+  .item .title { font-size: 16px; font-weight: 600; }
+  .item .sub { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .item.off .title { color: var(--muted); }
+  .item.off .avatar { filter: grayscale(1); opacity: .55; }
+  .avatar {
+    width: 46px; height: 46px; border-radius: 50%; overflow: hidden; flex: none; display: grid; place-items: center;
+    background: linear-gradient(160deg, #8a5a2b, #4e3218); font-weight: 700; font-size: 19px;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 28%; }
+  .chip { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); margin-right: 4px; color: var(--muted); }
+  .chip.warn { color: #ffcf8a; border-color: #6b5530; }
+
+  /* Switch */
+  .switch { appearance: none; width: 46px; height: 26px; border-radius: 13px; background: var(--line); position: relative; cursor: pointer; flex: none; margin: 0; transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  .switch:checked { background: var(--green); }
+  .switch:checked::after { left: 23px; }
+  .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .field { display: flex; gap: 10px; padding: 14px 16px; flex-wrap: wrap; }
+  .field input {
+    flex: 1; min-width: 200px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font-size: 14px;
+  }
+  .btn { padding: 10px 18px; border-radius: 10px; border: 0; cursor: pointer; background: var(--accent); color: #1d1712; font-weight: 600; font-size: 14px; }
+  .msg { font-size: 13px; padding: 0 16px 14px; min-height: 1em; color: var(--muted); }
+  .msg.ok { color: #8fd69f; }
+  .msg.err { color: #ff8a80; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .hint a { color: var(--accent); }
+  .empty { padding: 20px 16px; color: var(--muted); font-size: 14px; }
+
+  /* Small windows: the tablet fills the window, and the menu moves to the top. */
+  @media (max-width: 720px) {
+    body { padding: 0; }
+    .tablet { border-radius: 0; padding: 8px; height: 100%; }
+    .camera { display: none; }
+    .screen { border-radius: 12px; }
+    .body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    nav { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; padding: 8px; }
+    nav h1, nav .spacer, nav .foot, nav .count { display: none; }
+    nav button { width: auto; white-space: nowrap; padding: 8px 12px; }
+    main { padding: 18px 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="tablet">
+  <div class="camera"></div>
+  <div class="screen">
+    <div class="statusbar">
+      <span id="clock"></span>
+      <span class="icons"><span>Call Joe</span><span class="battery"></span></span>
+    </div>
+    <div class="body">
+      <nav aria-label="Settings">
+        <h1>Settings</h1>
+        <button data-panel="friends" aria-current="page"><span class="ico" style="background:#3a2b1d">👥</span>Friends<span class="count" id="friendCount"></span></button>
+        <button data-panel="calls"><span class="ico" style="background:#1f3326">📞</span>Calls</button>
+        <button data-panel="account"><span class="ico" style="background:#2b2433">🔑</span>Account</button>
+        <div class="spacer"></div>
+        <div class="foot">Changes save right away and show up in Call Joe instantly.</div>
+      </nav>
+
+      <main>
+        <!-- Friends: turn each one on or off. Each friend's own page will go here later. -->
+        <section id="panel-friends">
+          <h2>Friends</h2>
+          <p class="lead">Only active friends show on your friends list and call you. Turning a friend off just hides them. Their personality, voice, face and memory of you stay exactly as they are.</p>
+          <div class="group-title">Active</div>
+          <div class="card" id="activeList"></div>
+          <div class="group-title">Off</div>
+          <div class="card" id="offList"></div>
+        </section>
+
+        <section id="panel-calls" hidden>
+          <h2>Calls</h2>
+          <p class="lead">How calls work on this computer.</p>
+          <div class="card">
+            <label class="item">
+              <span class="text">
+                <span class="title">Interrupt by talking</span>
+                <span class="sub" style="display:block">Talk over a friend and they stop to listen. Works best with headphones. The spacebar and ✋ Hush always work.</span>
+              </span>
+              <input type="checkbox" class="switch" id="interruptToggle" aria-label="Interrupt by talking">
+            </label>
+          </div>
+        </section>
+
+        <section id="panel-account" hidden>
+          <h2>Account</h2>
+          <p class="lead">Your friends think with Claude, using your own Anthropic API key. It's saved only on this computer.</p>
+          <div class="card">
+            <div class="item">
+              <span class="text">
+                <span class="title">Anthropic API key</span>
+                <span class="sub" id="keyState">Checking…</span>
+              </span>
+            </div>
+            <div class="field">
+              <input id="keyInput" type="password" placeholder="Paste a new key: sk-ant-..." autocomplete="off">
+              <button class="btn" id="keySave">Save key</button>
+            </div>
+            <div class="msg" id="keyMsg"></div>
+          </div>
+          <p class="hint" style="margin-top:12px">Get or manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
+        </section>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const pref = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+// Tells the Call Joe window to refresh its friends list after a change here.
+const channel = "BroadcastChannel" in window ? new BroadcastChannel("calljoe") : null;
+const announce = (type) => channel?.postMessage({ type });
+
+// ---------- Status bar clock ----------
+const tick = () => ($("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+tick();
+setInterval(tick, 10000);
+
+// ---------- Menu ----------
+function show(panel) {
+  document.querySelectorAll("nav button[data-panel]").forEach((b) => {
+    if (b.dataset.panel === panel) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  });
+  document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== `panel-${panel}`));
+  pref.set("settingsPanel", panel);
+  if (panel === "account") loadKeyState();
+}
+document.querySelector("nav").onclick = (e) => {
+  const b = e.target.closest("button[data-panel]");
+  if (b) show(b.dataset.panel);
+};
+
+// ---------- Friends ----------
+function friendRow(c) {
+  const chips = [
+    c.hasVoice ? "" : `<span class="chip warn">Needs a voice clip</span>`,
+    c.face ? "" : `<span class="chip">Voice calls only</span>`,
+  ].join("");
+  const last = c.lastCall ? `Last call ${esc(c.lastCall)}` : "You haven't called yet";
+  return `
+    <label class="item ${c.active ? "" : "off"}">
+      <span class="avatar">${c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0])}</span>
+      <span class="text">
+        <span class="title">${esc(c.name)}</span>
+        <span class="sub" style="display:block">${chips}${last}${c.calls ? ` · ${c.calls} call${c.calls === 1 ? "" : "s"}` : ""}</span>
+      </span>
+      <input type="checkbox" class="switch" data-id="${esc(c.id)}" ${c.active ? "checked" : ""} aria-label="${esc(c.name)} active">
+    </label>`;
+}
+
+async function loadFriends() {
+  const all = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
+  const on = all.filter((c) => c.active), off = all.filter((c) => !c.active);
+  $("activeList").innerHTML = on.map(friendRow).join("") || `<div class="empty">No active friends. Turn one on below.</div>`;
+  $("offList").innerHTML = off.map(friendRow).join("") || `<div class="empty">Every friend is on.</div>`;
+  $("friendCount").textContent = `${on.length}/${all.length}`;
+}
+
+document.querySelector("#panel-friends").onchange = async (e) => {
+  const box = e.target.closest("input[data-id]");
+  if (!box) return;
+  box.disabled = true;
+  await fetch(`/api/contacts/${box.dataset.id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: box.checked }),
+  }).catch(() => {});
+  announce("contacts-changed");
+  await loadFriends();
+};
+
+// ---------- Calls ----------
+$("interruptToggle").checked = pref.get("interruptByVoice", "on") === "on";
+$("interruptToggle").onchange = (e) => {
+  pref.set("interruptByVoice", e.target.checked ? "on" : "off");
+  announce("prefs-changed");
+};
+
+// ---------- Account ----------
+async function loadKeyState() {
+  const s = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  $("keyState").textContent = s.hasKey ? "A key is saved. Paste a new one below to replace it." : "No key yet. Paste one below.";
+}
+$("keySave").onclick = async () => {
+  const key = $("keyInput").value.trim();
+  if (!key) return;
+  $("keyMsg").className = "msg";
+  $("keyMsg").textContent = "Checking…";
+  const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    $("keyMsg").className = "msg err";
+    $("keyMsg").textContent = out.error || "That didn't work.";
+    return;
+  }
+  $("keyInput").value = "";
+  $("keyMsg").className = "msg ok";
+  $("keyMsg").textContent = "Saved. Your friends will use the new key from the next call.";
+  announce("key-changed");
+  loadKeyState();
+};
+$("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keySave").click(); });
+
+// Stay current if friends change elsewhere (another Settings window, or Claude adding a friend).
+channel && (channel.onmessage = (e) => { if (e.data?.type === "contacts-changed") loadFriends(); });
+window.addEventListener("focus", loadFriends);
+
+show(pref.get("settingsPanel", "friends"));
+loadFriends();
+</script>
+</body>
+</html>
