@@ -228,6 +228,13 @@
   <h2>Your friends</h2>
   <div class="hint">Only active friends show on your friends list and call you. Turning a friend off keeps everything about them, including their memory of you. Turn them back on any time.</div>
   <div id="friendToggles" class="toggles"></div>
+  <label>Calls</label>
+  <div class="toggles">
+    <label class="toggle-row" id="interruptRow">
+      <span class="t-name">Interrupt by talking<br><span class="hint">Talk over a friend and they stop to listen. Works best with headphones. The spacebar and ✋ Hush always work.</span></span>
+      <input type="checkbox" id="interruptToggle" aria-label="Interrupt by talking">
+    </label>
+  </div>
   <div class="row">
     <button class="btn ghost" id="appChangeKey">Change API key</button>
     <button class="btn" id="appClose">Done</button>
@@ -666,6 +673,7 @@ function startListening() {
   rec.continuous = true;
   rec.interimResults = true;
   rec.onresult = (e) => {
+    heardSomething = true;
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
@@ -701,8 +709,87 @@ function sendHeard() {
   if (!text || state !== "listening") return;
   heard = "";
   if (interimLine) { interimLine.classList.remove("interim"); interimLine = null; }
-  joeTurn("/api/say", { text });
+  joeTurn("/api/say", { text, interrupted });
+  interrupted = false;
 }
+
+// ---------- Interrupting ----------
+// While your friend talks, the mic level is watched with echo cancellation on, so their voice coming out of your
+// speakers doesn't count. Talking over them for about a third of a second cuts them off, like on a real call; so
+// do the spacebar and the Hush button. Your next words reach them with a note that they were cut off.
+// If an "interruption" is followed by silence twice in one call, it was probably your speakers, so voice
+// interrupting turns itself off until the next call.
+let vad = null, interrupted = false, heardSomething = false, falseInterrupts = 0;
+const voiceInterruptOn = () => store.get("interruptByVoice", "on") === "on";
+
+async function startInterruptWatch() {
+  stopInterruptWatch();
+  falseInterrupts = 0;
+  if (!voiceInterruptOn()) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+    });
+    audioCtx ??= new AudioContext();
+    const src = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    src.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    let floor = 0.005, loudMs = 0, last = performance.now();
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      const level = Math.sqrt(sum / buf.length);
+      const now = performance.now(), dt = now - last;
+      last = now;
+      // The room's background level: follows quiet moments down quickly and drifts up slowly.
+      floor = level < floor ? level : floor * 1.002 + 0.00002;
+      if (state !== "speaking" || muted || falseInterrupts >= 2) { loudMs = 0; return; }
+      if (level > Math.max(0.02, floor * 6)) {
+        loudMs += dt;
+        if (loudMs >= 350) { loudMs = 0; interrupt(true); }
+      } else {
+        loudMs = Math.max(0, loudMs - dt);
+      }
+    }, 50);
+    vad = { stream, src, timer };
+  } catch {
+    // No mic access for the watcher: the spacebar and Hush still work.
+  }
+}
+
+function stopInterruptWatch() {
+  if (!vad) return;
+  clearInterval(vad.timer);
+  vad.src.disconnect();
+  vad.stream.getTracks().forEach((t) => t.stop());
+  vad = null;
+}
+
+function interrupt(byVoice = false) {
+  if (state !== "speaking") return;
+  turnId += 1; // ignore the rest of what they were saying
+  interrupted = true;
+  heardSomething = false;
+  stopSpeaking();
+  startListening();
+  setState("listening", "Go ahead…");
+  if (byVoice) {
+    setTimeout(() => {
+      if (heardSomething || state === "idle") return;
+      falseInterrupts += 1;
+      if (falseInterrupts >= 2) notify("Voice interrupting is off for this call: it kept hearing your speakers. Headphones fix that, or press the spacebar to cut in.", 10);
+    }, 3000);
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" || e.repeat || /INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName) || state !== "speaking") return;
+  e.preventDefault();
+  interrupt();
+});
 
 // ---------- Buttons ----------
 // Waits (up to about a minute) for the face engine to load, so the first sentence isn't held up.
@@ -750,6 +837,8 @@ async function startCall(video, incoming = false) {
   } else {
     leaveVideo();
   }
+  interrupted = false;
+  startInterruptWatch();
   setState("ringing", incoming ? "Connecting…" : "Ringing…");
   const ringing = incoming ? Promise.resolve() : ring(2);
   startTimer();
@@ -791,6 +880,7 @@ async function hangUp(byFriend = false) {
   turnId += 1;
   stopListening();
   stopSpeaking();
+  stopInterruptWatch();
   clearInterval(timerId);
   clearInterval(idleTimer);
   setState("idle", `Hanging up… ${who()}'s jotting down notes`);
@@ -801,11 +891,7 @@ async function hangUp(byFriend = false) {
 }
 $("hangBtn").onclick = () => hangUp();
 
-$("hushBtn").onclick = () => {
-  turnId += 1; // ignore the rest of what they were saying
-  stopSpeaking();
-  startListening();
-};
+$("hushBtn").onclick = () => interrupt();
 
 $("muteBtn").onclick = () => {
   muted = !muted;
@@ -1106,8 +1192,10 @@ async function openAppSettings() {
       <span class="t-state">${c.active ? "Active" : "Off"}</span>
       <input type="checkbox" data-id="${esc(c.id)}" ${c.active ? "checked" : ""} aria-label="${esc(c.name)} active">
     </label>`).join("") || `<div class="hint">No friends yet.</div>`;
+  $("interruptToggle").checked = voiceInterruptOn();
   $("appDialog").showModal();
 }
+$("interruptToggle").onchange = (e) => store.set("interruptByVoice", e.target.checked ? "on" : "off");
 $("friendToggles").onchange = async (e) => {
   const box = e.target.closest("input[data-id]");
   if (!box) return;

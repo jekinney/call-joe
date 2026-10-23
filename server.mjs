@@ -564,9 +564,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/say") {
-    const { text } = await readBody(req);
+    const { text, interrupted } = await readBody(req);
     if (!call) return json(res, 400, { error: "Not in a call." });
-    call.messages.push({ role: "user", content: String(text || "").slice(0, 4000) });
+    const said = String(text || "").slice(0, 4000);
+    call.messages.push({
+      role: "user",
+      // They talked over the friend, who stopped mid-sentence, so the rest of the friend's last reply went unheard.
+      content: interrupted ? `(Your buddy cut in while you were still talking, so they didn't hear the rest of what you were saying.) ${said}` : said,
+    });
     return streamReply(res);
   }
 
