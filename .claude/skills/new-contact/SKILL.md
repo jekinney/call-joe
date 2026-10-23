@@ -69,6 +69,7 @@ Show the user the draft and revise it until they approve. Keep it to about 250â€
 - Open `data/faces/<name>.png` with the Read tool and look at the crop. It should be head and shoulders, with the face centered and not cut off. If the crop is bad or the tool warned that no face was found, tell the user and ask for a better picture.
 - If the tool said the voice clip was short (under 10 seconds), suggest a longer one.
 - Run `list` and show the user the new friend.
+- If the voice clip or picture came from somewhere that requires credit (like a Creative Commons Attribution clip), add it to `docs/credits.md`.
 
 ## 7. Wrap up
 

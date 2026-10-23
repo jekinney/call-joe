@@ -35,6 +35,7 @@ Open Claude Code in this folder and type `/new-contact`, then give Claude a name
 - `voice/` — the Chatterbox installer and its local voice server.
 - `video/` — the Ditto installer, the face server for video calls, and the speed-ups that make it fast enough to run live.
 - `data/` — your API keys, each friend's memory notes and call logs (`data/contacts/<id>/`), voice samples and face pictures. Never committed.
+- `docs/credits.md` — where each friend's voice clip and picture came from, and their licenses.
 - `docs/building-a-contact.md` — how to add a friend, with Claude or by hand.
 - `docs/plan-contacts.md` — the original plan for more friends.
 - `docs/session-notes.md` — how Call Joe was built, the decisions behind it, and the rules for keeping every friend themselves as they learn.
