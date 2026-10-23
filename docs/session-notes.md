@@ -56,7 +56,7 @@ These rules started with Joe and now apply to every friend. Joe has to stay the 
 
 - A full video call hasn't been tested with a live conversation yet. The video pieces were tested together: Chatterbox voice into Ditto face, inside the app.
 - More friends: built. Add them with `/new-contact`.
-- George Walker, Rosa's husband: to be built next and linked to Rosa (`link rosa george --relation "your husband" --back "your wife"`). He's a Vietnam-era Navy AMH who worked on A-6 Intruders: grumpy, sarcastic, a teddy bear at heart, a big Vikings fan, conservative, and he swears. He calls a few times a week to talk about the game. His picture was pasted in chat but not saved as a file, so the user needs to provide it as a file.
+- George Walker, Rosa's husband: built October 23, 2026, and linked to Rosa. Voice clips from movies and celebrity soundboards were turned down (real people who didn't agree). His voice is a CC0 narration by a Freesound voice actor.
 - Rosa's voice was cloned from a singing clip. If it sounds off, replace it with a talking clip (`voice rosa <clip>`).
 - Incoming calls: built. Each friend has a "calls you" setting (never / now and then / often). While the app is open and you're not on a call, they ring at random: about every 3 hours or every hour, never 9 PM to 8 AM, and not within 45 minutes of your last call. Answer, answer with video, or decline. Unanswered calls show as "Missed call" on the friends list. On an incoming call, the friend speaks first and says why they called. Rosa is set to "now and then". Friends can only call while the app window is open.
 
