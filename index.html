@@ -67,6 +67,15 @@
 
   /* App settings: an Active switch per friend */
   .toggles { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  /* Friends menu: slides in from the left, like a tablet side menu. Tap outside it to close. */
+  #appDialog {
+    position: fixed; inset: 0 auto 0 0; margin: 0; height: 100vh; max-height: 100vh; width: min(360px, 88vw);
+    border-radius: 0 16px 16px 0; border-left: 0; animation: slideIn .22s ease-out;
+  }
+  #appDialog[open] { display: flex; flex-direction: column; }
+  #appDialog .toggles { flex: 1; overflow-y: auto; }
+  @keyframes slideIn { from { transform: translateX(-100%); } to { transform: none; } }
+  #menuBtn { font-size: 24px; }
   .toggle-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
   .toggle-row .c-avatar { width: 38px; height: 38px; font-size: 16px; }
   .toggle-row .t-name { flex: 1; }
@@ -168,6 +177,7 @@
 </head>
 <body>
 <header>
+  <button class="icon-btn" id="menuBtn" title="Your friends: turn them on or off">☰</button>
   <button class="icon-btn" id="backBtn" title="Back to your friends" hidden>‹ Friends</button><span></span>
   <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
 </header>
@@ -215,8 +225,7 @@
 </div>
 
 <dialog id="appDialog">
-  <h2>Settings</h2>
-  <label>Your friends</label>
+  <h2>Your friends</h2>
   <div class="hint">Only active friends show on your friends list and call you. Turning a friend off keeps everything about them, including their memory of you. Turn them back on any time.</div>
   <div id="friendToggles" class="toggles"></div>
   <div class="row">
@@ -334,6 +343,7 @@ function setState(s, text) {
   $("muteCtl").hidden = !inCall;
   $("switchCtl").hidden = !inCall;
   $("backBtn").hidden = inCall || $("callScreen").hidden;
+  $("menuBtn").hidden = !$("callScreen").hidden;
   $("hushCtl").hidden = s !== "speaking";
   $("stage").hidden = !videoMode;
 }
@@ -1017,6 +1027,7 @@ async function showHome() {
   $("callScreen").hidden = true;
   $("home").hidden = false;
   $("backBtn").hidden = true;
+  $("menuBtn").hidden = false;
   const all = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
   const list = all.filter((c) => c.active);
   $("contactList").innerHTML = list.map((c) => `
@@ -1107,7 +1118,14 @@ $("friendToggles").onchange = async (e) => {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: box.checked }),
   });
 };
-$("appClose").onclick = () => { $("appDialog").close(); showHome(); };
+$("appClose").onclick = () => $("appDialog").close();
+$("appDialog").onclose = () => showHome();
+// Tapping the dimmed area outside the menu closes it.
+$("appDialog").onclick = (e) => {
+  const r = $("appDialog").getBoundingClientRect();
+  if (e.clientX > r.right) $("appDialog").close();
+};
+$("menuBtn").onclick = openAppSettings;
 $("appChangeKey").onclick = () => { $("appDialog").close(); $("keyDialog").showModal(); };
 
 fetch("/api/status").then((r) => r.json()).then((s) => {
