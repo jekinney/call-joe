@@ -144,6 +144,98 @@ Add these to the checks below:
 | `best-friends` | Nearly everything, up to date | A lot, minus confidences | Often |
 | `spouse` | Everything (same household) | Whatever the role allows, minus confidences | Often |
 
+## Sharing odds (proposed; numbers to confirm with the user)
+
+News travels by **dice rolls in code, not by asking the model to "share 40% of the time"**, since language models are bad at probabilities. The model tags the news, the code rolls, and the model phrases whatever passed.
+
+### Base rates (from the user, October 23, 2026)
+| News type | To the sender's other best friends | To regular friends | To any other connection |
+|---|---|---|---|
+| Not a secret | 70% | 40% | 10% |
+| A secret ("don't tell anyone") | **25% (suggested; the user said "highest", with no number)** | 10% | 0%, never |
+
+### Adjustments
+- **Importance:** big ×1.3 (capped at 95%), normal ×1, small ×0.4.
+- **Discretion** (the friend's preset): Vault ×0.3, Normal ×1, Chatty ×1.3, Town gossip ×1.6. Capped at 95%.
+- **Delay before it arrives:** best friends 0–1 days, friends 1–4 days, distant 7–21 days. Store an `arrives` date; show it only after that date.
+- **Hops:** secrets never go past one hop. Other news is ×0.3 per extra hop, and stops at 3 hops.
+- **Fuzziness:** each hop, and any connection weaker than best friends, drops detail. This is handled in the phrasing prompt.
+- **Who told:** best friends usually say where they heard it ("Joe told me"). Others stay vague ("I heard…").
+
+### Overrides (always win)
+1. **"Just between us"** (or "don't tell anyone, I mean it", or "this stays between us"): 0%, always, whatever the settings.
+2. **Never travels:** health and mental health, self-harm or crisis disclosures, sexuality, pregnancy (until announced), legal trouble, money problems, and anything about a third person's private life.
+3. **Secret slips are off by default.** It's a per-friend switch ("Rosa sometimes lets secrets slip"). When off, secrets are 0% to everyone.
+4. **Anything that slipped is visible** to the user in "What <friend> has heard." It's never hidden.
+
+### Settings shape (contact.json)
+```json
+"sharing": {
+  "preset": "chatty",
+  "secretSlips": false,
+  "rates": { "bestFriends": 0.70, "friends": 0.40, "others": 0.10 },
+  "secretRates": { "bestFriends": 0.25, "friends": 0.10, "others": 0.0 }
+}
+```
+`rates` and `secretRates` are only written when the user changes them under "Advanced". Otherwise they come from the preset.
+
+### Rolls are saved
+Each news item gets an id. Each roll is stored as (item, receiver) → passed or failed, plus the arrival date, so a later call never rerolls the same item until it eventually leaks.
+
+## Prompts for the sharing system
+
+### Prompt 1: tag the news (after each call, Haiku)
+Input: the call transcript and the sender's updated notes. Output: JSON only.
+
+```
+You read a phone call between {{sender}} and their buddy, and list each piece of news
+about the buddy (and about {{sender}}'s own life) that could ever travel to other people.
+
+For each item, output:
+- id: a short stable slug (same news on a later call = same id)
+- about: "buddy" or "sender"
+- text: one plain sentence, as {{sender}} would tell it
+- importance: "big" (births, deaths, weddings, engagements, new jobs, moves, big purchases),
+  "normal", or "small" (moods, minor complaints, everyday stuff)
+- secret: true if the buddy (or {{sender}}) asked to keep it quiet, said it in confidence,
+  or it's obviously private
+- absolute: true if they said "just between us", "I mean it, don't tell anyone",
+  or similar strong words
+- protected: true if it's about health, mental health, self-harm or a crisis, sexuality,
+  an unannounced pregnancy, legal trouble, money problems, or a third person's private life
+
+Only list real news from this call. Don't invent anything. If there's nothing, output [].
+```
+
+### Prompt 2: phrase what got through (per receiver, Haiku)
+Input: only the items that passed the dice roll and the overrides, plus the connection type, the hop count, and the receiver's earlier "heard" notes.
+
+```
+You update what {{receiver}} has heard secondhand. These items reached {{receiver}}
+from {{sender}} ({{connection}}, {{hops}} hop(s) away). Rewrite them the way
+{{receiver}} would remember hearing them:
+- Best friends: fairly detailed, and {{receiver}} knows it came from {{sender}}.
+- Friends: the gist, with fewer specifics. Usually "{{sender}} mentioned…".
+- Distant connections or 2+ hops: vague, and possibly a little off. "I heard somewhere that…".
+Keep earlier notes unless the new items replace them. Short '- ' bullet lines, at most
+25 lines. Output only the notes.
+```
+
+### Prompt 3: suggest the preset (once, when the friend is created)
+Added to the persona-writing step in the "New friend" wizard:
+
+```
+Also suggest how {{name}} handles news, based on their personality:
+"vault" (keeps everything to themselves), "normal", "chatty" (loves to talk and share),
+or "gossip" (can't help passing things on). Reply with the preset and one short reason
+the user will see, like "Chatty: Rosa loves catching everyone up."
+```
+
+### On the "New friend" screen
+- **One choice, pre-selected by Prompt 3:** "How does {{name}} handle news?" with Vault, Normal, Chatty or Town gossip.
+- **"Advanced ▸"** opens the sliders: the three sharing rates, the three secret rates, the secret-slips switch, and delay.
+- **Not locked like the personality.** These can be changed later in the friend's settings. (To confirm with the user.)
+
 ## How the husband/wife connection fits
 
 `spouse` is the same mechanism with the opposite settings:
