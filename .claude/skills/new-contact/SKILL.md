@@ -63,6 +63,16 @@ Show the user the draft and revise it until they approve. Keep it to about 250â€
    - `create` takes `--voice-start <seconds>` to skip an intro or music at the start of the clip. A clip with under 5 seconds of speech is refused and nothing is created; ask for a longer clip.
    - The default brain is Sonnet. Add `--model haiku` or `--model opus` to `create` if the user asks.
 
+## 5b. Link family (if any)
+
+If the new friend belongs with an existing friend, like a spouse, and the user wants them to know what was said on each other's calls, link them:
+
+```
+video\.venv\Scripts\python.exe tools\contact.py link <new-id> <other-id> --relation "your husband" --back "your wife"
+```
+
+Also make sure both personas mention each other. If the other friend was built first and doesn't mention the new one, ask the user before updating their persona with `persona`; their memory is kept.
+
 ## 6. Check the result
 
 - Open `data/faces/<name>.png` with the Read tool and look at the crop. It should be head and shoulders, with the face centered and not cut off. If the crop is bad or the tool warned that no face was found, tell the user and ask for a better picture.
@@ -83,5 +93,5 @@ Then ask whether to save the new friend's persona to GitHub. If yes, commit only
 ## Rules that always apply
 
 - One friend at a time.
-- Never edit another friend's persona or anything in `data/contacts/` (memory and call logs) while building a new one.
+- Never edit another friend's persona or anything in `data/contacts/` (memory and call logs) while building a new one. The one exception: linking family (step 5b), and changing the other friend's persona only with the user's OK.
 - To change an existing friend's personality, use `tools\contact.py persona <id> <file>`, but only when the user asks. It takes effect on their next call, and their memory is kept.

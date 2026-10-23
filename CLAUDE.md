@@ -12,7 +12,7 @@ Each friend has to stay the same while they keep learning about the user. In any
 
 - `contacts/<id>/persona.md` is a friend's identity. Only change it when the user asks.
 - Keep the memory system working: `data/contacts/<id>/memory.json`, the Opus memory writer in `hangUp()` in `server.mjs`, and the memory section of `systemPrompt()`.
-- Never delete, reset or mix up memory in `data/contacts/`. Friends don't know about each other. If the memory format changes, convert the existing notes. To retire a friend, use `tools/contact.py remove`, which archives them.
+- Never delete, reset or mix up memory in `data/contacts/`. Friends don't know about each other, unless they're linked (`tools/contact.py link`, for a couple like Rosa and George). Linked friends only read each other's notes; they never write to them. If the memory format changes, convert the existing notes. To retire a friend, use `tools/contact.py remove`, which archives them.
 - A new model or voice must use the same persona and the same memory notes.
 - Every friend's voice is cloned by Chatterbox from a voice clip (`cbVoice`). There are no other voice services, and a friend never exists without a voice.
 - Never commit `data/`. It holds API keys, the user's private notes, voice samples and face pictures.

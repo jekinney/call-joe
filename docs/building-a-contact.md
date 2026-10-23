@@ -44,12 +44,25 @@ video\.venv\Scripts\python.exe tools\contact.py list
   - `persona <id> <file>` replaces their personality. It takes effect on the next call, and their memory is kept.
   - `remove <id>` archives the friend to `data/removed/`. Nothing is deleted.
 
+## Linking friends (like a married couple)
+
+Friends normally don't know about each other. Two friends who belong together, like spouses, can be linked:
+
+```
+video\.venv\Scripts\python.exe tools\contact.py link rosa george --relation "your husband" --back "your wife"
+```
+
+- `--relation` is what the second friend is to the first ("George is your husband"). `--back` is the reverse ("Rosa is your wife").
+- From their next call on, each one gets the other's notes about you, like a couple talking it over at dinner. They know they weren't on each other's calls.
+- `unlink rosa george` removes the link both ways. Their own memories stay as they are.
+- Their personas should also mention each other (for example, Rosa's says George is her husband), so they can talk about each other even before you've called both.
+
 ## Where a friend lives
 
 | File | What it is | In GitHub? |
 |---|---|---|
 | `contacts/<id>/persona.md` | Who they are, plus the shared call rules | Yes |
-| `data/contacts/<id>/contact.json` | Name and settings: brain (model), voice, face | No |
+| `data/contacts/<id>/contact.json` | Name, settings (brain, voice, face) and links to other friends | No |
 | `data/contacts/<id>/memory.json` | What they remember about you, written after each call | No |
 | `data/contacts/<id>/call-log.txt` | Every call's transcript | No |
 | `data/voices/<name>.wav` | The cleaned-up voice clip | No |
@@ -65,7 +78,7 @@ video\.venv\Scripts\python.exe tools\contact.py list
 These rules apply to every friend, not just Joe (also in `CLAUDE.md` and `docs/session-notes.md`):
 
 - A friend's persona only changes when you ask.
-- Their memory is never reset, edited or shared with another friend. Friends don't know about each other.
+- Their memory is never reset or edited. It's only shared with a friend they're linked to (like a spouse). Otherwise, friends don't know about each other.
 - Changing their model, voice or face doesn't change who they are.
 - After a change, a test call should show they still sound like themselves and remember your last call.
 

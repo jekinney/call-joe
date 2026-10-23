@@ -16,6 +16,11 @@ Commands:
     face <id> picture.(jpg|png|...) [--name "Face name"]
                                           crop a picture around the face to a 540x720 portrait in
                                           data/faces, and set it as the friend's video face
+    link <id> <other-id> --relation "your husband" --back "your wife"
+                                          link two friends (like a married couple): each knows the other and
+                                          hears what you told them on their own calls; --relation is what
+                                          <other-id> is to <id>, --back is what <id> is to <other-id>
+    unlink <id> <other-id>                remove a link both ways
     remove <id>                           archive a friend to data/removed/ (never deletes memory)
 
 A friend's id is short and lowercase, like "joe" or "uncle-earl". Their memory and call logs are never
@@ -116,7 +121,9 @@ def cmd_list(args):
         s = info.get("settings", {})
         mem = read_json(os.path.join(CONTACTS, cid, "memory.json"), {"calls": 0})
         voice = s.get("cbVoice") if s.get("cbVoice") and os.path.isfile(os.path.join(VOICES, f"{s['cbVoice']}.wav")) else "NEEDS A CLIP"
-        print(f"{cid:16s} {info['name']:24s} calls: {mem.get('calls', 0):<4} voice: {voice:20s} face: {s.get('face') or '-'}")
+        links = ", ".join(f"{l['relation']}: {l['id']}" for l in info.get("links", []))
+        print(f"{cid:16s} {info['name']:24s} calls: {mem.get('calls', 0):<4} voice: {voice:20s} face: {s.get('face') or '-'}"
+              + (f"  linked ({links})" if links else ""))
 
 
 def cmd_show(args):
@@ -253,6 +260,37 @@ def cmd_face(args):
     print(f'Face "{name}" saved to data/faces/{name}.png and set for {info["name"]}.')
 
 
+def set_link(info, other_id, relation):
+    links = [l for l in info.get("links", []) if l["id"] != other_id]
+    if relation:
+        links.append({"id": other_id, "relation": relation})
+    if links:
+        info["links"] = links
+    else:
+        info.pop("links", None)
+
+
+def cmd_link(args):
+    if args.id == args.other:
+        fail("A friend can't be linked to themselves.")
+    a, b = load(args.id), load(args.other)
+    set_link(a, args.other, args.relation.strip())
+    set_link(b, args.id, args.back.strip())
+    save(args.id, a)
+    save(args.other, b)
+    print(f'Linked: {b["name"]} is {args.relation.strip()} to {a["name"]}, and {a["name"]} is {args.back.strip()} to {b["name"]}.')
+    print("From their next calls on, each one hears what you told the other.")
+
+
+def cmd_unlink(args):
+    a, b = load(args.id), load(args.other)
+    set_link(a, args.other, None)
+    set_link(b, args.id, None)
+    save(args.id, a)
+    save(args.other, b)
+    print(f'Unlinked {a["name"]} and {b["name"]}. Their memories stay as they are.')
+
+
 def cmd_remove(args):
     info = load(args.id)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
@@ -277,6 +315,10 @@ def main():
     s = sub.add_parser("voice"); s.add_argument("id"); s.add_argument("clip"); s.add_argument("--start", type=float, default=0)
     s.add_argument("--name"); s.set_defaults(fn=cmd_voice)
     s = sub.add_parser("face"); s.add_argument("id"); s.add_argument("picture"); s.add_argument("--name"); s.set_defaults(fn=cmd_face)
+    s = sub.add_parser("link"); s.add_argument("id"); s.add_argument("other")
+    s.add_argument("--relation", required=True, help='what <other> is to <id>, like "your husband"')
+    s.add_argument("--back", required=True, help='what <id> is to <other>, like "your wife"'); s.set_defaults(fn=cmd_link)
+    s = sub.add_parser("unlink"); s.add_argument("id"); s.add_argument("other"); s.set_defaults(fn=cmd_unlink)
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
     args = p.parse_args()
     args.fn(args)

@@ -162,7 +162,22 @@ function systemPrompt(c) {
     ? `What you remember about your buddy from past calls:\n${memory.notes}`
     : "This is the first time this buddy has ever called you. You don't know their name or anything about them yet.";
   const last = memory.lastCall ? `Your last call with them was ${memory.lastCall}.` : "";
-  return `${persona}\n\n# Memory\n${mem}\n\n# Right now\nIt's ${now} where you both live. ${last}`;
+  return `${persona}\n\n# Memory\n${mem}${linkedNews(c)}\n\n# Right now\nIt's ${now} where you both live. ${last}`;
+}
+
+// Linked friends (like a married couple) share what the buddy told each of them, the way they'd talk it over at
+// dinner. Links are set with `tools/contact.py link` and stored in contact.json as [{ id, relation }]. Friends
+// without links get nothing here, so they still only know their own calls.
+function linkedNews(c) {
+  return (c.links ?? []).map(({ id, relation }) => {
+    const other = loadContact(id);
+    if (!other) return "";
+    const them = firstName(other);
+    const heard = other.memory.notes
+      ? `What ${them} has told you about your buddy, from their own calls with ${them} (the last one was ${other.memory.lastCall}):\n${other.memory.notes}`
+      : `Your buddy hasn't talked with ${them} on the phone yet.`;
+    return `\n\n# ${other.name}, ${relation}\n${other.name} is ${relation}. Your buddy is ${them}'s friend too and talks with ${them} on separate calls, and the two of you tell each other about those calls. You can mention what ${them} told you, but you weren't on those calls yourself.\n${heard}`;
+  }).join("");
 }
 
 const textOf = (content) =>
