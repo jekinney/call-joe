@@ -53,6 +53,7 @@ video\.venv\Scripts\python.exe tools\contact.py link rosa george --relation "you
 ```
 
 - `--relation` is what the second friend is to the first ("George is your husband"). `--back` is the reverse ("Rosa is your wife").
+- The relation words pick the **connection rules** from `contacts/_connections/`: married, parent-child, in-laws, siblings, grandparent, friends, coworkers or neighbors. Similar relationships share one ("mother-in-law" and "son-in-law" both use in-laws). Add `--type <name>` to pick one directly, or add a new file for a new kind of relationship.
 - After each call, news about you travels to the connected friend, filtered by **their role in your life** (see below) and how they're connected. It's saved as what they've "heard" (`data/contacts/<id>/heard-from/`), never as the other friend's raw notes. Anything you ask to keep private stays private.
 - `unlink rosa george` removes the link both ways. Their own memories stay as they are.
 - Their personas should also mention each other (for example, Rosa's says George is her husband), so they can talk about each other even before you've called both.

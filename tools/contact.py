@@ -17,10 +17,12 @@ Commands:
     face <id> picture.(jpg|png|...) [--name "Face name"]
                                           crop a picture around the face to a 540x720 portrait in
                                           data/faces, and set it as the friend's video face
-    link <id> <other-id> --relation "your husband" --back "your wife"
-                                          link two friends (like a married couple): each knows the other and
-                                          hears what you told them on their own calls; --relation is what
-                                          <other-id> is to <id>, --back is what <id> is to <other-id>
+    link <id> <other-id> --relation "your husband" --back "your wife" [--type married]
+                                          connect two friends: each knows the other and hears news about you
+                                          from the other's calls; --relation is what <other-id> is to <id>,
+                                          --back is what <id> is to <other-id>. The relation words pick the
+                                          connection rules in contacts/_connections/ (husband -> married,
+                                          mother-in-law -> in-laws); --type picks one directly
     unlink <id> <other-id>                remove a link both ways
     role <id> <role>                      set the friend's role in your life, one of contacts/_roles/ (friend,
                                           best-friend, spouse, mom, dad, sister, brother, grandparent,
@@ -281,10 +283,10 @@ def cmd_face(args):
     print(f'Face "{name}" saved to data/faces/{name}.png and set for {info["name"]}.')
 
 
-def set_link(info, other_id, relation):
+def set_link(info, other_id, relation, kind=None):
     links = [l for l in info.get("links", []) if l["id"] != other_id]
     if relation:
-        links.append({"id": other_id, "relation": relation})
+        links.append({"id": other_id, "relation": relation, **({"type": kind} if kind else {})})
     if links:
         info["links"] = links
     else:
@@ -295,8 +297,11 @@ def cmd_link(args):
     if args.id == args.other:
         fail("A friend can't be linked to themselves.")
     a, b = load(args.id), load(args.other)
-    set_link(a, args.other, args.relation.strip())
-    set_link(b, args.id, args.back.strip())
+    if args.type and not os.path.isfile(os.path.join(PERSONAS, "_connections", f"{args.type}.md")):
+        kinds = sorted(f[:-3] for f in os.listdir(os.path.join(PERSONAS, "_connections")) if f.endswith(".md"))
+        fail(f'"{args.type}" is not a connection type. Pick one of: {", ".join(kinds)}.')
+    set_link(a, args.other, args.relation.strip(), args.type)
+    set_link(b, args.id, args.back.strip(), args.type)
     save(args.id, a)
     save(args.other, b)
     print(f'Linked: {b["name"]} is {args.relation.strip()} to {a["name"]}, and {a["name"]} is {args.back.strip()} to {b["name"]}.')
@@ -402,7 +407,9 @@ def main():
     s = sub.add_parser("face"); s.add_argument("id"); s.add_argument("picture"); s.add_argument("--name"); s.set_defaults(fn=cmd_face)
     s = sub.add_parser("link"); s.add_argument("id"); s.add_argument("other")
     s.add_argument("--relation", required=True, help='what <other> is to <id>, like "your husband"')
-    s.add_argument("--back", required=True, help='what <id> is to <other>, like "your wife"'); s.set_defaults(fn=cmd_link)
+    s.add_argument("--back", required=True, help='what <id> is to <other>, like "your wife"')
+    s.add_argument("--type", help="connection rules to use (a file in contacts/_connections/); normally picked from the relation words")
+    s.set_defaults(fn=cmd_link)
     s = sub.add_parser("unlink"); s.add_argument("id"); s.add_argument("other"); s.set_defaults(fn=cmd_unlink)
     s = sub.add_parser("role"); s.add_argument("id"); s.add_argument("role"); s.set_defaults(fn=cmd_role)
     s = sub.add_parser("knows"); s.add_argument("id"); s.add_argument("--nfl-team"); s.add_argument("--home")

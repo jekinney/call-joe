@@ -76,6 +76,8 @@ If the new friend belongs with an existing friend, like a spouse, and the user w
 video\.venv\Scripts\python.exe tools\contact.py link <new-id> <other-id> --relation "your husband" --back "your wife"
 ```
 
+The relation words pick reusable connection rules from `contacts/_connections/` (married, parent-child, in-laws, siblings, grandparent, friends, coworkers, neighbors), so similar relationships share the same rules. Add `--type <name>` only if the words don't match the right one.
+
 Also make sure both personas mention each other. If the other friend was built first and doesn't mention the new one, ask the user before updating their persona with `persona`; their memory is kept.
 
 ## 6. Check the result

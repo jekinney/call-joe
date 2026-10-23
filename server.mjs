@@ -207,15 +207,39 @@ const roleRules = (c) => {
 };
 const heardFromPath = (receiverId, senderId) => path.join(contactsDir, receiverId, "heard-from", `${senderId}.md`);
 
+// Connection rules: reusable prompts for how two connected friends relate and what they pass along, one file per
+// kind of connection in contacts/_connections/. Similar relationships share a file: the relation words pick it
+// ("your wife" -> married, "your mother-in-law" -> in-laws), unless the link names a type. More specific words
+// come first, so "mother-in-law" isn't read as "mother".
+const connectionsDir = path.join(personasDir, "_connections");
+const CONNECTION_WORDS = [
+  ["in-laws", /in-law/],
+  ["grandparent", /grand/],
+  ["married", /husband|wife|spouse|partner|fianc/],
+  ["parent-child", /\b(mom|mother|dad|father|parent|son|daughter|child|kid|stepmom|stepdad)\b/],
+  ["siblings", /brother|sister|sibling/],
+  ["coworkers", /cowork|colleague|boss/],
+  ["neighbors", /neighbo/],
+  ["friends", /friend|buddy|pal/],
+];
+const connectionType = (link) =>
+  link.type ?? CONNECTION_WORDS.find(([, words]) => words.test(String(link.relation).toLowerCase()))?.[0] ?? "friends";
+function connectionRules(link, them) {
+  const file = path.join(connectionsDir, `${connectionType(link)}.md`);
+  if (!fs.existsSync(file)) return "";
+  return fs.readFileSync(file, "utf8").replaceAll("{{them}}", them).replace(/^# .*\n+/, "").replace(/^## /gm, "### ").trim();
+}
+
 function connectionNews(c) {
-  return (c.links ?? []).map(({ id, relation }) => {
-    const other = loadContact(id);
+  return (c.links ?? []).map((link) => {
+    const other = loadContact(link.id);
     if (!other) return "";
     const them = firstName(other);
     let heard = "";
-    try { heard = fs.readFileSync(heardFromPath(c.id, id), "utf8").trim(); } catch {}
-    return `\n\n# ${other.name}, ${relation}\n${other.name} is ${relation}. Your buddy talks with ${them} too, on separate calls. You weren't on those calls, and you only know what ${them} has passed along.\n` +
-      (heard ? `What ${them} has told you about your buddy:\n${heard}` : `${them} hasn't passed along anything about your buddy yet.`);
+    try { heard = fs.readFileSync(heardFromPath(c.id, link.id), "utf8").trim(); } catch {}
+    return `\n\n# ${other.name}, ${link.relation}\n${other.name} is ${link.relation}. Your buddy talks with ${them} too, on separate calls. You weren't on those calls, and you only know what ${them} has passed along.\n` +
+      `${connectionRules(link, them)}\n` +
+      (heard ? `### What ${them} has told you about your buddy\n${heard}` : `${them} hasn't passed along anything about your buddy yet.`);
   }).join("");
 }
 
@@ -225,11 +249,13 @@ async function passNews(sender, transcript) {
   for (const { id } of sender.links ?? []) {
     const receiver = loadContact(id);
     if (!receiver) continue;
-    const relation = receiver.links?.find((l) => l.id === sender.id)?.relation ?? "a friend";
+    const link = receiver.links?.find((l) => l.id === sender.id) ?? { id: sender.id, relation: "a friend" };
+    const relation = link.relation;
     const file = heardFromPath(receiver.id, sender.id);
     let before = "";
     try { before = fs.readFileSync(file, "utf8").trim(); } catch {}
     const s = firstName(sender), r = firstName(receiver);
+    const rules = connectionRules(link, s).replaceAll("your buddy", "the buddy");
     try {
       const msg = await getClient().messages.create({
         model: NEWS_MODEL,
@@ -238,8 +264,9 @@ async function passNews(sender, transcript) {
         system:
           `You decide what news about a person (the "buddy") would naturally travel from one of their friends to another, the way people really talk. ` +
           `${sender.name} just had a phone call with the buddy. To ${receiver.name}, ${sender.name} is ${relation}. ` +
-          `${receiver.name}'s role in the buddy's life:\n${roleRules(receiver) || "A friend."}\n\n` +
-          `Update the notes of what ${r} has heard from ${s} about the buddy. Include only what ${s} would plausibly pass along to ${r}, given their connection and ${r}'s role. Phrase it the way ${r} would have heard it (like "${s} said Jason's been working long hours"), not as a transcript. ` +
+          `How much passes between them depends mostly on their connection:\n${rules || "They're friends."}\n\n` +
+          `${receiver.name}'s role in the buddy's life can only narrow that:\n${roleRules(receiver) || "A friend."}\n\n` +
+          `Update the notes of what ${r} has heard from ${s} about the buddy. Include what ${s} would plausibly pass along to ${r}, and keep the concrete details that would come up in conversation, like names of people and pets, places, dates and plans. Phrase it the way ${r} would have heard it (like "${s} said Jason's been working long hours"), not as a transcript. ` +
           `Never include anything the buddy asked to keep private or said in confidence ("don't tell anyone", "between us", "keep this quiet"), or that ${r}'s role says they wouldn't hear. Don't include details ${s} made up about ${s}'s own life. ` +
           `Keep earlier notes unless they're stale or the newest call changed them. Write short plain-text bullet lines starting with '- ', at most 25 lines. Output only the notes. If there's nothing to pass along and no earlier notes, output exactly NONE.`,
         messages: [{ role: "user", content: `Earlier notes:\n${before || "(none)"}\n\nThe newest call between ${s} and the buddy:\n${transcript}` }],
