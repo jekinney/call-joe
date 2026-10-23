@@ -17,7 +17,7 @@ All of this lives in `persona.md`.
 1. `launch.ps1` starts `server.mjs` in the background (if it isn't already running) and opens `index.html` as its own app window in Chrome or Edge.
 2. The browser's speech recognition turns your voice into text and sends it to the server once you pause.
 3. The server sends the call so far to Claude and streams Joe's reply back as he says it.
-4. The page speaks each sentence as soon as it arrives, using either a Windows voice or ElevenLabs.
+4. The page speaks each sentence as soon as it arrives, using a Windows voice, Chatterbox (a free cloned voice made on this PC), or ElevenLabs.
 5. When you hang up, Opus reads the call and updates Joe's memory notes about you in `data/memory.json`. The full transcript goes to `data/call-log.txt`.
 6. The server shuts itself down about 3 minutes after the window closes. If a call was still open, it saves it first.
 
@@ -30,6 +30,7 @@ All of this lives in `persona.md`.
 | **Opus always writes the memory notes** | It happens once per call (about a penny), and good notes are what make Joe remember you well. |
 | **Prompt caching is on, and the system prompt is built once per call** | Every reply resends the whole call. Caching cuts that cost a lot, but only if the system prompt doesn't change mid-call. |
 | **Windows voices are free, and ElevenLabs is optional** | No built-in voice has a southern accent, and ElevenLabs does. If ElevenLabs fails mid-call, Joe switches to a Windows voice so he never goes silent. |
+| **Chatterbox is the free option for a southern voice** | ElevenLabs costs about $11 a month. Chatterbox (MIT license, from Resemble AI) clones a voice from about 15 seconds of audio and runs on the PC's RTX 4080 Super for free. It uses the Turbo model, its own Python 3.11 in `voice/.venv`, and a helper server on port 5175 that Joe's server starts. Voice samples live in `data/voices/`. Only clone voices you have permission to use. |
 | **API keys stay on the server and never reach the page** | The page only receives Joe's text and audio. Keys live in `data/config.json`. |
 | **`data/` is never committed** | It holds API keys, Joe's notes about the user, and call logs. That's private. |
 | **Safety is built into the persona** | Joe drops the jokes and points to 988 or 911 if the user talks about hurting themselves or being in danger. He's honest that he's an AI if sincerely asked. He nudges the user toward their real-life people. |

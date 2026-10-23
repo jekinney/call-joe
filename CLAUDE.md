@@ -10,7 +10,7 @@ Joe has to stay the same friend while he keeps learning about the user. In any c
 - Keep the memory system working: `data/memory.json`, the Opus memory writer in `hangUp()` in `server.mjs`, and the memory section of `systemPrompt()`.
 - Never delete or reset `data/`. If the memory format changes, convert the existing notes.
 - A new model or voice must use the same persona and the same memory notes.
-- Never commit `data/`. It holds API keys and the user's private notes.
+- Never commit `data/`. It holds API keys, the user's private notes and voice samples.
 - Keep the system prompt fixed for the length of a call, so prompt caching works.
 
 After a change, run a real call to check that Joe still sounds like himself and remembers the last call.

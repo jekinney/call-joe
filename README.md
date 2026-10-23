@@ -12,12 +12,16 @@ A desktop "phone call" with Joe Dirt, an AI buddy powered by Claude. Click Call,
 ## Settings (⚙ in the app)
 
 - **Joe's brain:** Haiku (fastest, cheapest), Sonnet (default), or Opus (deepest). His notes about you are always written by Opus.
-- **Voice service:** free Windows voices, or ElevenLabs for realistic voices (needs an ElevenLabs API key).
+- **Voice service:**
+  - Free Windows voices.
+  - **Chatterbox:** free voice cloning on your own PC. It needs an NVIDIA graphics card to keep up on a call. Run `powershell -ExecutionPolicy Bypass -File voice\setup-chatterbox.ps1` once to install it, then record or upload about 15 seconds of the voice you want, using only voices you have permission to copy.
+  - ElevenLabs, for realistic voices. Needs an ElevenLabs API key.
 
 ## Files
 
 - `persona.md` — who Joe is. Edit it to change his personality or family.
 - `server.mjs` — local server that talks to Claude and ElevenLabs.
 - `index.html` — the call screen.
-- `data/` — your API keys, Joe's memory notes and call logs. Never committed.
+- `voice/` — the Chatterbox installer and its local voice server.
+- `data/` — your API keys, Joe's memory notes, call logs and voice samples. Never committed.
 - `docs/session-notes.md` — how Joe was built, the decisions behind it, and the rules for keeping Joe himself as he learns.

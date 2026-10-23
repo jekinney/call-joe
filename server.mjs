@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import { spawn } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,41 @@ let memory = readJson(memoryFile, { notes: "", calls: 0, lastCall: null });
 let client = null;
 let call = null; // { system, messages, started }
 let lastPing = Date.now();
+
+// ---- Chatterbox: free local voice cloning, run by a Python helper on the graphics card ----
+const voicesDir = path.join(dataDir, "voices"); // voice samples to clone; private, never committed
+fs.mkdirSync(voicesDir, { recursive: true });
+const CHATTERBOX_PORT = 5175;
+const chatterboxPython = path.join(dir, "voice", ".venv", "Scripts", "python.exe");
+const chatterboxUrl = `http://127.0.0.1:${CHATTERBOX_PORT}`;
+let chatterbox = null;
+
+const chatterboxHealth = () =>
+  fetch(`${chatterboxUrl}/health`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
+
+async function startChatterbox() {
+  if (chatterbox || !fs.existsSync(chatterboxPython) || (await chatterboxHealth())) return;
+  const log = fs.openSync(path.join(dataDir, "chatterbox.log"), "a");
+  chatterbox = spawn(chatterboxPython, [path.join(dir, "voice", "chatterbox_server.py"), String(CHATTERBOX_PORT), String(PORT)], {
+    cwd: dir, stdio: ["ignore", log, log], windowsHide: true,
+  });
+  chatterbox.on("exit", () => { chatterbox = null; });
+}
+process.on("exit", () => chatterbox?.kill());
+
+async function chatterboxStatus() {
+  if (!fs.existsSync(chatterboxPython)) return { installed: false };
+  const health = await chatterboxHealth();
+  return { installed: true, running: !!(health || chatterbox), ready: !!health?.ready, error: health?.error ?? null, device: health?.device ?? null };
+}
+
+// Voice sample names are plain file names inside data/voices.
+const voiceName = (name) => String(name || "").replace(/[^\w\- ]/g, "").trim().slice(0, 40);
+function voiceFile(name) {
+  const clean = voiceName(name);
+  const file = clean && path.join(voicesDir, `${clean}.wav`);
+  return file && fs.existsSync(file) ? file : null;
+}
 
 function getClient() {
   if (!config.apiKey) return null;
@@ -151,14 +187,28 @@ function readBody(req) {
   });
 }
 
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error("too big")); req.destroy(); } else chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
 function json(res, status, value) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(value));
 }
 
 const server = http.createServer(async (req, res) => {
-  lastPing = Date.now();
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  // The Chatterbox helper checks /api/alive so it can quit when Joe does; that check doesn't keep Joe awake.
+  if (url.pathname === "/api/alive") return json(res, 200, { ok: true });
+  lastPing = Date.now();
 
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -215,8 +265,44 @@ const server = http.createServer(async (req, res) => {
     })));
   }
 
+  // ---- Chatterbox voices ----
+  if (url.pathname === "/api/chatterbox/status") return json(res, 200, await chatterboxStatus());
+  if (req.method === "POST" && url.pathname === "/api/chatterbox/start") {
+    await startChatterbox();
+    return json(res, 200, await chatterboxStatus());
+  }
+  if (req.method === "GET" && url.pathname === "/api/voices") {
+    const names = fs.readdirSync(voicesDir).filter((f) => f.endsWith(".wav")).map((f) => f.slice(0, -4));
+    return json(res, 200, names.sort());
+  }
+  if (req.method === "POST" && url.pathname === "/api/voices") {
+    const name = voiceName(url.searchParams.get("name"));
+    if (!name) return json(res, 400, { error: "Give the voice a name." });
+    const audio = await readRaw(req, 25 * 1024 * 1024).catch(() => null);
+    if (!audio || audio.subarray(0, 4).toString() !== "RIFF") return json(res, 400, { error: "That recording didn't come through. Try again." });
+    fs.writeFileSync(path.join(voicesDir, `${name}.wav`), audio);
+    return json(res, 200, { ok: true, name });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/tts") {
-    const { text, voiceId } = await readBody(req);
+    const { text, voiceId, engine, voice } = await readBody(req);
+    if (engine === "chatterbox") {
+      const file = voiceFile(voice);
+      if (!file) return json(res, 400, { error: "Pick a voice sample for Chatterbox first." });
+      await startChatterbox();
+      const r = await fetch(`${chatterboxUrl}/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: String(text || "").slice(0, 1000), voice_path: file }),
+      }).catch(() => null);
+      if (!r) return json(res, 502, { error: "Chatterbox is still starting up." });
+      if (!r.ok) {
+        const out = await r.json().catch(() => ({}));
+        return json(res, 502, { error: r.status === 503 ? "Chatterbox is still loading." : `Chatterbox had a problem: ${out.error ?? r.status}` });
+      }
+      res.writeHead(200, { "Content-Type": "audio/wav" });
+      return Readable.fromWeb(r.body).pipe(res);
+    }
     if (!config.elevenKey || !voiceId) return json(res, 400, { error: "ElevenLabs isn't set up." });
     const r = await eleven(`/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, config.elevenKey, {
       method: "POST",

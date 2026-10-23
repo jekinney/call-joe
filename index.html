@@ -76,7 +76,10 @@
     width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
     background: var(--bg); color: var(--ink); font-size: 14px;
   }
-  .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+  .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+  dialog { max-height: calc(100vh - 32px); overflow-y: auto; }
+  .script { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 14px; line-height: 1.5; }
+  #cbRecordBtn.recording { background: var(--red); color: #fff; }
   .btn { padding: 9px 16px; border-radius: 8px; border: 0; cursor: pointer; background: var(--accent); color: #1d1712; font-weight: 600; }
   .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
@@ -127,6 +130,7 @@
   <label for="engineSelect">Voice service</label>
   <select id="engineSelect">
     <option value="windows">Windows voices (free)</option>
+    <option value="chatterbox">Chatterbox (free, clones any voice, runs on this PC)</option>
     <option value="eleven">ElevenLabs (realistic, paid)</option>
   </select>
 
@@ -155,6 +159,23 @@
       </div>
     </div>
     <div id="elevenError" class="err"></div>
+  </div>
+
+  <div id="chatterboxVoice" hidden>
+    <div class="hint" id="cbStatus">Checking Chatterbox…</div>
+    <label for="cbSelect">Joe's voice</label>
+    <select id="cbSelect"></select>
+
+    <label>Add a voice to clone</label>
+    <div class="hint">Use a voice you have permission to copy: your own, or a friend or family member who's okay with it. About 15 seconds of clear talking in a quiet room works best.</div>
+    <input id="cbName" type="text" placeholder="Name this voice, like Southern Joe" maxlength="40">
+    <div id="cbScript" class="script" hidden>Read this out loud, in your best country drawl:<br><em>"Well hey there, buddy! I tell you what, it's been a long ol' week out here. Brandy made biscuits this mornin', the kids been runnin' wild, and that old truck finally started on the first try. Pull up a chair and let's talk a spell."</em></div>
+    <div class="row">
+      <button class="btn ghost" id="cbUploadBtn">Upload a clip</button>
+      <button class="btn" id="cbRecordBtn">● Record 15 seconds</button>
+    </div>
+    <input id="cbFile" type="file" accept="audio/*" hidden>
+    <div id="cbError" class="err"></div>
   </div>
 
   <div class="row">
@@ -253,8 +274,14 @@ const cleanForSpeech = (t) => t
   .replace(/[#_`>]/g, "")
   .trim();
 
-let hasEleven = false, elevenWarned = false, currentAudio = null;
-const useEleven = () => hasEleven && store.get("engine", "windows") === "eleven" && !!store.get("elevenVoice");
+let hasEleven = false, voiceWarned = false, currentAudio = null;
+// The voice service in use right now; falls back to Windows voices until the chosen one is set up.
+function activeEngine() {
+  const engine = store.get("engine", "windows");
+  if (engine === "eleven" && hasEleven && store.get("elevenVoice")) return "eleven";
+  if (engine === "chatterbox" && store.get("cbVoice")) return "chatterbox";
+  return "windows";
+}
 
 function speakWindows(text) {
   return new Promise((resolve) => {
@@ -284,22 +311,26 @@ function playUrl(url) {
   });
 }
 
-// Starts getting a sentence ready right away (ElevenLabs audio downloads while
+// Starts getting a sentence ready right away (ElevenLabs or Chatterbox audio is made while
 // earlier sentences play) and returns a function that plays it and resolves when done.
 function prepareSpeech(text) {
   const clean = cleanForSpeech(text);
-  if (!useEleven()) return () => speakWindows(clean);
+  const engine = activeEngine();
+  if (engine === "windows") return () => speakWindows(clean);
+  const body = engine === "eleven"
+    ? { text: clean, voiceId: store.get("elevenVoice") }
+    : { text: clean, engine, voice: store.get("cbVoice") };
   const audio = fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: clean, voiceId: store.get("elevenVoice") }),
+    body: JSON.stringify(body),
   }).then(async (r) => {
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "ElevenLabs didn't answer.");
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "The voice service didn't answer.");
     return URL.createObjectURL(await r.blob());
   });
   audio.catch(() => {});
   return () => audio.then(playUrl, (err) => {
-    if (!elevenWarned) { elevenWarned = true; addLine("joe", `⚠ ${err.message} Using a Windows voice for now.`, "interim"); }
+    if (!voiceWarned) { voiceWarned = true; addLine("joe", `⚠ ${err.message} Using a Windows voice for now.`, "interim"); }
     return speakWindows(clean);
   });
 }
@@ -429,6 +460,8 @@ $("callBtn").onclick = async () => {
   try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); }
   catch { $("status").textContent = "Joe needs your microphone. Allow it and call again."; return; }
   $("captions").innerHTML = "";
+  voiceWarned = false;
+  if (activeEngine() === "chatterbox") fetch("/api/chatterbox/start", { method: "POST" }).catch(() => {});
   setState("ringing", "Ringing…");
   const ringing = ring(2);
   startTimer();
@@ -487,7 +520,7 @@ $("settingsBtn").onclick = async () => {
   showEngine();
   $("settingsDialog").showModal();
 };
-$("settingsClose").onclick = () => $("settingsDialog").close();
+$("settingsClose").onclick = () => { recorder?.stop(); $("settingsDialog").close(); };
 $("modelSelect").onchange = (e) =>
   fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: e.target.value }) });
 const sampleVoice = () => {
@@ -496,13 +529,120 @@ const sampleVoice = () => {
   prepareSpeech("Well hey there, buddy! It's Joe. How the heck are ya?")();
 };
 
-// ElevenLabs voice settings
 function showEngine() {
   const engine = $("engineSelect").value;
   $("windowsVoice").hidden = engine !== "windows";
   $("elevenVoice").hidden = engine !== "eleven";
+  $("chatterboxVoice").hidden = engine !== "chatterbox";
   if (engine === "eleven") refreshEleven();
+  if (engine === "chatterbox") refreshChatterbox();
 }
+
+// Chatterbox voice settings
+let cbPoll = null;
+async function refreshChatterbox() {
+  clearTimeout(cbPoll);
+  const status = await fetch("/api/chatterbox/start", { method: "POST" }).then((r) => r.json()).catch(() => ({}));
+  if (!status.installed) {
+    $("cbStatus").textContent = "Chatterbox isn't installed yet. Run voice\\setup-chatterbox.ps1 once to set it up.";
+  } else if (status.error) {
+    $("cbStatus").textContent = `Chatterbox couldn't start: ${status.error}`;
+  } else if (!status.ready) {
+    $("cbStatus").textContent = "Chatterbox is warming up… (the very first time, it downloads its voice model, which takes a few minutes)";
+    if ($("settingsDialog").open) cbPoll = setTimeout(refreshChatterbox, 3000);
+  } else {
+    $("cbStatus").textContent = `Chatterbox is ready (running on your ${status.device === "cuda" ? "graphics card" : "processor"}).`;
+  }
+  const names = await fetch("/api/voices").then((r) => r.json()).catch(() => []);
+  const sel = $("cbSelect");
+  sel.innerHTML = "";
+  if (!names.length) sel.add(new Option("No voices yet: record or upload one below", ""));
+  for (const n of names) sel.add(new Option(n, n));
+  const saved = store.get("cbVoice");
+  sel.value = names.includes(saved) ? saved : names[0] ?? "";
+  store.set("cbVoice", sel.value);
+}
+$("cbSelect").onchange = (e) => { store.set("cbVoice", e.target.value); voiceWarned = false; sampleVoice(); };
+
+// Any recording or audio file becomes a mono 16-bit WAV, which Chatterbox reads reliably.
+async function toWav(blob) {
+  const ctx = new AudioContext();
+  const audio = await ctx.decodeAudioData(await blob.arrayBuffer());
+  ctx.close();
+  const mono = new Float32Array(audio.length);
+  for (let c = 0; c < audio.numberOfChannels; c++) {
+    const data = audio.getChannelData(c);
+    for (let i = 0; i < data.length; i++) mono[i] += data[i] / audio.numberOfChannels;
+  }
+  const buf = new DataView(new ArrayBuffer(44 + mono.length * 2));
+  const text = (o, s) => [...s].forEach((ch, i) => buf.setUint8(o + i, ch.charCodeAt(0)));
+  text(0, "RIFF"); buf.setUint32(4, 36 + mono.length * 2, true); text(8, "WAVE");
+  text(12, "fmt "); buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+  buf.setUint32(24, audio.sampleRate, true); buf.setUint32(28, audio.sampleRate * 2, true);
+  buf.setUint16(32, 2, true); buf.setUint16(34, 16, true);
+  text(36, "data"); buf.setUint32(40, mono.length * 2, true);
+  mono.forEach((v, i) => buf.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true));
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+async function saveVoice(blob) {
+  const name = $("cbName").value.trim();
+  $("cbError").textContent = "Saving…";
+  try {
+    const wav = await toWav(blob);
+    const res = await fetch(`/api/voices?name=${encodeURIComponent(name)}`, { method: "POST", body: wav });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error);
+    store.set("cbVoice", out.name);
+    $("cbName").value = "";
+    $("cbError").textContent = "";
+    await refreshChatterbox();
+    sampleVoice();
+  } catch (err) {
+    $("cbError").textContent = err.message || "Couldn't read that audio. Try a WAV or MP3 file.";
+  }
+}
+
+const needName = () => {
+  if ($("cbName").value.trim()) return false;
+  $("cbError").textContent = "Give the voice a name first.";
+  $("cbName").focus();
+  return true;
+};
+
+$("cbUploadBtn").onclick = () => { if (!needName()) $("cbFile").click(); };
+$("cbFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) saveVoice(f); };
+
+let recorder = null;
+$("cbRecordBtn").onclick = async () => {
+  if (recorder) return recorder.stop();
+  if (state !== "idle") { $("cbError").textContent = "Hang up first, then record."; return; }
+  if (needName()) return;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { $("cbError").textContent = "Allow the microphone to record a voice."; return; }
+  const chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => chunks.push(e.data);
+  let left = 15;
+  const btn = $("cbRecordBtn");
+  const tick = () => { btn.textContent = `■ Stop (${left})`; if (left-- <= 0) recorder?.stop(); };
+  const timer = setInterval(tick, 1000);
+  recorder.onstop = () => {
+    clearInterval(timer);
+    stream.getTracks().forEach((t) => t.stop());
+    recorder = null;
+    btn.classList.remove("recording");
+    btn.textContent = "● Record 15 seconds";
+    $("cbScript").hidden = true;
+    saveVoice(new Blob(chunks, { type: chunks[0]?.type || "audio/webm" }));
+  };
+  $("cbError").textContent = "";
+  $("cbScript").hidden = false;
+  btn.classList.add("recording");
+  tick();
+  recorder.start();
+};
 async function refreshEleven() {
   $("elevenError").textContent = "";
   $("elevenKeyRow").hidden = hasEleven;
@@ -519,7 +659,7 @@ async function refreshEleven() {
   store.set("elevenVoice", sel.value);
 }
 $("engineSelect").onchange = (e) => { store.set("engine", e.target.value); showEngine(); };
-$("elevenSelect").onchange = (e) => { store.set("elevenVoice", e.target.value); elevenWarned = false; sampleVoice(); };
+$("elevenSelect").onchange = (e) => { store.set("elevenVoice", e.target.value); voiceWarned = false; sampleVoice(); };
 $("elevenRefresh").onclick = refreshEleven;
 $("elevenChangeKey").onclick = () => { $("elevenKeyRow").hidden = false; $("elevenKeyInput").focus(); };
 $("elevenKeySave").onclick = async () => {
@@ -529,7 +669,7 @@ $("elevenKeySave").onclick = async () => {
   if (!res.ok) { $("elevenError").textContent = out.error || "That didn't work."; return; }
   $("elevenKeyInput").value = "";
   hasEleven = true;
-  elevenWarned = false;
+  voiceWarned = false;
   refreshEleven();
 };
 $("voiceSelect").onchange = (e) => { store.set("voice", e.target.value); sampleVoice(); };
