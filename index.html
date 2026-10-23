@@ -33,6 +33,15 @@
     width: 56px; height: 56px; border-radius: 50%; flex: none; overflow: hidden; display: grid; place-items: center;
     background: linear-gradient(160deg, #8a5a2b, #4e3218); font-size: 24px; font-weight: 700;
   }
+  .c-wrap { position: relative; flex: none; }
+  .dot {
+    position: absolute; right: 0; bottom: 0; width: 15px; height: 15px; border-radius: 50%;
+    border: 3px solid var(--panel); background: #777;
+  }
+  .dot.ready { background: var(--green); }
+  .dot.warming { background: #e8b931; animation: blink 1.2s ease-in-out infinite; }
+  .dot.error { background: var(--red); }
+  @keyframes blink { 50% { opacity: .4; } }
   .c-avatar img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; }
   .c-info { flex: 1; min-width: 0; }
   .c-name { font-size: 18px; font-weight: 600; }
@@ -652,7 +661,14 @@ async function startCall(video) {
   catch { $("status").textContent = `${who()} needs your microphone. Allow it and call again.`; return; }
   $("captions").innerHTML = "";
   videoWarned = false;
-  fetch("/api/chatterbox/start", { method: "POST" }).catch(() => {});
+  // Wait for the voice engine (about 20 s after the app opens) so the first sentences don't fail.
+  for (let i = 0; i < 90; i++) {
+    const s = await fetch("/api/chatterbox/start", { method: "POST" }).then((r) => r.json()).catch(() => ({}));
+    if (s.ready) break;
+    if (s.error || !s.installed) { $("status").textContent = `${who()}'s voice can't start: ${s.error ?? "Chatterbox isn't installed."}`; return; }
+    $("status").textContent = `Warming up ${who()}'s voice…`;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
   if (video) {
     $("status").textContent = "Connecting video…";
     const problem = await videoReady();
@@ -909,7 +925,10 @@ async function showHome() {
   const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
   $("contactList").innerHTML = list.map((c) => `
     <div class="contact" data-id="${esc(c.id)}">
-      <div class="c-avatar">${c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0])}</div>
+      <div class="c-wrap">
+        <div class="c-avatar">${c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0])}</div>
+        <span class="dot ${c.hasVoice ? "" : "none"}" title="${c.hasVoice ? "" : "Needs a voice clip"}"></span>
+      </div>
       <div class="c-info">
         <div class="c-name">${esc(c.name)}</div>
         <div class="c-last">${!c.hasVoice ? "Needs a voice clip" : c.lastCall ? `Last call ${esc(c.lastCall)}` : "You haven't called yet"}</div>
@@ -917,6 +936,22 @@ async function showHome() {
       <button class="round mini call" data-start="voice" title="${c.hasVoice ? `Voice call ${esc(c.name)}` : "Needs a voice clip first (in their settings)"}" ${c.hasVoice ? "" : "disabled"}>📞</button>
       <button class="round mini video" data-start="video" title="${!c.hasVoice ? "Needs a voice clip first (in their settings)" : c.face ? `Video call ${esc(c.name)}` : "Add a face picture in their settings for video calls"}" ${c.face && c.hasVoice ? "" : "disabled"}>🎥</button>
     </div>`).join("") || `<div class="hint">No friends yet.</div>`;
+  updateDots();
+}
+
+// Green dot: ready to call. Yellow: the voice engine is warming up. Grey: needs a voice clip.
+// All friends share one voice engine, so their dots change together.
+let dotTimer = null;
+async function updateDots() {
+  clearTimeout(dotTimer);
+  if ($("home").hidden) return;
+  const s = await fetch("/api/chatterbox/start", { method: "POST" }).then((r) => r.json()).catch(() => ({}));
+  const label = s.ready ? "Ready to call" : s.error ? `Voice engine problem: ${s.error}` : "Warming up…";
+  document.querySelectorAll(".contact .dot:not(.none)").forEach((d) => {
+    d.className = `dot ${s.ready ? "ready" : s.error ? "error" : "warming"}`;
+    d.title = label;
+  });
+  if (!s.ready) dotTimer = setTimeout(updateDots, 2000);
 }
 
 $("contactList").onclick = (e) => {

@@ -384,7 +384,9 @@ const server = http.createServer(async (req, res) => {
     const { text, voice } = await readBody(req);
     const file = voiceFile(voice);
     if (!file) return json(res, 400, { error: "This friend needs a voice clip. Add one in their ⚙ settings." });
+    // If Chatterbox is still loading (about 20 s after it starts), wait for it rather than failing the sentence.
     await chatterbox.start();
+    for (let i = 0; i < 90 && !(await chatterbox.status()).ready; i++) await new Promise((r) => setTimeout(r, 1000));
     const r = await fetch(`${chatterbox.url}/tts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
