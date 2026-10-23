@@ -163,8 +163,15 @@ function systemPrompt(c) {
     ? `What you remember about your buddy from past calls:\n${memory.notes}`
     : "This is the first time this buddy has ever called you. You don't know their name or anything about them yet.";
   const last = memory.lastCall ? `Your last call with them was ${memory.lastCall}.` : "";
-  return `${persona}\n\n# Memory\n${mem}${linkedNews(c)}\n\n# Right now\nIt's ${now} where you both live. ${last}`;
+  return `${persona}\n\n${ENDING_THE_CALL}\n\n# Memory\n${mem}${linkedNews(c)}\n\n# Right now\nIt's ${now} where you both live. ${last}`;
 }
+
+// Friends can hang up. The marker is stripped from what's spoken and shown; the call screen hangs up after the
+// friend finishes their goodbye.
+const HANGUP = "<hangup>";
+const ENDING_THE_CALL = `# Ending the call
+You can hang up, like on a real phone. When the call is clearly over, because you've both said goodbye, or your buddy said they have to go and you've said bye back, finish your goodbye and put ${HANGUP} at the very end of that last message. It's a signal, not something you say.
+Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
 
 // Linked friends (like a married couple) share what the buddy told each of them, the way they'd talk it over at
 // dinner. Links are set with `tools/contact.py link` and stored in contact.json as [{ id, relation }]. Friends
@@ -200,11 +207,29 @@ async function streamReply(res) {
       system: call.system,
       messages: call.messages,
     });
-    for await (const event of stream) {
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        res.write(event.delta.text);
+    // Strip the hang-up marker as text streams in. It can arrive split across chunks, so hold back any ending
+    // that could be the start of it.
+    let held = "", hangingUp = false;
+    const pass = (text) => {
+      held += text;
+      let i;
+      while ((i = held.indexOf(HANGUP)) >= 0) {
+        res.write(held.slice(0, i));
+        held = held.slice(i + HANGUP.length);
+        hangingUp = true;
       }
+      let keep = 0;
+      for (let k = Math.min(HANGUP.length - 1, held.length); k > 0; k--) {
+        if (HANGUP.startsWith(held.slice(-k))) { keep = k; break; }
+      }
+      res.write(held.slice(0, held.length - keep));
+      held = held.slice(held.length - keep);
+    };
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") pass(event.delta.text);
     }
+    res.write(held);
+    if (hangingUp) res.write("\u0000HANGUP");
     const final = await stream.finalMessage();
     if (final.stop_reason === "refusal") {
       const line = "Huh, you cut out on me there, buddy. Say that again?";
@@ -232,7 +257,7 @@ async function hangUp() {
   const memoryFile = contactPath(c.id, "memory.json");
   const transcript = ended.messages
     .slice(1)
-    .map((m) => `${m.role === "user" ? "Buddy" : first}: ${textOf(m.content)}`)
+    .map((m) => `${m.role === "user" ? "Buddy" : first}: ${textOf(m.content).replaceAll(HANGUP, "").trim()}`)
     .join("\n");
   memory.calls += 1;
   memory.lastCall = ended.started.toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });

@@ -582,10 +582,13 @@ async function joeTurn(url, body, gate = Promise.resolve()) {
   const myTurn = ++turnId;
   stopListening();
   if (state !== "ringing") setState("thinking", `${who()}'s thinking…`);
-  let streamDone = false, queued = 0, full = "", pending = "", line = null;
+  let streamDone = false, queued = 0, full = "", pending = "", line = null, hangingUp = false;
 
+  // Once they've finished talking: listen for you, or, if they said goodbye and hung up, end the call.
   const maybeListen = () => {
-    if (myTurn === turnId && streamDone && queued === 0 && state !== "idle") startListening();
+    if (myTurn !== turnId || !streamDone || queued !== 0 || state === "idle") return;
+    if (hangingUp) hangUp(true);
+    else startListening();
   };
   // Sentences queue up behind the gate (the ring tone on the first turn).
   const say = (sentence) => {
@@ -609,8 +612,12 @@ async function joeTurn(url, body, gate = Promise.resolve()) {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      const chunk = dec.decode(value, { stream: true });
+      let chunk = dec.decode(value, { stream: true });
       if (chunk.includes("\u0000ERROR:")) throw new Error(chunk.split("\u0000ERROR:")[1]);
+      if (chunk.includes("\u0000HANGUP")) {
+        hangingUp = true; // the server's signal that your friend is ending the call after this
+        chunk = chunk.replace("\u0000HANGUP", "");
+      }
       full += chunk;
       pending += chunk;
       if (myTurn === turnId) {
@@ -751,7 +758,26 @@ $("switchBtn").onclick = async () => {
   enterVideo();
 };
 
-async function hangUp() {
+// Two quick low beeps, like the line going dead.
+function hangUpTone() {
+  audioCtx ??= new AudioContext();
+  const t0 = audioCtx.currentTime;
+  const gain = audioCtx.createGain();
+  gain.connect(audioCtx.destination);
+  gain.gain.setValueAtTime(0, t0);
+  const osc = audioCtx.createOscillator();
+  osc.frequency.value = 425;
+  osc.connect(gain);
+  for (const at of [0, 0.35]) {
+    gain.gain.setValueAtTime(0.07, t0 + at);
+    gain.gain.setValueAtTime(0, t0 + at + 0.2);
+  }
+  osc.start(t0);
+  osc.stop(t0 + 0.6);
+}
+
+async function hangUp(byFriend = false) {
+  if (byFriend) hangUpTone();
   turnId += 1;
   stopListening();
   stopSpeaking();
@@ -760,10 +786,10 @@ async function hangUp() {
   setState("idle", `Hanging up… ${who()}'s jotting down notes`);
   await fetch("/api/hangup", { method: "POST" }).catch(() => {});
   leaveVideo();
-  setState("idle", "Call ended. Talk soon!");
+  setState("idle", byFriend ? `${who()} hung up. Talk soon!` : "Call ended. Talk soon!");
   lastCallEnded = Date.now();
 }
-$("hangBtn").onclick = hangUp;
+$("hangBtn").onclick = () => hangUp();
 
 $("hushBtn").onclick = () => {
   turnId += 1; // ignore the rest of what they were saying
