@@ -20,3 +20,4 @@ A desktop "phone call" with Joe Dirt, an AI buddy powered by Claude. Click Call,
 - `server.mjs` — local server that talks to Claude and ElevenLabs.
 - `index.html` — the call screen.
 - `data/` — your API keys, Joe's memory notes and call logs. Never committed.
+- `docs/session-notes.md` — how Joe was built, the decisions behind it, and the rules for keeping Joe himself as he learns.
