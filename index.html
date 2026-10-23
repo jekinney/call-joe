@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Joe</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
+<style>
+  :root {
+    --bg: #1d1712; --panel: #2a211a; --ink: #f4ead9; --muted: #b8a68c;
+    --accent: #d98c3f; --green: #3fae5a; --red: #d9443a; --line: #4a3b2e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(circle at 50% 20%, #3a2a1c, var(--bg) 70%);
+    color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center; overflow: hidden;
+  }
+  header { width: 100%; display: flex; justify-content: flex-end; padding: 12px 16px; }
+  .icon-btn { background: none; border: 0; color: var(--muted); font-size: 22px; cursor: pointer; }
+  .icon-btn:hover { color: var(--ink); }
+
+  .who { text-align: center; margin-top: 2vh; }
+  .avatar {
+    width: 150px; height: 150px; border-radius: 50%; margin: 0 auto 16px;
+    background: linear-gradient(160deg, #8a5a2b, #4e3218); border: 4px solid var(--accent);
+    display: grid; place-items: center; font-size: 72px; position: relative;
+  }
+  .avatar::after {
+    content: ""; position: absolute; inset: -4px; border-radius: 50%;
+    border: 4px solid var(--accent); opacity: 0;
+  }
+  body.speaking .avatar::after { animation: pulse 1.2s ease-out infinite; }
+  body.listening .avatar { border-color: var(--green); }
+  body.ringing .avatar { animation: shake .5s ease-in-out infinite; }
+  @keyframes pulse { from { opacity: .8; transform: scale(1); } to { opacity: 0; transform: scale(1.35); } }
+  @keyframes shake { 0%,100% { transform: rotate(0); } 25% { transform: rotate(-6deg); } 75% { transform: rotate(6deg); } }
+  h1 { margin: 0; font-size: 30px; letter-spacing: .5px; }
+  #status { color: var(--muted); margin-top: 6px; min-height: 1.4em; }
+  #timer { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; min-height: 1.2em; }
+
+  #captions {
+    flex: 1; width: min(560px, calc(100% - 32px)); margin: 18px 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 8px; padding: 4px;
+    mask-image: linear-gradient(to bottom, transparent, #000 25%);
+  }
+  #captions.hidden { visibility: hidden; }
+  .line { padding: 8px 12px; border-radius: 12px; max-width: 85%; line-height: 1.4; }
+  .line.joe { background: var(--panel); align-self: flex-start; }
+  .line.you { background: #31452f; align-self: flex-end; }
+  .line.interim { opacity: .55; font-style: italic; }
+
+  .controls { display: flex; gap: 28px; align-items: center; padding: 8px 0 32px; }
+  .round {
+    width: 72px; height: 72px; border-radius: 50%; border: 0; cursor: pointer;
+    font-size: 30px; color: #fff; display: grid; place-items: center;
+    box-shadow: 0 6px 18px rgba(0,0,0,.4);
+  }
+  .round small { display: block; font-size: 11px; margin-top: 6px; color: var(--muted); text-align: center; }
+  .ctl { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  #callBtn { background: var(--green); }
+  #hangBtn { background: var(--red); transform: rotate(135deg); }
+  .soft { background: var(--panel); border: 1px solid var(--line); width: 56px; height: 56px; font-size: 22px; }
+  .soft.on { background: var(--accent); }
+  [hidden] { display: none !important; }
+
+  dialog {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 14px;
+    width: min(440px, calc(100% - 32px)); padding: 20px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog h2 { margin-top: 0; font-size: 20px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  input, select {
+    width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); font-size: 14px;
+  }
+  .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+  .btn { padding: 9px 16px; border-radius: 8px; border: 0; cursor: pointer; background: var(--accent); color: #1d1712; font-weight: 600; }
+  .btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+  .hint a { color: var(--accent); }
+  #keyError, .err { color: #ff8a80; font-size: 13px; min-height: 1em; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header><button class="icon-btn" id="settingsBtn" title="Settings">⚙</button></header>
+
+<div class="who">
+  <div class="avatar">🧢</div>
+  <h1>Joe Dirt</h1>
+  <div id="status">Ready when you are</div>
+  <div id="timer"></div>
+</div>
+
+<div id="captions"></div>
+
+<div class="controls">
+  <div class="ctl" id="muteCtl" hidden><button class="round soft" id="muteBtn" title="Mute your mic">🎙</button>Mute</div>
+  <div class="ctl" id="callCtl"><button class="round" id="callBtn" title="Call Joe">📞</button>Call</div>
+  <div class="ctl" id="hushCtl" hidden><button class="round soft" id="hushBtn" title="Cut Joe off so you can talk">✋</button>Hush</div>
+  <div class="ctl" id="hangCtl" hidden><button class="round" id="hangBtn" title="Hang up">📞</button>Hang up</div>
+  <div class="ctl" id="ccCtl"><button class="round soft on" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
+</div>
+
+<dialog id="keyDialog">
+  <h2>One-time setup</h2>
+  <p class="hint">Joe needs an Anthropic API key to think. Get one at
+    <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>
+    and paste it here. It's only saved on this computer.</p>
+  <label for="keyInput">API key</label>
+  <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off">
+  <div id="keyError"></div>
+  <div class="row"><button class="btn" id="keySave">Save</button></div>
+</dialog>
+
+<dialog id="settingsDialog">
+  <h2>Settings</h2>
+  <label for="modelSelect">Joe's brain</label>
+  <select id="modelSelect">
+    <option value="haiku">Haiku: fastest and cheapest</option>
+    <option value="sonnet">Sonnet: quick and sharp (recommended)</option>
+    <option value="opus">Opus: deepest, but slower and pricier</option>
+  </select>
+  <div class="hint">Takes effect on Joe's next reply. His notes about you are always written by Opus.</div>
+  <label for="engineSelect">Voice service</label>
+  <select id="engineSelect">
+    <option value="windows">Windows voices (free)</option>
+    <option value="eleven">ElevenLabs (realistic, paid)</option>
+  </select>
+
+  <div id="windowsVoice">
+    <label for="voiceSelect">Joe's voice</label>
+    <select id="voiceSelect"></select>
+    <div class="hint">Pick one to hear it. The "Natural" voices at the top sound the most human.</div>
+    <label for="rateInput">Talking speed</label>
+    <input id="rateInput" type="range" min="0.8" max="1.3" step="0.05">
+  </div>
+
+  <div id="elevenVoice" hidden>
+    <div id="elevenKeyRow">
+      <label for="elevenKeyInput">ElevenLabs API key</label>
+      <input id="elevenKeyInput" type="password" placeholder="sk_..." autocomplete="off">
+      <div class="hint">Get one on <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">elevenlabs.io</a> under Developers → API Keys. It's only saved on this computer.</div>
+      <div class="row"><button class="btn" id="elevenKeySave">Save key</button></div>
+    </div>
+    <div id="elevenVoiceRow" hidden>
+      <label for="elevenSelect">Joe's voice</label>
+      <select id="elevenSelect"></select>
+      <div class="hint">Want a southern voice? On <a href="https://elevenlabs.io/app/voice-library" target="_blank">elevenlabs.io</a> open the Voice Library, search "southern" or "country", and add one to My Voices. Then press Refresh.</div>
+      <div class="row">
+        <button class="btn ghost" id="elevenChangeKey">Change key</button>
+        <button class="btn ghost" id="elevenRefresh">Refresh list</button>
+      </div>
+    </div>
+    <div id="elevenError" class="err"></div>
+  </div>
+
+  <div class="row">
+    <button class="btn ghost" id="testVoice">Test voice</button>
+    <button class="btn ghost" id="changeKey">Change API key</button>
+    <button class="btn" id="settingsClose">Done</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+// ---------- UI state ----------
+let state = "idle"; // idle | ringing | speaking | listening | thinking
+let callStart = 0, timerId = null, muted = false;
+
+function setState(s, text) {
+  state = s;
+  document.body.className = s;
+  $("status").textContent = text;
+  const inCall = s !== "idle";
+  $("callCtl").hidden = inCall;
+  $("hangCtl").hidden = !inCall;
+  $("muteCtl").hidden = !inCall;
+  $("hushCtl").hidden = s !== "speaking";
+}
+
+function addLine(who, text, cls = "") {
+  const el = document.createElement("div");
+  el.className = `line ${who} ${cls}`;
+  el.textContent = text;
+  $("captions").appendChild(el);
+  $("captions").scrollTop = $("captions").scrollHeight;
+  return el;
+}
+
+function startTimer() {
+  callStart = Date.now();
+  timerId = setInterval(() => {
+    const s = Math.floor((Date.now() - callStart) / 1000);
+    $("timer").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }, 1000);
+}
+
+// ---------- Ring tone ----------
+let audioCtx;
+function ring(seconds = 2) {
+  audioCtx ??= new AudioContext();
+  const t0 = audioCtx.currentTime;
+  const gain = audioCtx.createGain();
+  gain.connect(audioCtx.destination);
+  gain.gain.setValueAtTime(0, t0);
+  for (let i = 0; i < seconds; i += 1) {
+    gain.gain.setValueAtTime(0.08, t0 + i);
+    gain.gain.setValueAtTime(0, t0 + i + 0.6);
+  }
+  for (const f of [440, 480]) {
+    const osc = audioCtx.createOscillator();
+    osc.frequency.value = f;
+    osc.connect(gain);
+    osc.start(t0);
+    osc.stop(t0 + seconds);
+  }
+  return new Promise((r) => setTimeout(r, seconds * 1000));
+}
+
+// ---------- Joe's voice ----------
+const PREFERRED = ["Andrew", "Guy", "Christopher", "Brian", "Eric", "Roger", "Steffan", "Davis"];
+let voices = [];
+function loadVoices() {
+  voices = speechSynthesis.getVoices()
+    .filter((v) => v.lang.startsWith("en"))
+    .sort((a, b) => /Natural/i.test(b.name) - /Natural/i.test(a.name) || (b.lang === "en-US") - (a.lang === "en-US"));
+  const sel = $("voiceSelect");
+  sel.innerHTML = "";
+  for (const v of voices) sel.add(new Option(`${v.name} (${v.lang})`, v.name));
+  sel.value = pickVoice()?.name ?? "";
+}
+function pickVoice() {
+  const saved = store.get("voice");
+  return voices.find((v) => v.name === saved)
+    ?? PREFERRED.map((n) => voices.find((v) => v.name.includes(n) && /Natural/i.test(v.name) && v.lang === "en-US")).find(Boolean)
+    ?? voices.find((v) => v.lang === "en-US")
+    ?? voices[0];
+}
+speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+
+const cleanForSpeech = (t) => t
+  .replace(/\*[^*]*\*/g, " ")
+  .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+  .replace(/[#_`>]/g, "")
+  .trim();
+
+let hasEleven = false, elevenWarned = false, currentAudio = null;
+const useEleven = () => hasEleven && store.get("engine", "windows") === "eleven" && !!store.get("elevenVoice");
+
+function speakWindows(text) {
+  return new Promise((resolve) => {
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.rate = Number(store.get("rate", "1.05"));
+    u.onend = u.onerror = resolve;
+    speechSynthesis.speak(u);
+  });
+}
+
+function playUrl(url) {
+  return new Promise((resolve) => {
+    const a = new Audio(url);
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      URL.revokeObjectURL(url);
+      if (currentAudio === a) currentAudio = null;
+      resolve();
+    };
+    currentAudio = a;
+    a.onended = a.onerror = a.onpause = done;
+    a.play().catch(done);
+  });
+}
+
+// Starts getting a sentence ready right away (ElevenLabs audio downloads while
+// earlier sentences play) and returns a function that plays it and resolves when done.
+function prepareSpeech(text) {
+  const clean = cleanForSpeech(text);
+  if (!useEleven()) return () => speakWindows(clean);
+  const audio = fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: clean, voiceId: store.get("elevenVoice") }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "ElevenLabs didn't answer.");
+    return URL.createObjectURL(await r.blob());
+  });
+  audio.catch(() => {});
+  return () => audio.then(playUrl, (err) => {
+    if (!elevenWarned) { elevenWarned = true; addLine("joe", `⚠ ${err.message} Using a Windows voice for now.`, "interim"); }
+    return speakWindows(clean);
+  });
+}
+
+function stopSpeaking() {
+  speechSynthesis.cancel();
+  currentAudio?.pause();
+}
+
+// ---------- Talking to the server ----------
+let turnId = 0;
+
+async function joeTurn(url, body, gate = Promise.resolve()) {
+  const myTurn = ++turnId;
+  stopListening();
+  if (state !== "ringing") setState("thinking", "Joe's thinking…");
+  let streamDone = false, queued = 0, full = "", pending = "", line = null;
+
+  const maybeListen = () => {
+    if (myTurn === turnId && streamDone && queued === 0 && state !== "idle") startListening();
+  };
+  // Sentences queue up behind the gate (the ring tone on the first turn).
+  const say = (sentence) => {
+    if (myTurn !== turnId || !cleanForSpeech(sentence)) return;
+    const play = prepareSpeech(sentence);
+    queued += 1;
+    gate = gate.then(async () => {
+      if (myTurn !== turnId) return;
+      if (state !== "speaking") setState("speaking", "Joe's talking…");
+      await play();
+      queued -= 1;
+      maybeListen();
+    });
+  };
+
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = dec.decode(value, { stream: true });
+      if (chunk.includes("\u0000ERROR:")) throw new Error(chunk.split("\u0000ERROR:")[1]);
+      full += chunk;
+      pending += chunk;
+      if (myTurn === turnId) {
+        line ??= addLine("joe", "");
+        line.textContent = cleanForSpeech(full);
+        $("captions").scrollTop = $("captions").scrollHeight;
+      }
+      // Speak each finished sentence as soon as it arrives.
+      let m;
+      while ((m = pending.match(/^([\s\S]*?[.!?…]+["'”’)\]]*)\s+/))) {
+        say(m[1]);
+        pending = pending.slice(m[0].length);
+      }
+    }
+    if (pending.trim()) say(pending);
+  } catch (err) {
+    if (myTurn === turnId && state !== "idle") {
+      addLine("joe", "⚠ " + err.message, "interim");
+      setState("listening", "Something went wrong. Try saying that again.");
+    }
+  }
+  streamDone = true;
+  maybeListen();
+}
+
+// ---------- Listening to you ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, heard = "", interimLine = null, sendTimer = null;
+
+function startListening() {
+  setState("listening", muted ? "You're muted" : "Listening… go ahead");
+  if (muted || !SR) return;
+  heard = "";
+  rec = new SR();
+  rec.lang = "en-US";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.onresult = (e) => {
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) heard += r[0].transcript + " ";
+      else interim += r[0].transcript;
+    }
+    const shown = (heard + interim).trim();
+    if (shown) {
+      interimLine ??= addLine("you", "", "interim");
+      interimLine.textContent = shown;
+      $("captions").scrollTop = $("captions").scrollHeight;
+    }
+    // Wait for a short pause after you finish talking, then send it to Joe.
+    clearTimeout(sendTimer);
+    if (heard.trim() && !interim) sendTimer = setTimeout(sendHeard, 1100);
+  };
+  rec.onend = () => {
+    if (rec && state === "listening" && !muted) { try { rec.start(); } catch {} }
+  };
+  rec.onerror = (e) => {
+    if (e.error === "not-allowed") setState("listening", "Joe can't hear you. Allow the microphone and try again.");
+  };
+  try { rec.start(); } catch {}
+}
+
+function stopListening() {
+  clearTimeout(sendTimer);
+  if (rec) { const r = rec; rec = null; r.onend = null; try { r.abort(); } catch {} }
+}
+
+function sendHeard() {
+  const text = heard.trim();
+  if (!text || state !== "listening") return;
+  heard = "";
+  if (interimLine) { interimLine.classList.remove("interim"); interimLine = null; }
+  joeTurn("/api/say", { text });
+}
+
+// ---------- Buttons ----------
+$("callBtn").onclick = async () => {
+  const status = await fetch("/api/status").then((r) => r.json());
+  if (!status.hasKey) return $("keyDialog").showModal();
+  // Ask for the mic up front so the first prompt doesn't interrupt Joe.
+  try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); }
+  catch { $("status").textContent = "Joe needs your microphone. Allow it and call again."; return; }
+  $("captions").innerHTML = "";
+  setState("ringing", "Ringing…");
+  const ringing = ring(2);
+  startTimer();
+  // Let it ring a couple of times before Joe picks up.
+  joeTurn("/api/call", null, ringing);
+};
+
+async function hangUp() {
+  turnId += 1;
+  stopListening();
+  stopSpeaking();
+  clearInterval(timerId);
+  setState("idle", "Hanging up… Joe's jotting down notes");
+  await fetch("/api/hangup", { method: "POST" }).catch(() => {});
+  setState("idle", "Call ended. Talk soon!");
+}
+$("hangBtn").onclick = hangUp;
+
+$("hushBtn").onclick = () => {
+  turnId += 1; // ignore the rest of what Joe was saying
+  stopSpeaking();
+  startListening();
+};
+
+$("muteBtn").onclick = () => {
+  muted = !muted;
+  $("muteBtn").classList.toggle("on", muted);
+  $("muteBtn").textContent = muted ? "🔇" : "🎙";
+  if (state === "listening") { stopListening(); startListening(); }
+};
+
+$("ccBtn").onclick = () => {
+  const hidden = $("captions").classList.toggle("hidden");
+  $("ccBtn").classList.toggle("on", !hidden);
+  store.set("captions", hidden ? "off" : "on");
+};
+if (store.get("captions", "on") === "off") $("ccBtn").click();
+
+$("keySave").onclick = async () => {
+  $("keyError").textContent = "Checking…";
+  const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: $("keyInput").value }) });
+  const out = await res.json();
+  if (!res.ok) { $("keyError").textContent = out.error; return; }
+  $("keyInput").value = "";
+  $("keyError").textContent = "";
+  $("keyDialog").close();
+  $("status").textContent = "All set. Give Joe a call!";
+};
+
+$("settingsBtn").onclick = async () => {
+  $("rateInput").value = store.get("rate", "1.05");
+  const s = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  if (s.model) $("modelSelect").value = s.model;
+  hasEleven = !!s.hasEleven;
+  $("engineSelect").value = store.get("engine", "windows");
+  showEngine();
+  $("settingsDialog").showModal();
+};
+$("settingsClose").onclick = () => $("settingsDialog").close();
+$("modelSelect").onchange = (e) =>
+  fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: e.target.value }) });
+const sampleVoice = () => {
+  if (state === "speaking") return; // don't talk over Joe mid-call
+  stopSpeaking();
+  prepareSpeech("Well hey there, buddy! It's Joe. How the heck are ya?")();
+};
+
+// ElevenLabs voice settings
+function showEngine() {
+  const engine = $("engineSelect").value;
+  $("windowsVoice").hidden = engine !== "windows";
+  $("elevenVoice").hidden = engine !== "eleven";
+  if (engine === "eleven") refreshEleven();
+}
+async function refreshEleven() {
+  $("elevenError").textContent = "";
+  $("elevenKeyRow").hidden = hasEleven;
+  $("elevenVoiceRow").hidden = !hasEleven;
+  if (!hasEleven) return;
+  const res = await fetch("/api/eleven/voices");
+  const list = await res.json().catch(() => ({ error: "Couldn't load your ElevenLabs voices." }));
+  if (!res.ok) { $("elevenError").textContent = list.error; return; }
+  const sel = $("elevenSelect");
+  sel.innerHTML = "";
+  for (const v of list) sel.add(new Option(v.about ? `${v.name} · ${v.about}` : v.name, v.id));
+  const saved = store.get("elevenVoice");
+  sel.value = list.some((v) => v.id === saved) ? saved : list[0]?.id ?? "";
+  store.set("elevenVoice", sel.value);
+}
+$("engineSelect").onchange = (e) => { store.set("engine", e.target.value); showEngine(); };
+$("elevenSelect").onchange = (e) => { store.set("elevenVoice", e.target.value); elevenWarned = false; sampleVoice(); };
+$("elevenRefresh").onclick = refreshEleven;
+$("elevenChangeKey").onclick = () => { $("elevenKeyRow").hidden = false; $("elevenKeyInput").focus(); };
+$("elevenKeySave").onclick = async () => {
+  $("elevenError").textContent = "Checking…";
+  const res = await fetch("/api/eleven/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: $("elevenKeyInput").value }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) { $("elevenError").textContent = out.error || "That didn't work."; return; }
+  $("elevenKeyInput").value = "";
+  hasEleven = true;
+  elevenWarned = false;
+  refreshEleven();
+};
+$("voiceSelect").onchange = (e) => { store.set("voice", e.target.value); sampleVoice(); };
+$("rateInput").oninput = (e) => store.set("rate", e.target.value);
+$("rateInput").onchange = sampleVoice;
+$("testVoice").onclick = sampleVoice;
+$("changeKey").onclick = () => { $("settingsDialog").close(); $("keyDialog").showModal(); };
+
+// Keep the server awake while this window is open, and save the call if the window closes.
+setInterval(() => fetch("/api/ping").catch(() => {}), 30000);
+window.addEventListener("pagehide", () => { if (state !== "idle") navigator.sendBeacon("/api/hangup"); });
+
+if (!SR) $("status").textContent = "Speech recognition isn't available in this browser. Open Joe in Microsoft Edge.";
+fetch("/api/status").then((r) => r.json()).then((s) => {
+  hasEleven = !!s.hasEleven;
+  if (!s.hasKey) $("keyDialog").showModal();
+  else if (s.calls) $("status").textContent = `Ready when you are · ${s.calls} call${s.calls === 1 ? "" : "s"} so far`;
+});
+</script>
+</body>
+</html>

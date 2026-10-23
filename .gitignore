@@ -1,0 +1,4 @@
+# API keys, Joe's memory notes and call logs stay on this computer only
+data/
+node_modules/
+joe.ico
