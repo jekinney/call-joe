@@ -1,6 +1,14 @@
 # Roadmap: shipping Call Joe to other people
 
-Written October 23, 2026. This is a plan, not built yet. The goals:
+Written October 23, 2026. This is a plan, not built yet.
+
+## Decisions so far (October 23, 2026)
+- **Ship with today's engines:** Chatterbox for voices and Ditto for video. No separate voice engine for PCs without NVIDIA cards (see "Hardware tiers").
+- **Joe Dirt ships as the default friend.** He's always there on a fresh install or a reinstall. Other starter friends (Rosa, George and more) can be added from a list.
+- **A friend's personality is permanent once it's created.** There's no editing it, and no wiping and starting over. Users can only add new friends, and change a friend's picture or voice.
+- **Friends can be connected to each other** (mom, brother, spouse, friend and so on). Each kind of connection has its own rules for what they'd know about you from each other.
+
+The goals:
 
 1. A Windows installer. People add their own Claude (Anthropic) API key, and everything stays on their PC.
 2. Phone and tablet apps that call the same friends.
@@ -35,7 +43,7 @@ The latest Steam hardware survey (July 2026) puts NVIDIA at about 73% of PCs. Th
 |---|---|---|
 | Full | NVIDIA card with 8 GB or more of video memory (this PC has a 16 GB RTX 4080 Super) | Voice and video calls |
 | Voice only | NVIDIA card with 4–6 GB | Cloned voices; video off |
-| Basic | No NVIDIA card (most laptops, AMD, Intel) | Chatterbox on the processor is too slow for live calls. Options: allow Windows voices again in this tier only (no video), or the hosted option in section 2. **Decide this before the beta.** |
+| Basic | No NVIDIA card (most laptops, AMD, Intel) | **Decided: same engines, no special tier.** Chatterbox runs on the processor, so replies are slower (an estimated 2–4 s extra; to be measured), and video is off. The installer says this plainly before installing. |
 
 ### API key
 - A first-run screen: paste your Anthropic key. The app checks it (as `/api/key` does today) and links to console.anthropic.com.
@@ -57,7 +65,7 @@ The latest Steam hardware survey (July 2026) puts NVIDIA at about 73% of PCs. Th
   - **Ditto's model files:** the HuggingFace page says the repository is "released under the Apache-2.0 license," but the model card has no license field. Good enough for testing. Get written confirmation, or a LICENSE file in the model repo, before redistributing.
   - Ship a credits and licenses screen. `docs/credits.md` is the start of it.
 - **Starter friends:**
-  - "Joe Dirt" is a movie character's name. Ship a renamed starter friend instead.
+  - "Joe Dirt" is a movie character's name (a 2001 Columbia Pictures film). **Decided: he ships as the default friend anyway.** Risk to keep in mind: a trademark complaint could force a rename after launch. A lawyer's quick check before a public release is cheap insurance. Our Joe is an original character who shares the name, and he doesn't use the actor's voice or face.
   - Joe's and Rosa's voice clips are CC BY 3.0, which allows redistribution with credit. The face pictures are AI-generated. Keep the credits.
 - **Voice cloning:**
   - Users tick "I have permission to use this voice" before every clone.
@@ -92,33 +100,101 @@ Phones can't run Chatterbox or Ditto. There are two ways to do it:
 - Graphics-card servers run the voice and video engines. Phones and basic PCs connect to them.
 - You'd be running servers and paying for graphics-card time, storing users' memories, and taking on the privacy and security that comes with that. Probably a paid tier later, not the first release.
 
-## 3. Creating and editing friends in the app
+## 3. Friends: starter friends, new friends, and what can change
 
 Most users won't have Claude Code, so `/new-contact` moves into the app.
 
-### New friend wizard
-1. **Who:** a name, a few sentences about them, and optionally a link to an existing friend ("Rosa's husband").
-2. **Voice:** upload a clip or record 15 seconds, with the permission checkbox. Same rules as `tools/contact.py`: at least 5 seconds of speech, trimmed and evened out.
-3. **Face (optional):** upload a picture, with the checkbox "made-up face, or used with permission". It's cropped around the face automatically. Warn about sunglasses, side views and blurry or small faces.
-4. **Personality:** Claude writes it, using the user's key. The `/new-contact` instructions (`.claude/skills/new-contact/SKILL.md`, steps 3–4) become the system prompt for this API call. Claude asks two or three follow-up questions in the wizard, then shows the draft. The user edits it or asks for changes, then approves.
-5. **Save:** the same steps as `tools/contact.py create`, `face` and `link`, moved into the server. Then a test line in their new voice.
+### The rules
+| Can a user... | Answer |
+|---|---|
+| Add a starter friend from our list | Yes |
+| Create a new friend from their own description | Yes |
+| Change a friend's picture | Yes, any time |
+| Change a friend's voice | Yes, any time (permission checkbox again) |
+| Connect friends to each other | Yes, when creating a friend, or later |
+| Edit a friend's personality after it's created | **No.** It's permanent. |
+| Wipe a friend's memory, or reset and start over | **No.** Memory only grows through calls. |
+| Delete a friend | No delete. See "Hiding a friend" under open questions. |
 
-### Edit a friend by prompt
-- Example: "Make Earl grumpier" or "Rosa's grandson just got married."
-- Claude rewrites the persona and shows what changed. Nothing changes until the user approves it.
-- **Memory is never edited this way**, which keeps the "keep every friend themselves" rules in `CLAUDE.md`.
+This replaces the "edit a friend by prompt" idea in an earlier version of this plan. The `tools/contact.py persona` and `remove` commands become developer-only, and the app never offers them.
+
+### Starter friends
+- **Joe Dirt is always installed and enabled.** On a reinstall that keeps the user's data, he's the same Joe with all his memories. On a clean install, he starts fresh.
+- **The other starter friends** (Rosa, George, and more later) are switched on from an "Add a friend" list. Each one ships with:
+  - a finished personality (like `contacts/rosa/persona.md`),
+  - a licensed voice clip and an AI-made face (credited in `docs/credits.md`),
+  - **starter memory:** a few facts they already "know" when switched on. For example, Rosa knows George, and her own family and home. This starts in `memory.json` alongside what they learn on calls, and it's never about the user, since they haven't met.
+  - their connections to other starter friends. If a user switches on Rosa and George, they're automatically connected as a married couple.
+
+### Creating a new friend
+1. **Who they are:** a name, the user's own description of their personality, and their **role in the user's life** (mom, dad, brother, sister, friend and so on; see section 4).
+2. **Voice:** upload or record a clip, with the permission checkbox. At least 5 seconds of speech.
+3. **Face (optional):** upload a picture, with the checkbox. It's cropped automatically.
+4. **Connections (optional):** "This is my sister. She's Mom's daughter and Joe's friend."
+5. **Personality:** Claude writes it from the user's description, using their key. The `/new-contact` instructions are the system prompt. The user reads it and asks for changes as often as they like. Nothing is saved yet.
+6. **Try before it's permanent:** a short test call. It isn't saved to memory, so they can hear how the friend talks.
+7. **Finalize:** a clear warning: "This personality is permanent. You can change their picture and voice later, but not who they are." Then it's locked.
+
+The final personality is the user's own description (or the starter personality), plus three blocks that are always added:
+- the shared call rules (`contacts/_call-rules.md`),
+- the **role rules** for their role in the user's life (section 4),
+- the **connection rules** for each friend they're connected to (section 4).
+
+The role and connection rules stay in their own files, so the app can improve them without touching the locked personality.
+
+### Changing a picture or voice later
+- In the friend's ⚙ settings. Same checks as creating: permission, at least 5 seconds of speech, a face it can find.
+- Their personality and memory don't change. Only how they look or sound.
 
 ### Friend files (import and export)
-- One file (a zip) per friend, holding the persona, voice clip, face picture and settings, so friends can be backed up, moved to a new PC, or shared.
-- **Memory isn't included by default.** It's private, and the person sharing is asked first.
-- Importing asks for the same consent checks, since a shared file carries someone's cloned voice.
-- Possibly later: a library of starter friends made from licensed voices and AI faces.
+- Back up or move friends to a new PC as a single file: personality, voice, picture, memory and connections.
+- **Sharing a friend with someone else** gives them the personality, voice and picture, but never the memory. It's a fresh start, and it's locked the same way.
+- Imports ask for the same permission checks.
+
+## 4. Connecting friends: roles and what they'd know
+
+Today, Rosa and George share *everything* in each other's notes (`linkedNews()` in `server.mjs`). With real family roles that's wrong. Your brother shouldn't know what you only told Mom, and your sister would remember that your car looks cool, but probably not its model. So connections need rules.
+
+### Two layers
+1. **A friend's role in the user's life:** mom, dad, brother, sister, son, daughter, grandma, grandpa, aunt, uncle, cousin, spouse or partner, best friend, friend, coworker, neighbor, or "other" (the user describes it).
+2. **Connections between friends:** "Rosa and George are married," "Mom is Sis's mother," "Joe and Dave are buddies." This tells each friend who the other one is, so they can talk about each other ("Your mother called me yesterday…").
+
+### Role rules: what each role would plausibly know about you
+Each role has a short rules prompt. It's added to every friend with that role, and it decides **which of your news reaches them from other friends**. Some starting examples, which you'll want to tune:
+
+| Role | Would likely hear about | Wouldn't hear about, or only vaguely |
+|---|---|---|
+| Mom | Health (including periods and pregnancy), relationships, money worries, how you're feeling, big plans | Details you'd only tell a friend, like party stories |
+| Dad | Work, money, house and car (make and model, repairs), big life events, health in general | Intimate health details, relationship drama details |
+| Sister | Relationships, how you're feeling, style, plans, the gossip | Technical details: a car's "cool red one with a loud stereo," not its make, model or engine |
+| Brother | Sports, jokes, work in general, big events, cars and gear in detail | Periods and intimate health, relationship details beyond "seeing someone" |
+| Spouse or partner | Almost everything | Things you've told someone in confidence |
+| Best friend | Almost everything you'd tell a friend | Family-only matters |
+| Friend or coworker | Only what you'd mention casually or in a group | Health, money and family problems, unless they're public knowledge |
+
+- These are defaults, written as plain-English prompts in files (for example `contacts/_roles/mom.md`). The user can adjust a role's rules for their own family, since every family is different.
+- Keep the defaults to "what this person would plausibly hear" rather than mean stereotypes, and let users tune them. Your sister example ("knows it's cool, not what model it is") is the right flavor: a realistic gap in what they'd know, not a put-down.
+
+### How the sharing works
+After each call, the memory writer (Opus, in `hangUp()`) already updates that friend's notes. With connections, it also writes **a short "news that would travel" note** for each connected friend:
+- **Input:** the newest call, the role rules of the friend who'd receive it, and how the two friends are connected.
+- **Output:** only what would plausibly reach that person, phrased the way they'd hear it ("Jason's been feeling under the weather"), not as a transcript.
+- **Saved** as `data/contacts/<receiver>/heard-from/<sender>.md`, and added to the receiver's next call.
+- **Anything the user said "don't tell anyone" stays private,** whatever the role. The memory writer looks for that.
+- **A friend never sees another friend's raw notes,** only the filtered news. This replaces today's `linkedNews()`.
+
+### Also needed
+- **The user sees what travels.** A friend's settings show "What Mom has heard from others," so nothing about them is shared without them being able to see it.
+- **Directional:** news can flow from Sis to Mom but not back, depending on the roles.
+- **Cost:** about one extra small Claude call per connected friend after each call. It could use Haiku to keep it cheap.
+- **Moving Rosa and George over:** they become a "married" connection between two "friend" roles. Their current share-everything link becomes filtered news like everyone else's.
 
 ## Suggested order
 
 | Step | What | Rough size |
 |---|---|---|
-| 1 | In-app friend wizard and edit-by-prompt (move `tools/contact.py` into the server) | 1–2 weeks |
+| 1 | In-app friend wizard with test call and finalize; starter friends list; picture and voice changes (move `tools/contact.py` into the server) | 1–2 weeks |
+| 1b | Roles, connections and filtered news (section 4), replacing today's share-everything link | 1–2 weeks |
 | 2 | Local speech recognition (Whisper) for privacy and offline use | about 1 week |
 | 3 | Electron app: encrypted key, first-run downloads, hardware check and tiers | 2–3 weeks |
 | 4 | Signing, auto-update, licenses screen, privacy notice, 18+ check; private beta with a few friends' PCs | about 1 week, plus beta time |
@@ -126,10 +202,11 @@ Most users won't have Claude Code, so `/new-contact` moves into the app.
 | 6 | Store apps with push notifications for incoming calls | 2–4 weeks, plus store review |
 
 ## Open questions
-1. What should basic PCs get (no NVIDIA card)? Windows voices again with no video, hosted voices, or "not supported"?
+1. **Hiding a friend.** If someone regrets a friend they made, should there be a "hide from my list" option? Nothing would be deleted, and it could be undone. Without it, a list could fill up with friends the user never calls.
 2. Confirm the license for Ditto's model files with the authors.
 3. Is it free, or is there a paid version someday? This decides whether hosted servers (2B) ever make sense.
-4. What's the name and the starter friend for the public version, since "Joe Dirt" can't ship?
+4. A quick legal check on shipping "Joe Dirt" by that name.
+5. Should starter memory be shown to users, or kept as a surprise ("Rosa already knows she's married to George")?
 
 ## Sources
 - [Microsoft: code signing options for Windows apps](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options)
