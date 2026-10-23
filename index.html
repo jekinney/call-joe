@@ -52,6 +52,11 @@
     background: linear-gradient(160deg, #8a5a2b, #4e3218); border: 4px solid var(--accent);
     display: grid; place-items: center; font-size: 72px; position: relative;
   }
+  /* The friend's picture fills the circle exactly, cropped to their face, whatever its shape. */
+  .avatar img {
+    position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%;
+    object-fit: cover; object-position: 50% 28%;
+  }
   .avatar::after {
     content: ""; position: absolute; inset: -4px; border-radius: 50%;
     border: 4px solid var(--accent); opacity: 0;
@@ -150,7 +155,7 @@
 
 <div id="stage" hidden><canvas id="faceCanvas" width="540" height="720"></canvas></div>
 
-<div id="captions"></div>
+<div id="captions" class="hidden"></div>
 
 <div class="controls">
   <div class="ctl" id="muteCtl" hidden><button class="round soft" id="muteBtn" title="Mute your mic">🎙</button>Mute</div>
@@ -159,7 +164,7 @@
   <div class="ctl" id="switchCtl" hidden><button class="round soft" id="switchBtn" title="Switch between video and voice">🎥</button><span id="switchLabel">Video</span></div>
   <div class="ctl" id="hushCtl" hidden><button class="round soft" id="hushBtn" title="Cut them off so you can talk">✋</button>Hush</div>
   <div class="ctl" id="hangCtl" hidden><button class="round" id="hangBtn" title="Hang up">📞</button>Hang up</div>
-  <div class="ctl" id="ccCtl"><button class="round soft on" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
+  <div class="ctl" id="ccCtl"><button class="round soft" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
 </div>
 </main>
 
@@ -768,9 +773,11 @@ $("muteBtn").onclick = () => {
 $("ccBtn").onclick = () => {
   const hidden = $("captions").classList.toggle("hidden");
   $("ccBtn").classList.toggle("on", !hidden);
-  store.set("captions", hidden ? "off" : "on");
+  store.set("captions-v2", hidden ? "off" : "on");
 };
-if (store.get("captions", "on") === "off") $("ccBtn").click();
+// Captions (what you and your friend say, as text) are off unless you turn them on with CC.
+// Stored as "captions-v2" so the old default of "on" doesn't carry over.
+if (store.get("captions-v2", "off") === "on") $("ccBtn").click();
 
 $("keySave").onclick = async () => {
   $("keyError").textContent = "Checking…";
@@ -1053,7 +1060,7 @@ async function openContact(id, startWith) {
   document.querySelectorAll(".fn").forEach((el) => (el.textContent = c.firstName));
   $("friendName").textContent = c.name;
   $("friendAvatar").innerHTML = c.settings.face
-    ? `<img src="/api/face?name=${encodeURIComponent(c.settings.face)}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:50% 30%;border-radius:50%">`
+    ? `<img src="/api/face?name=${encodeURIComponent(c.settings.face)}" alt="">`
     : esc(c.name[0]);
   $("captions").innerHTML = "";
   $("home").hidden = true;
