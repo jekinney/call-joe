@@ -1,6 +1,6 @@
 # Call Joe
 
-Voice and video calls with AI friends (contacts) on Windows. Joe Dirt was the first friend. See `README.md` for setup, `docs/session-notes.md` for how it works and why, and `docs/building-a-contact.md` for adding a friend.
+Voice and video calls with AI friends (contacts) on Windows. Joe Tucker (nicknamed "Joe Dirt") was the first friend. See `README.md` for setup, `docs/session-notes.md` for how it works and why, and `docs/building-a-contact.md` for adding a friend.
 
 ## Adding a friend
 

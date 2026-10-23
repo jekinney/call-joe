@@ -1,6 +1,6 @@
 # Call Joe
 
-Desktop voice and video calls with AI friends powered by Claude. Joe Dirt is the first. Pick a friend, click Call or Video, talk out loud, and they talk back. Each one remembers you between calls.
+Desktop voice and video calls with AI friends powered by Claude. Joe Tucker ("Joe Dirt" to his friends) is the first. Pick a friend, click Call or Video, talk out loud, and they talk back. Each one remembers you between calls.
 
 ## Setup (Windows)
 

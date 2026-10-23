@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import Anthropic from "@anthropic-ai/sdk";
+import { createKnowledge } from "./knowledge.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 // CALLJOE_DATA and CALLJOE_PORT let a test copy run beside the real one without touching your data.
@@ -30,6 +31,7 @@ const MODELS = {
 };
 const DEFAULT_MODEL = "sonnet";
 const MEMORY_MODEL = "claude-opus-5-5"; // writes each friend's notes after each call
+const NEWS_MODEL = "claude-haiku-5-5"; // decides what news travels between connected friends (one small call each)
 const IDLE_SHUTDOWN_MS = 3 * 60 * 1000;
 
 const configFile = path.join(dataDir, "config.json");
@@ -139,7 +141,7 @@ function moveJoeIntoContacts() {
   const settings = { model: MODELS[config.model] ? config.model : DEFAULT_MODEL };
   if (fs.existsSync(path.join(facesDir, "Joe.png"))) settings.face = "Joe";
   // "legacy" tells the call screen to bring over Joe's voice settings, which used to live only in the browser.
-  writeJson(contactPath("joe", "contact.json"), { name: "Joe Dirt", created: new Date().toISOString(), legacy: true, settings });
+  writeJson(contactPath("joe", "contact.json"), { name: "Joe Tucker", created: new Date().toISOString(), legacy: true, settings });
   console.log("Moved Joe into data/contacts/joe (backup in data/backup-before-contacts)");
 }
 moveJoeIntoContacts();
@@ -152,8 +154,9 @@ function getClient() {
 
 const chatModel = (c) => MODELS[c?.settings.model] ?? MODELS[DEFAULT_MODEL];
 
-// Built once per call and left unchanged during it, so the prompt cache keeps hitting.
-function systemPrompt(c) {
+// Built once per call and left unchanged during it, so the prompt cache keeps hitting. A friend with no role,
+// connections or knowledge settings (like Joe) gets exactly the persona, ending-the-call, memory and time sections.
+async function systemPrompt(c) {
   const persona = fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8");
   const memory = c.memory;
   const now = new Date().toLocaleString("en-US", {
@@ -163,8 +166,21 @@ function systemPrompt(c) {
     ? `What you remember about your buddy from past calls:\n${memory.notes}`
     : "This is the first time this buddy has ever called you. You don't know their name or anything about them yet.";
   const last = memory.lastCall ? `Your last call with them was ${memory.lastCall}.` : "";
-  return `${persona}\n\n${ENDING_THE_CALL}\n\n# Memory\n${mem}${linkedNews(c)}\n\n# Right now\nIt's ${now} where you both live. ${last}`;
+  return [
+    persona.trimEnd(),
+    roleRules(c),
+    ENDING_THE_CALL,
+    knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
+    `# Memory\n${mem}${connectionNews(c)}`,
+    await knowledge.briefing(c),
+    `# Right now\nIt's ${now} where you both live. ${last}`,
+  ].filter(Boolean).join("\n\n");
 }
+
+const LOOKING_THINGS_UP = `# Looking things up
+You can check real, current information with your tools: football scores and news, the weather anywhere, or a web search if you have one. Use them when your buddy asks about something current or you'd need facts you don't know, like a score, a forecast, a price or a recipe you don't know by heart.
+Before you use a tool, say one short natural line out loud first, like "Hang on, let me look" or "Let me grab the paper." Then tell your buddy what you found the way a person would on the phone: the gist in a sentence or two, in your own words and with your own opinion. No lists, no links, and don't read out whole articles.
+If you can't find something, say so. Never make up scores, stats, prices or forecasts.`;
 
 // Friends can hang up. The marker is stripped from what's spoken and shown; the call screen hangs up after the
 // friend finishes their goodbye.
@@ -173,19 +189,66 @@ const ENDING_THE_CALL = `# Ending the call
 You can hang up, like on a real phone. When the call is clearly over, because you've both said goodbye, or your buddy said they have to go and you've said bye back, finish your goodbye and put ${HANGUP} at the very end of that last message. It's a signal, not something you say.
 Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
 
-// Linked friends (like a married couple) share what the buddy told each of them, the way they'd talk it over at
-// dinner. Links are set with `tools/contact.py link` and stored in contact.json as [{ id, relation }]. Friends
-// without links get nothing here, so they still only know their own calls.
-function linkedNews(c) {
+// ---- Roles and connections (docs/roadmap.md, section 4) ----
+// A friend's role in the buddy's life (contact.json "role", like "friend" or "mom") adds contacts/_roles/<role>.md
+// to their instructions. Connections between friends (contact.json "links": [{ id, relation }], set with
+// `tools/contact.py link`) tell each one who the other is. News about the buddy only travels between connected
+// friends after a call, filtered by the receiver's role (see passNews), and lands in
+// data/contacts/<receiver>/heard-from/<sender>.md. A friend never sees another friend's raw memory notes.
+const rolesDir = path.join(personasDir, "_roles");
+const roleFile = (role) => (/^[a-z-]+$/.test(String(role || "")) ? path.join(rolesDir, `${role}.md`) : null);
+const roleRules = (c) => {
+  const file = roleFile(c.role);
+  return file && fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim() : "";
+};
+const heardFromPath = (receiverId, senderId) => path.join(contactsDir, receiverId, "heard-from", `${senderId}.md`);
+
+function connectionNews(c) {
   return (c.links ?? []).map(({ id, relation }) => {
     const other = loadContact(id);
     if (!other) return "";
     const them = firstName(other);
-    const heard = other.memory.notes
-      ? `What ${them} has told you about your buddy, from their own calls with ${them} (the last one was ${other.memory.lastCall}):\n${other.memory.notes}`
-      : `Your buddy hasn't talked with ${them} on the phone yet.`;
-    return `\n\n# ${other.name}, ${relation}\n${other.name} is ${relation}. Your buddy is ${them}'s friend too and talks with ${them} on separate calls, and the two of you tell each other about those calls. You can mention what ${them} told you, but you weren't on those calls yourself.\n${heard}`;
+    let heard = "";
+    try { heard = fs.readFileSync(heardFromPath(c.id, id), "utf8").trim(); } catch {}
+    return `\n\n# ${other.name}, ${relation}\n${other.name} is ${relation}. Your buddy talks with ${them} too, on separate calls. You weren't on those calls, and you only know what ${them} has passed along.\n` +
+      (heard ? `What ${them} has told you about your buddy:\n${heard}` : `${them} hasn't passed along anything about your buddy yet.`);
   }).join("");
+}
+
+// After a call with `sender`, works out what news about the buddy would naturally reach each connected friend, given
+// how they're connected and the receiver's role, and merges it into what that friend has heard.
+async function passNews(sender, transcript) {
+  for (const { id } of sender.links ?? []) {
+    const receiver = loadContact(id);
+    if (!receiver) continue;
+    const relation = receiver.links?.find((l) => l.id === sender.id)?.relation ?? "a friend";
+    const file = heardFromPath(receiver.id, sender.id);
+    let before = "";
+    try { before = fs.readFileSync(file, "utf8").trim(); } catch {}
+    const s = firstName(sender), r = firstName(receiver);
+    try {
+      const msg = await getClient().messages.create({
+        model: NEWS_MODEL,
+        max_tokens: 4000,
+        output_config: { effort: "low" },
+        system:
+          `You decide what news about a person (the "buddy") would naturally travel from one of their friends to another, the way people really talk. ` +
+          `${sender.name} just had a phone call with the buddy. To ${receiver.name}, ${sender.name} is ${relation}. ` +
+          `${receiver.name}'s role in the buddy's life:\n${roleRules(receiver) || "A friend."}\n\n` +
+          `Update the notes of what ${r} has heard from ${s} about the buddy. Include only what ${s} would plausibly pass along to ${r}, given their connection and ${r}'s role. Phrase it the way ${r} would have heard it (like "${s} said Jason's been working long hours"), not as a transcript. ` +
+          `Never include anything the buddy asked to keep private or said in confidence ("don't tell anyone", "between us", "keep this quiet"), or that ${r}'s role says they wouldn't hear. Don't include details ${s} made up about ${s}'s own life. ` +
+          `Keep earlier notes unless they're stale or the newest call changed them. Write short plain-text bullet lines starting with '- ', at most 25 lines. Output only the notes. If there's nothing to pass along and no earlier notes, output exactly NONE.`,
+        messages: [{ role: "user", content: `Earlier notes:\n${before || "(none)"}\n\nThe newest call between ${s} and the buddy:\n${transcript}` }],
+      });
+      const notes = msg.stop_reason === "refusal" ? "" : textOf(msg.content).trim();
+      if (notes && notes !== "NONE") {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, notes + "\n");
+      }
+    } catch (err) {
+      console.error(`Passing news from ${sender.id} to ${receiver.id} failed:`, err?.message ?? err);
+    }
+  }
 }
 
 const textOf = (content) =>
@@ -283,6 +346,7 @@ async function hangUp() {
     }
   }
   writeJson(memoryFile, memory);
+  if (transcript.trim()) await passNews(c, transcript);
 }
 
 function readBody(req) {

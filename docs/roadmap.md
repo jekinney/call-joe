@@ -4,7 +4,7 @@ Written October 23, 2026. This is a plan, not built yet.
 
 ## Decisions so far (October 23, 2026)
 - **Ship with today's engines:** Chatterbox for voices and Ditto for video. No separate voice engine for PCs without NVIDIA cards (see "Hardware tiers").
-- **Joe Dirt ships as the default friend.** He's always there on a fresh install or a reinstall. Other starter friends (Rosa, George and more) can be added from a list.
+- **Joe Tucker ships as the default friend.** (Renamed from "Joe Dirt" on October 23, 2026. He still goes by the nickname on calls.) He's always there on a fresh install or a reinstall. Other starter friends (Rosa, George and more) can be added from a list.
 - **A friend's personality is permanent once it's created.** There's no editing it, and no wiping and starting over. Users can only add new friends, and change a friend's picture or voice.
 - **Friends can be connected to each other** (mom, brother, spouse, friend and so on). Each kind of connection has its own rules for what they'd know about you from each other.
 
@@ -65,7 +65,8 @@ The latest Steam hardware survey (July 2026) puts NVIDIA at about 73% of PCs. Th
   - **Ditto's model files:** the HuggingFace page says the repository is "released under the Apache-2.0 license," but the model card has no license field. Good enough for testing. Get written confirmation, or a LICENSE file in the model repo, before redistributing.
   - Ship a credits and licenses screen. `docs/credits.md` is the start of it.
 - **Starter friends:**
-  - "Joe Dirt" is a movie character's name (a 2001 Columbia Pictures film). **Decided: he ships as the default friend anyway.** Risk to keep in mind: a trademark complaint could force a rename after launch. A lawyer's quick check before a public release is cheap insurance. Our Joe is an original character who shares the name, and he doesn't use the actor's voice or face.
+  - **Renamed to Joe Tucker** on October 23, 2026, so the friend's name is no longer the movie character's (a 2001 Columbia Pictures film). His personality still mentions the nickname "Joe Dirt"; if that's a concern for the public release, it can be dropped from the shipped starter version.
+  - Earlier note: Risk to keep in mind: a trademark complaint could force a rename after launch. A lawyer's quick check before a public release is cheap insurance. Our Joe is an original character who shares the name, and he doesn't use the actor's voice or face.
   - Joe's and Rosa's voice clips are CC BY 3.0, which allows redistribution with credit. The face pictures are AI-generated. Keep the credits.
 - **Voice cloning:**
   - Users tick "I have permission to use this voice" before every clone.
@@ -119,7 +120,7 @@ Most users won't have Claude Code, so `/new-contact` moves into the app.
 This replaces the "edit a friend by prompt" idea in an earlier version of this plan. The `tools/contact.py persona` and `remove` commands become developer-only, and the app never offers them.
 
 ### Starter friends
-- **Joe Dirt is always installed and enabled.** On a reinstall that keeps the user's data, he's the same Joe with all his memories. On a clean install, he starts fresh.
+- **Joe Tucker is always installed and enabled.** On a reinstall that keeps the user's data, he's the same Joe with all his memories. On a clean install, he starts fresh.
 - **The other starter friends** (Rosa, George, and more later) are switched on from an "Add a friend" list. Each one ships with:
   - a finished personality (like `contacts/rosa/persona.md`),
   - a licensed voice clip and an AI-made face (credited in `docs/credits.md`),
@@ -205,7 +206,7 @@ After each call, the memory writer (Opus, in `hangUp()`) already updates that fr
 1. **Hiding a friend.** If someone regrets a friend they made, should there be a "hide from my list" option? Nothing would be deleted, and it could be undone. Without it, a list could fill up with friends the user never calls.
 2. Confirm the license for Ditto's model files with the authors.
 3. Is it free, or is there a paid version someday? This decides whether hosted servers (2B) ever make sense.
-4. A quick legal check on shipping "Joe Dirt" by that name.
+4. Whether the shipped starter Joe keeps the "Joe Dirt" nickname (he's named Joe Tucker now).
 5. Should starter memory be shown to users, or kept as a surprise ("Rosa already knows she's married to George")?
 
 ## Sources
