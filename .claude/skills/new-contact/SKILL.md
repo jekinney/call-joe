@@ -63,6 +63,11 @@ Show the user the draft and revise it until they approve. Keep it to about 250â€
    - `create` takes `--voice-start <seconds>` to skip an intro or music at the start of the clip. A clip with under 5 seconds of speech is refused and nothing is created; ask for a longer clip.
    - The default brain is Sonnet. Add `--model haiku` or `--model opus` to `create` if the user asks.
 
+## 5a. Role and live knowledge
+
+- **Role:** ask who this friend is to the user (friend, best-friend, spouse, mom, dad, sister, brother, grandparent, coworker, neighbor; see `contacts/_roles/`). Set it with `create --role <role>` or `role <id> <role>`. It decides what news reaches them from connected friends.
+- **Live knowledge:** if they'd follow a team, talk about their weather, or need to look things up (recipes, prices), set it with `knows <id> --nfl-team <ABBR> --home "<Town, State>" --web`. Make sure their persona says where they live, to match `--home`.
+
 ## 5b. Link family (if any)
 
 If the new friend belongs with an existing friend, like a spouse, and the user wants them to know what was said on each other's calls, link them:

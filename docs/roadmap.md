@@ -154,7 +154,9 @@ The role and connection rules stay in their own files, so the app can improve th
 
 ## 4. Connecting friends: roles and what they'd know
 
-Today, Rosa and George share *everything* in each other's notes (`linkedNews()` in `server.mjs`). With real family roles that's wrong. Your brother shouldn't know what you only told Mom, and your sister would remember that your car looks cool, but probably not its model. So connections need rules.
+**Status: the core is built (October 23, 2026).** Roles, role rules, connections and filtered news work today; see "What's built" at the end of this section. The share-everything link (`linkedNews()`) is gone.
+
+Before this, Rosa and George shared *everything* in each other's notes. With real family roles that's wrong. Your brother shouldn't know what you only told Mom, and your sister would remember that your car looks cool, but probably not its model. So connections need rules.
 
 ### Two layers
 1. **A friend's role in the user's life:** mom, dad, brother, sister, son, daughter, grandma, grandpa, aunt, uncle, cousin, spouse or partner, best friend, friend, coworker, neighbor, or "other" (the user describes it).
@@ -190,12 +192,57 @@ After each call, the memory writer (Opus, in `hangUp()`) already updates that fr
 - **Cost:** about one extra small Claude call per connected friend after each call. It could use Haiku to keep it cheap.
 - **Moving Rosa and George over:** they become a "married" connection between two "friend" roles. Their current share-everything link becomes filtered news like everyone else's.
 
+### What's built (October 23, 2026)
+| Piece | Where | Notes |
+|---|---|---|
+| Role rules | `contacts/_roles/<role>.md`: friend, best-friend, spouse, mom, dad, sister, brother, grandparent, coworker, neighbor | Plain English: who they are to you, what news would reach them, what wouldn't. Added to the friend's instructions. Tune freely; add a file for a new role. |
+| A friend's role | `role` in contact.json; `tools/contact.py role <id> <role>`, or `create --role` | Friends without a role (Joe today) get no role section, so their instructions are unchanged. |
+| Connections | `links` in contact.json: `[{ id, relation }]`; `tools/contact.py link` | The relation says what the other friend is to them ("your husband"). |
+| Filtered news | `passNews()` in `server.mjs`, run after each call by Haiku 5.5 | For each connected friend: what would plausibly travel, given the connection and the receiver's role. Skips anything said in confidence. Saved to `data/contacts/<receiver>/heard-from/<sender>.md` and added to the receiver's next call. Tested: a promotion the user asked to keep quiet didn't reach George; the meatball recipe and a Phoenix trip did. |
+| Starting over | `tools/contact.py reset <id>` | Developer-only. Archives memory, call log and heard-from news; never deletes. |
+
+**Still to do:** the in-app "What Mom has heard from others" view; directional rules (news flows one way only); starter memory; tuning the role files with real family examples.
+
+## 5. Live knowledge: real sports, weather and web search
+
+**Status: built October 23, 2026** (`knowledge.mjs`). Friends can talk about what's actually happening instead of guessing.
+
+### What a friend can know
+Set per friend in contact.json as `knows`, with `tools/contact.py knows <id> [--nfl-team MIN] [--home "Town, State"] [--web]`:
+
+| Setting | At the start of every call (no waiting) | During the call (a lookup tool) |
+|---|---|---|
+| `nflTeam` | A briefing: record, every result so far, the next games, team headlines, division standings | Any team's record, results, schedule and news; this week's scores; standings |
+| `home` | The weather where they live: now, plus a 3-day forecast | The weather anywhere ("what's it like in Phoenix?") |
+| `web` | — | Web search (Anthropic's server tool, up to 3 searches per reply), for recipes, prices and anything else |
+
+- Before a lookup, the friend says one short line ("Hang on, let me look"), which is spoken while the lookup runs. They answer in a sentence or two, in their own words, and never make up scores, prices or forecasts.
+- Friends without `knows` (Joe today) get no tools and no briefing, so nothing changes for them.
+
+### Data sources
+| Data | Source | Cost | Cached for |
+|---|---|---|---|
+| NFL teams, schedules, scores, news | ESPN's public site API (`site.api.espn.com`; no key; unofficial, so it could change) | Free | 15 minutes (2 minutes during a live game); the team list 7 days |
+| Standings | ESPN (`/apis/v2/.../standings?level=3`) | Free | 30 minutes |
+| Weather | Open-Meteo forecast and geocoding (no key) | Free for non-commercial use; a paid plan is needed for a commercial release | 30 minutes; place lookups 30 days |
+| Web search | Anthropic `web_search_20260209` | About $10 per 1,000 searches, plus tokens | Not cached |
+
+- **Cache:** `data/cache/*.json`, kept across restarts. If a source is down, the last good data is used.
+- **Background refresh:** while the app is open, followed teams and hometown weather refresh every 15 minutes (every 2 during a live game), so calls start with fresh data.
+
+### For shipping
+- **ESPN's API is unofficial.** For a public release, consider a licensed sports-data provider, or keep ESPN behind a fallback with clear "couldn't get scores" handling (already there).
+- **Open-Meteo** requires a paid plan for commercial use.
+- **The in-app friend wizard** needs a "What do they keep up with?" step: a team, a hometown, web search on or off.
+- More feeds later: other sports (ESPN has NBA, MLB, NHL and college on the same API), local news, a horoscope, stock prices.
+
 ## Suggested order
 
 | Step | What | Rough size |
 |---|---|---|
 | 1 | In-app friend wizard with test call and finalize; starter friends list; picture and voice changes (move `tools/contact.py` into the server) | 1–2 weeks |
-| 1b | Roles, connections and filtered news (section 4), replacing today's share-everything link | 1–2 weeks |
+| 1b | Roles, connections and filtered news (section 4). **Core built October 23, 2026**; still to do: the "what they've heard" view, directional rules, starter memory | under 1 week left |
+| 1c | Live knowledge (section 5). **Built October 23, 2026**; for shipping: licensed data sources and a wizard step | a few days |
 | 2 | Local speech recognition (Whisper) for privacy and offline use | about 1 week |
 | 3 | Electron app: encrypted key, first-run downloads, hardware check and tiers | 2–3 weeks |
 | 4 | Signing, auto-update, licenses screen, privacy notice, 18+ check; private beta with a few friends' PCs | about 1 week, plus beta time |

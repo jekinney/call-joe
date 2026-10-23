@@ -53,9 +53,25 @@ video\.venv\Scripts\python.exe tools\contact.py link rosa george --relation "you
 ```
 
 - `--relation` is what the second friend is to the first ("George is your husband"). `--back` is the reverse ("Rosa is your wife").
-- From their next call on, each one gets the other's notes about you, like a couple talking it over at dinner. They know they weren't on each other's calls.
+- After each call, news about you travels to the connected friend, filtered by **their role in your life** (see below) and how they're connected. It's saved as what they've "heard" (`data/contacts/<id>/heard-from/`), never as the other friend's raw notes. Anything you ask to keep private stays private.
 - `unlink rosa george` removes the link both ways. Their own memories stay as they are.
 - Their personas should also mention each other (for example, Rosa's says George is her husband), so they can talk about each other even before you've called both.
+
+## A friend's role in your life
+
+`tools\contact.py role <id> <role>` sets who they are to you: friend, best-friend, spouse, mom, dad, sister, brother, grandparent, coworker or neighbor. Each role has a rules file in `contacts/_roles/` (what they'd plausibly hear about you, and what they wouldn't), and it's added to their instructions. Edit those files to fit your family, or add a new role file.
+
+## What they keep up with (live knowledge)
+
+`tools\contact.py knows <id> --nfl-team MIN --home "Bloomington, Minnesota" --web`
+- `--nfl-team`: real scores, schedule, standings and headlines from ESPN, in a briefing at the start of each call, plus lookups during it.
+- `--home`: the real weather where they live, plus weather lookups anywhere.
+- `--web`: web search during calls, for recipes, prices and anything else.
+- `--clear` removes everything. Details are in `docs/roadmap.md`, section 5.
+
+## Starting a friend over
+
+`tools\contact.py reset <id>` archives their memory, call log and news from other friends to `data/contacts/<id>/archive/`, so the next call is a fresh start. Nothing is deleted. Their personality, voice, face and settings stay.
 
 ## Where a friend lives
 
