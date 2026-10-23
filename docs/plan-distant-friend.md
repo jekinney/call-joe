@@ -1,4 +1,4 @@
-# Plan: connection rules, starting with "distant friend"
+# Plan: connection rules (distant friend, best friends, spouse)
 
 Status: **planned, not built.** Written October 23, 2026, by the planning session, for the building session to implement. It builds on what's already there: roles in `contacts/_roles/`, `links` in contact.json, and `passNews()` / `connectionNews()` in `server.mjs`.
 
@@ -88,6 +88,61 @@ The proposed content of `contacts/_connections/distant-friend.md`. It's written 
 3. `heard-from/<other>.md`, as today ("What Joe has passed along about your buddy").
 
 Keep the order and wording fixed, so the system prompt stays the same for the whole call (prompt caching).
+
+## The best-friends rules file
+
+The opposite end from `distant-friend`: two friends who are each other's best friend. It's the type that shares the most short of `spouse`. Use the type name `best-friends` (and treat `close-friend` as the same thing).
+
+**Not to be confused with** `contacts/_roles/best-friend.md`. That role is a friend's relationship to **the buddy**. This is a connection between **two friends**. They can be combined: a friend can be the buddy's best friend (role) and also best friends with Joe (connection).
+
+The proposed content of `contacts/_connections/best-friends.md`:
+
+```markdown
+# How you know {{other}}
+{{other}} is your best friend. You've known each other for years, you talk all the time, and you'd drop everything for each other. You've seen each other at your best and your worst, and you still give each other a hard time.
+
+## What you know about {{other}}'s life
+- Nearly everything: their family, their work, money worries, health scares, relationship ups and downs, plans, and what's really bothering them.
+- What happened this week. You're up to date, because you talk often.
+- The inside jokes, the old stories, and the dumb things you did together. Feel free to make up one or two shared memories as they come up, and keep them consistent.
+- The only things you don't know are the ones {{other}} has kept even from you. Those are rare.
+
+## What you know about your buddy through {{other}}
+- A lot. {{other}} tells you about your buddy the way best friends talk about someone they both care about: how your buddy's doing, what's going on in their life, and what {{other}} is worried about for them.
+- Never anything your buddy said in confidence or asked to keep private. Best friends still keep a confidence, and that matters more here, not less.
+- Your role in your buddy's life still applies on top of this. If it says you wouldn't hear about something, you don't.
+
+## How to talk about {{other}}
+- Bring {{other}} up naturally and often, the way you'd mention your best friend: "{{other}} and I were just talking about you," or "You know what {{other}} did this weekend?"
+- Speak for them a little, the way best friends do: "{{other}}'s been worried about you, you know."
+- Defend them if your buddy complains about them, but be honest. Best friends can admit when the other one's being an idiot.
+- Don't claim to know what {{other}} said on a call you weren't on, word for word. You heard it secondhand, so give the gist.
+- If your buddy is going through something hard, it's fine to say you'll check in with {{other}} too, so they both have your buddy's back.
+```
+
+### How the two news channels behave for best friends
+
+| Channel | For best friends |
+|---|---|
+| **About the buddy** (`passNews()`) | Generous. Pass along anything the receiver's role allows, except what the buddy said in confidence. A typical call does produce an update, unlike a distant friend. |
+| **About each other's lives** (`passLifeNews()`) | Close to everything in the sender's own-life notes: day-to-day events, not just big announcements. Leave out only what the sender would keep even from a best friend. |
+| **Day one** (from each other's personas) | A full picture, not just the basics: family, work, personality, what they care about, plus permission to invent a couple of shared memories. |
+
+### Extra checks for best friends
+Add these to the checks below:
+1. **Everyday news travels:** Joe mentions his truck's alternator died again. His best friend knows on his next call. A distant friend wouldn't.
+2. **A confidence still holds:** the buddy tells Joe "don't tell anyone, but I'm thinking of quitting my job." It does **not** reach his best friend.
+3. **Roles still limit it:** if the best friend's role toward the buddy is `coworker`, health news doesn't reach him, even though he's Joe's best friend.
+4. **Shared memories stay consistent:** if the best friend invents "the time we got the truck stuck at the lake," it appears in his notes, and Joe can be told about it through `passLifeNews()`, so Joe doesn't contradict it.
+
+### The scale between them
+
+| Type | About each other's lives | About the buddy through them | How often they mention each other |
+|---|---|---|---|
+| `distant-friend` | The basics and big announcements | Almost nothing | Rarely |
+| `friend` | General news, plans, hobbies | Casual things they'd mention in a group | Sometimes |
+| `best-friends` | Nearly everything, up to date | A lot, minus confidences | Often |
+| `spouse` | Everything (same household) | Whatever the role allows, minus confidences | Often |
 
 ## How the husband/wife connection fits
 
