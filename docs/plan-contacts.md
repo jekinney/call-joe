@@ -1,6 +1,8 @@
 # Plan: more friends (contacts)
 
-Status: planned, not built yet. Written October 23, 2026.
+Status: **built** on October 23, 2026, with one change from the plan below. Friends are built one at a time with Claude (`/new-contact`, see `docs/building-a-contact.md`) instead of with an "Add a friend" form in the app. The user wanted to hand Claude a voice clip and a face picture and have it set everything up. Friends don't know about each other.
+
+Written October 23, 2026.
 
 ## The goal
 

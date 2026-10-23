@@ -17,7 +17,32 @@
     color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif;
     display: flex; flex-direction: column; align-items: center; overflow: hidden;
   }
-  header { width: 100%; display: flex; justify-content: flex-end; padding: 12px 16px; }
+  header { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; }
+  #backBtn { font-size: 15px; }
+  main { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; }
+
+  /* Friends list (home screen) */
+  .home-title { font-size: 26px; margin: 4px 0 18px; }
+  .contacts { width: min(520px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .contact {
+    display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line); cursor: pointer;
+  }
+  .contact:hover { border-color: var(--accent); }
+  .c-avatar {
+    width: 56px; height: 56px; border-radius: 50%; flex: none; overflow: hidden; display: grid; place-items: center;
+    background: linear-gradient(160deg, #8a5a2b, #4e3218); font-size: 24px; font-weight: 700;
+  }
+  .c-avatar img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 30%; }
+  .c-info { flex: 1; min-width: 0; }
+  .c-name { font-size: 18px; font-weight: 600; }
+  .c-last { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .round.mini { width: 44px; height: 44px; font-size: 19px; box-shadow: none; }
+  .round.mini.call { background: var(--green); }
+  .round.mini.video { background: #2f7fd1; }
+  .round.mini:disabled { opacity: .35; cursor: not-allowed; }
+  .home-hint { width: min(520px, calc(100% - 32px)); margin-top: 18px; text-align: center; }
+  .home-hint code { background: var(--panel); padding: 1px 6px; border-radius: 6px; }
   .icon-btn { background: none; border: 0; color: var(--muted); font-size: 22px; cursor: pointer; }
   .icon-btn:hover { color: var(--ink); }
 
@@ -103,11 +128,22 @@
 </style>
 </head>
 <body>
-<header><button class="icon-btn" id="settingsBtn" title="Settings">⚙</button></header>
+<header>
+  <button class="icon-btn" id="backBtn" title="Back to your friends" hidden>‹ Friends</button><span></span>
+  <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
+</header>
 
+<main id="home">
+  <h1 class="home-title">Your friends</h1>
+  <div id="contactList" class="contacts"></div>
+  <div class="hint home-hint">To add a friend, open Claude Code in the Call Joe folder and type <code>/new-contact</code>.
+    Have a short voice clip and a face picture ready.</div>
+</main>
+
+<main id="callScreen" hidden>
 <div class="who">
-  <div class="avatar">🧢</div>
-  <h1>Joe Dirt</h1>
+  <div class="avatar" id="friendAvatar">🧢</div>
+  <h1 id="friendName">Joe Dirt</h1>
   <div id="status">Ready when you are</div>
   <div id="timer"></div>
 </div>
@@ -118,17 +154,18 @@
 
 <div class="controls">
   <div class="ctl" id="muteCtl" hidden><button class="round soft" id="muteBtn" title="Mute your mic">🎙</button>Mute</div>
-  <div class="ctl" id="callCtl"><button class="round" id="callBtn" title="Call Joe">📞</button>Call</div>
-  <div class="ctl" id="videoCtl"><button class="round" id="videoBtn" title="Video call Joe">🎥</button>Video</div>
+  <div class="ctl" id="callCtl"><button class="round" id="callBtn" title="Voice call">📞</button>Call</div>
+  <div class="ctl" id="videoCtl"><button class="round" id="videoBtn" title="Video call">🎥</button>Video</div>
   <div class="ctl" id="switchCtl" hidden><button class="round soft" id="switchBtn" title="Switch between video and voice">🎥</button><span id="switchLabel">Video</span></div>
-  <div class="ctl" id="hushCtl" hidden><button class="round soft" id="hushBtn" title="Cut Joe off so you can talk">✋</button>Hush</div>
+  <div class="ctl" id="hushCtl" hidden><button class="round soft" id="hushBtn" title="Cut them off so you can talk">✋</button>Hush</div>
   <div class="ctl" id="hangCtl" hidden><button class="round" id="hangBtn" title="Hang up">📞</button>Hang up</div>
   <div class="ctl" id="ccCtl"><button class="round soft on" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
 </div>
+</main>
 
 <dialog id="keyDialog">
   <h2>One-time setup</h2>
-  <p class="hint">Joe needs an Anthropic API key to think. Get one at
+  <p class="hint">Your friends need an Anthropic API key to think. Get one at
     <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>
     and paste it here. It's only saved on this computer.</p>
   <label for="keyInput">API key</label>
@@ -138,14 +175,14 @@
 </dialog>
 
 <dialog id="settingsDialog">
-  <h2>Settings</h2>
-  <label for="modelSelect">Joe's brain</label>
+  <h2><span class="fn">Joe</span>'s settings</h2>
+  <label for="modelSelect"><span class="fn">Joe</span>'s brain</label>
   <select id="modelSelect">
     <option value="haiku">Haiku: fastest and cheapest</option>
     <option value="sonnet">Sonnet: quick and sharp (recommended)</option>
     <option value="opus">Opus: deepest, but slower and pricier</option>
   </select>
-  <div class="hint">Takes effect on Joe's next reply. His notes about you are always written by Opus.</div>
+  <div class="hint">Takes effect on <span class="fn">Joe</span>'s next reply. Their notes about you are always written by Opus.</div>
   <label for="engineSelect">Voice service</label>
   <select id="engineSelect">
     <option value="windows">Windows voices (free)</option>
@@ -154,7 +191,7 @@
   </select>
 
   <div id="windowsVoice">
-    <label for="voiceSelect">Joe's voice</label>
+    <label for="voiceSelect"><span class="fn">Joe</span>'s voice</label>
     <select id="voiceSelect"></select>
     <div class="hint">Pick one to hear it. The "Natural" voices at the top sound the most human.</div>
     <label for="rateInput">Talking speed</label>
@@ -169,7 +206,7 @@
       <div class="row"><button class="btn" id="elevenKeySave">Save key</button></div>
     </div>
     <div id="elevenVoiceRow" hidden>
-      <label for="elevenSelect">Joe's voice</label>
+      <label for="elevenSelect"><span class="fn">Joe</span>'s voice</label>
       <select id="elevenSelect"></select>
       <div class="hint">Want a southern voice? On <a href="https://elevenlabs.io/app/voice-library" target="_blank">elevenlabs.io</a> open the Voice Library, search "southern" or "country", and add one to My Voices. Then press Refresh.</div>
       <div class="row">
@@ -182,13 +219,13 @@
 
   <div id="chatterboxVoice" hidden>
     <div class="hint" id="cbStatus">Checking Chatterbox…</div>
-    <label for="cbSelect">Joe's voice</label>
+    <label for="cbSelect"><span class="fn">Joe</span>'s voice</label>
     <select id="cbSelect"></select>
 
     <label>Add a voice to clone</label>
     <div class="hint">Use a voice you have permission to copy: your own, or a friend or family member who's okay with it. About 15 seconds of clear talking in a quiet room works best.</div>
     <input id="cbName" type="text" placeholder="Name this voice, like Southern Joe" maxlength="40">
-    <div id="cbScript" class="script" hidden>Read this out loud, in your best country drawl:<br><em>"Well hey there, buddy! I tell you what, it's been a long ol' week out here. Brandy made biscuits this mornin', the kids been runnin' wild, and that old truck finally started on the first try. Pull up a chair and let's talk a spell."</em></div>
+    <div id="cbScript" class="script" hidden>Read this out loud, in the voice and accent you want:<br><em>"Well hey there, buddy! I tell you what, it's been a long old week around here. Got up early, had my coffee, and the whole day just got away from me. Anyway, pull up a chair and tell me what's going on with you."</em></div>
     <div class="row">
       <button class="btn ghost" id="cbUploadBtn">Upload a clip</button>
       <button class="btn" id="cbRecordBtn">● Record 15 seconds</button>
@@ -197,13 +234,13 @@
     <div id="cbError" class="err"></div>
   </div>
 
-  <label for="faceSelect">Video calls: Joe's face</label>
+  <label for="faceSelect">Video calls: <span class="fn">Joe</span>'s face</label>
   <div class="face-row">
     <img id="facePreview" alt="">
     <select id="faceSelect"></select>
   </div>
   <div class="hint" id="vidStatus">Checking the video engine…</div>
-  <div class="hint">Video calls need the Chatterbox or ElevenLabs voice so his lips can match. Use a made-up face, not a photo of a real person: front-facing, mouth closed, plain background.</div>
+  <div class="hint">Video calls need the Chatterbox or ElevenLabs voice so the lips can match. Use a made-up face, not a photo of a real person: front-facing, mouth closed, plain background.</div>
   <input id="faceName" type="text" placeholder="Name this face, like Joe" maxlength="40">
   <div class="row"><button class="btn ghost" id="faceUploadBtn">Upload a picture</button></div>
   <input id="faceFile" type="file" accept="image/*" hidden>
@@ -218,10 +255,31 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+// Voice, face and model settings belong to the friend on the call screen and are saved on the server.
+// Everything else (like captions on or off) is a preference kept in this browser.
+const PER_FRIEND = new Set(["model", "engine", "voice", "rate", "elevenVoice", "cbVoice", "face"]);
+let contact = null; // the friend on the call screen: { id, name, firstName, settings, calls, lastCall }
+let saveTimer = null;
 const store = {
-  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  get(k, d) {
+    if (PER_FRIEND.has(k)) return contact?.settings?.[k] ?? d;
+    try { return localStorage.getItem(k) ?? d; } catch { return d; }
+  },
+  set(k, v) {
+    if (PER_FRIEND.has(k)) {
+      if (!contact) return;
+      contact.settings[k] = v;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveContact, 300);
+      return;
+    }
+    try { localStorage.setItem(k, v); } catch {}
+  },
 };
+const saveContact = () => contact && fetch(`/api/contacts/${contact.id}`, {
+  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: contact.settings }),
+});
+const who = () => contact?.firstName ?? "your friend";
 
 // ---------- UI state ----------
 let state = "idle"; // idle | ringing | speaking | listening | thinking
@@ -237,6 +295,7 @@ function setState(s, text) {
   $("hangCtl").hidden = !inCall;
   $("muteCtl").hidden = !inCall;
   $("switchCtl").hidden = !inCall;
+  $("backBtn").hidden = inCall || $("callScreen").hidden;
   $("hushCtl").hidden = s !== "speaking";
   $("stage").hidden = !videoMode;
 }
@@ -280,7 +339,7 @@ function ring(seconds = 2) {
   return new Promise((r) => setTimeout(r, seconds * 1000));
 }
 
-// ---------- Joe's voice ----------
+// ---------- The friend's voice ----------
 const PREFERRED = ["Andrew", "Guy", "Christopher", "Brian", "Eric", "Roger", "Steffan", "Davis"];
 let voices = [];
 function loadVoices() {
@@ -460,7 +519,7 @@ async function playVideo(url, frames) {
   });
 }
 
-// While Joe listens, his idle clip plays forward and back so there's no jump at the loop point.
+// While your friend listens, their idle clip plays forward and back so there's no jump at the loop point.
 function startIdle() {
   clearInterval(idleTimer);
   let i = 0, dir = 1;
@@ -520,7 +579,7 @@ let turnId = 0;
 async function joeTurn(url, body, gate = Promise.resolve()) {
   const myTurn = ++turnId;
   stopListening();
-  if (state !== "ringing") setState("thinking", "Joe's thinking…");
+  if (state !== "ringing") setState("thinking", `${who()}'s thinking…`);
   let streamDone = false, queued = 0, full = "", pending = "", line = null;
 
   const maybeListen = () => {
@@ -533,7 +592,7 @@ async function joeTurn(url, body, gate = Promise.resolve()) {
     queued += 1;
     gate = gate.then(async () => {
       if (myTurn !== turnId) return;
-      if (state !== "speaking") setState("speaking", "Joe's talking…");
+      if (state !== "speaking") setState("speaking", `${who()}'s talking…`);
       await play();
       queued -= 1;
       maybeListen();
@@ -600,7 +659,7 @@ function startListening() {
       interimLine.textContent = shown;
       $("captions").scrollTop = $("captions").scrollHeight;
     }
-    // Wait for a short pause after you finish talking, then send it to Joe.
+    // Wait for a short pause after you finish talking, then send it to your friend.
     clearTimeout(sendTimer);
     if (heard.trim() && !interim) sendTimer = setTimeout(sendHeard, 1100);
   };
@@ -608,7 +667,7 @@ function startListening() {
     if (rec && state === "listening" && !muted) { try { rec.start(); } catch {} }
   };
   rec.onerror = (e) => {
-    if (e.error === "not-allowed") setState("listening", "Joe can't hear you. Allow the microphone and try again.");
+    if (e.error === "not-allowed") setState("listening", `${who()} can't hear you. Allow the microphone and try again.`);
   };
   try { rec.start(); } catch {}
 }
@@ -644,12 +703,12 @@ async function startCall(video) {
   const status = await fetch("/api/status").then((r) => r.json());
   if (!status.hasKey) return $("keyDialog").showModal();
   if (video && !faceName()) {
-    $("status").textContent = "Pick Joe's face in ⚙ settings first.";
+    $("status").textContent = `Pick ${who()}'s face in ⚙ settings first.`;
     return $("settingsBtn").click();
   }
-  // Ask for the mic up front so the first prompt doesn't interrupt Joe.
+  // Ask for the mic up front so the first prompt doesn't interrupt your friend.
   try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); }
-  catch { $("status").textContent = "Joe needs your microphone. Allow it and call again."; return; }
+  catch { $("status").textContent = `${who()} needs your microphone. Allow it and call again.`; return; }
   $("captions").innerHTML = "";
   voiceWarned = false;
   videoWarned = false;
@@ -665,8 +724,8 @@ async function startCall(video) {
   setState("ringing", "Ringing…");
   const ringing = ring(2);
   startTimer();
-  // Let it ring a couple of times before Joe picks up.
-  joeTurn("/api/call", null, ringing);
+  // Let it ring a couple of times before they pick up.
+  joeTurn("/api/call", { contact: contact.id }, ringing);
 }
 $("callBtn").onclick = () => startCall(false);
 $("videoBtn").onclick = () => startCall(true);
@@ -674,7 +733,7 @@ $("videoBtn").onclick = () => startCall(true);
 // Switch between video and voice in the middle of a call. Sentences already on their way play as they were made.
 $("switchBtn").onclick = async () => {
   if (videoMode) return leaveVideo();
-  if (!faceName()) { addLine("joe", "⚠ Pick Joe's face in ⚙ settings to turn on video.", "interim"); return; }
+  if (!faceName()) { addLine("joe", `⚠ Pick ${who()}'s face in ⚙ settings to turn on video.`, "interim"); return; }
   const problem = await videoReady();
   if (problem) { addLine("joe", `⚠ ${problem}`, "interim"); return; }
   enterVideo();
@@ -686,7 +745,7 @@ async function hangUp() {
   stopSpeaking();
   clearInterval(timerId);
   clearInterval(idleTimer);
-  setState("idle", "Hanging up… Joe's jotting down notes");
+  setState("idle", `Hanging up… ${who()}'s jotting down notes`);
   await fetch("/api/hangup", { method: "POST" }).catch(() => {});
   leaveVideo();
   setState("idle", "Call ended. Talk soon!");
@@ -694,7 +753,7 @@ async function hangUp() {
 $("hangBtn").onclick = hangUp;
 
 $("hushBtn").onclick = () => {
-  turnId += 1; // ignore the rest of what Joe was saying
+  turnId += 1; // ignore the rest of what they were saying
   stopSpeaking();
   startListening();
 };
@@ -721,13 +780,14 @@ $("keySave").onclick = async () => {
   $("keyInput").value = "";
   $("keyError").textContent = "";
   $("keyDialog").close();
-  $("status").textContent = "All set. Give Joe a call!";
+  $("status").textContent = contact ? `All set. Give ${who()} a call!` : "All set.";
 };
 
 $("settingsBtn").onclick = async () => {
+  if (!contact) return $("keyDialog").showModal();
   $("rateInput").value = store.get("rate", "1.05");
   const s = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
-  if (s.model) $("modelSelect").value = s.model;
+  $("modelSelect").value = store.get("model", "sonnet");
   hasEleven = !!s.hasEleven;
   $("engineSelect").value = store.get("engine", "windows");
   showEngine();
@@ -735,12 +795,11 @@ $("settingsBtn").onclick = async () => {
   $("settingsDialog").showModal();
 };
 $("settingsClose").onclick = () => { recorder?.stop(); $("settingsDialog").close(); };
-$("modelSelect").onchange = (e) =>
-  fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: e.target.value }) });
+$("modelSelect").onchange = (e) => store.set("model", e.target.value);
 const sampleVoice = () => {
-  if (state === "speaking") return; // don't talk over Joe mid-call
+  if (state === "speaking") return; // don't talk over your friend mid-call
   stopSpeaking();
-  prepareSpeech("Well hey there, buddy! It's Joe. How the heck are ya?")();
+  prepareSpeech(`Well hey there, buddy! It's ${who()}. How the heck are ya?`)();
 };
 
 function showEngine() {
@@ -947,12 +1006,70 @@ $("changeKey").onclick = () => { $("settingsDialog").close(); $("keyDialog").sho
 setInterval(() => fetch("/api/ping").catch(() => {}), 30000);
 window.addEventListener("pagehide", () => { if (state !== "idle") navigator.sendBeacon("/api/hangup"); });
 
-if (!SR) $("status").textContent = "Speech recognition isn't available in this browser. Open Joe in Microsoft Edge.";
+if (!SR) $("status").textContent = "Speech recognition isn't available in this browser. Open Call Joe in Chrome or Microsoft Edge.";
+// ---------- Friends ----------
+const LEGACY_KEYS = ["engine", "voice", "rate", "elevenVoice", "cbVoice", "face"];
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+
+async function showHome() {
+  contact = null;
+  idle?.stop();
+  idle = null;
+  leaveVideo();
+  $("callScreen").hidden = true;
+  $("home").hidden = false;
+  $("backBtn").hidden = true;
+  const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
+  $("contactList").innerHTML = list.map((c) => `
+    <div class="contact" data-id="${esc(c.id)}">
+      <div class="c-avatar">${c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0])}</div>
+      <div class="c-info">
+        <div class="c-name">${esc(c.name)}</div>
+        <div class="c-last">${c.lastCall ? `Last call ${esc(c.lastCall)}` : "You haven't called yet"}</div>
+      </div>
+      <button class="round mini call" data-start="voice" title="Voice call ${esc(c.name)}">📞</button>
+      <button class="round mini video" data-start="video" title="${c.face ? `Video call ${esc(c.name)}` : "Add a face picture in their settings for video calls"}" ${c.face ? "" : "disabled"}>🎥</button>
+    </div>`).join("") || `<div class="hint">No friends yet.</div>`;
+}
+
+$("contactList").onclick = (e) => {
+  const card = e.target.closest(".contact");
+  if (!card || e.target.disabled) return;
+  openContact(card.dataset.id, e.target.closest("[data-start]")?.dataset.start);
+};
+
+async function openContact(id, startWith) {
+  const c = await fetch(`/api/contacts/${id}`).then((r) => r.json());
+  contact = c;
+  // Joe's voice settings used to live only in this browser; bring them over to his contact once.
+  if (c.legacy) {
+    for (const k of LEGACY_KEYS) {
+      let v = null;
+      try { v = localStorage.getItem(k); } catch {}
+      if (v !== null && !(k in c.settings)) c.settings[k] = v;
+    }
+    await saveContact();
+  }
+  document.querySelectorAll(".fn").forEach((el) => (el.textContent = c.firstName));
+  $("friendName").textContent = c.name;
+  $("friendAvatar").innerHTML = c.settings.face
+    ? `<img src="/api/face?name=${encodeURIComponent(c.settings.face)}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:50% 30%;border-radius:50%">`
+    : esc(c.name[0]);
+  $("captions").innerHTML = "";
+  $("home").hidden = true;
+  $("callScreen").hidden = false;
+  idle = null;
+  setState("idle", c.calls ? `Ready when you are · ${c.calls} call${c.calls === 1 ? "" : "s"} so far` : "Ready when you are");
+  if (startWith) startCall(startWith === "video");
+}
+
+$("backBtn").onclick = () => { if (state === "idle") showHome(); };
+
 fetch("/api/status").then((r) => r.json()).then((s) => {
   hasEleven = !!s.hasEleven;
   if (!s.hasKey) $("keyDialog").showModal();
-  else if (s.calls) $("status").textContent = `Ready when you are · ${s.calls} call${s.calls === 1 ? "" : "s"} so far`;
 });
+showHome();
 </script>
 </body>
 </html>

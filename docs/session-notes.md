@@ -10,7 +10,7 @@ An AI friend on the Windows desktop that you "call" and talk to out loud, like p
 
 Joe Dirt: funny, a little redneck, and dead serious about his friends' and family's well-being. He's married to Brandy, a sweet, old-fashioned southern belle with some hillbilly in her, and they have three little kids: Bubba (6), Daisy Mae (4) and baby Tater (1). They also have a dog named Dirt Nap. His friendship with the user started fresh: on the first call he gets to know them.
 
-All of this lives in `persona.md`.
+All of this lives in `contacts/joe/persona.md`. Joe is now the first of any number of friends (contacts). Each has their own persona, voice, face and memory, and they don't know about each other. New friends are built with `/new-contact` (see `docs/building-a-contact.md`).
 
 ## How it works
 
@@ -40,12 +40,12 @@ All of this lives in `persona.md`.
 
 Rough costs, for a 30-minute call with caching on: Haiku under 1¢, Sonnet about 15¢, Opus about 30¢. ElevenLabs is billed separately (about $5–22 a month).
 
-## Rule: keep Joe, Joe
+## Rule: keep Joe, Joe (and every friend themselves)
 
-Joe has to stay the same friend while he keeps learning about the user. Any change to this app has to keep these working:
+These rules started with Joe and now apply to every friend. Joe has to stay the same friend while he keeps learning about the user. Any change to this app has to keep these working:
 
-1. **`persona.md` is who Joe is.** Change his personality or family on purpose, never as a side effect of other work.
-2. **The memory system stays.** That means `data/memory.json`, the Opus memory writer in `hangUp()`, and the memory section of the system prompt. Even if models, prompts or storage change, Joe must still read his notes at the start of each call and update them after it.
+1. **`contacts/joe/persona.md` is who Joe is.** Change his personality or family on purpose, never as a side effect of other work.
+2. **The memory system stays.** That means `data/contacts/<id>/memory.json`, the Opus memory writer in `hangUp()`, and the memory section of the system prompt. Even if models, prompts or storage change, Joe must still read his notes at the start of each call and update them after it.
 3. **Never wipe or reset `data/`.** If the memory format changes, convert the existing notes into the new format. Joe must not forget the user.
 4. **Joe's made-up life details are part of memory.** The notes keep what he has said about Brandy, the kids and his life, so he stays consistent from call to call.
 5. **Swapping the model or voice must not change who Joe is.** A new model or voice gets the same persona and the same notes.
@@ -55,6 +55,6 @@ Joe has to stay the same friend while he keeps learning about the user. Any chan
 
 - ElevenLabs audio hasn't been tested with a real key.
 - A full video call hasn't been tested with a live conversation yet. The video pieces were tested together: Chatterbox voice into Ditto face, inside the app.
-- More friends: see `docs/plan-contacts.md`.
+- More friends: built. Add them with `/new-contact`.
 
-Done: the app lives in `Documents\Call Joe`, with a **Call Joe** desktop shortcut. The first real calls worked on October 23, 2026, and Joe's memory notes saved correctly.
+Done: Joe moved into `data/contacts/joe/` (backup in `data/backup-before-contacts/`). The app lives in `Documents\Call Joe`, with a **Call Joe** desktop shortcut. The first real calls worked on October 23, 2026, and Joe's memory notes saved correctly.
