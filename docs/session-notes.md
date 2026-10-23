@@ -18,8 +18,9 @@ All of this lives in `persona.md`.
 2. The browser's speech recognition turns your voice into text and sends it to the server once you pause.
 3. The server sends the call so far to Claude and streams Joe's reply back as he says it.
 4. The page speaks each sentence as soon as it arrives, using a Windows voice, Chatterbox (a free cloned voice made on this PC), or ElevenLabs.
-5. When you hang up, Opus reads the call and updates Joe's memory notes about you in `data/memory.json`. The full transcript goes to `data/call-log.txt`.
-6. The server shuts itself down about 3 minutes after the window closes. If a call was still open, it saves it first.
+5. On a **video call**, each sentence's audio also goes to the face engine (`video/face_server.py`, on port 5176). It animates Joe's face picture to match the audio and streams the frames back while they're drawn. The page plays the audio and draws the matching frame on every screen refresh. While Joe listens, a short idle clip of him blinking and moving slightly loops forward and back.
+6. When you hang up, Opus reads the call and updates Joe's memory notes about you in `data/memory.json`. The full transcript goes to `data/call-log.txt`.
+7. The server shuts itself down about 3 minutes after the window closes. If a call was still open, it saves it first.
 
 ## Decisions we made, and why
 
@@ -31,6 +32,8 @@ All of this lives in `persona.md`.
 | **Prompt caching is on, and the system prompt is built once per call** | Every reply resends the whole call. Caching cuts that cost a lot, but only if the system prompt doesn't change mid-call. |
 | **Windows voices are free, and ElevenLabs is optional** | No built-in voice has a southern accent, and ElevenLabs does. If ElevenLabs fails mid-call, Joe switches to a Windows voice so he never goes silent. |
 | **Chatterbox is the free option for a southern voice** | ElevenLabs costs about $11 a month. Chatterbox (MIT license, from Resemble AI) clones a voice from about 15 seconds of audio and runs on the PC's RTX 4080 Super for free. It uses the Turbo model, its own Python 3.11 in `voice/.venv`, and a helper server on port 5175 that Joe's server starts. Voice samples live in `data/voices/`. Only clone voices you have permission to use. |
+| **Video calls use Ditto, a realistic face made from one picture** | Ditto (Ant Group, Apache-2.0) adds natural head movement and blinks. Its PyTorch version runs on the RTX 4080 Super without TensorRT. Out of the box it was too slow (0.7× real time), because every frame went back and forth between the processor and the graphics card. `video/fast_ditto.py` keeps the frames on the card, and `face_server.py` does all graphics-card work on one thread (a new thread per request cost over a second). Now Joe starts talking about 1.2–1.8 s after his voice is ready, at roughly 30 frames per second. `video/patches/blend_init.py` lets Ditto run without Microsoft's C++ compiler. MuseTalk was the backup option. It needs a video of the face and only moves the mouth. |
+| **Video calls need the Chatterbox or ElevenLabs voice** | Windows voices play inside the browser, so the face engine never gets the audio it needs to move his lips. |
 | **API keys stay on the server and never reach the page** | The page only receives Joe's text and audio. Keys live in `data/config.json`. |
 | **`data/` is never committed** | It holds API keys, Joe's notes about the user, and call logs. That's private. |
 | **Safety is built into the persona** | Joe drops the jokes and points to 988 or 911 if the user talks about hurting themselves or being in danger. He's honest that he's an AI if sincerely asked. He nudges the user toward their real-life people. |
@@ -50,6 +53,8 @@ Joe has to stay the same friend while he keeps learning about the user. Any chan
 
 ## Still open (as of October 23, 2026)
 
-- No real call has been tested yet. That needs the user's Anthropic API key.
 - ElevenLabs audio hasn't been tested with a real key.
-- The app still needs a permanent folder on the PC and a desktop shortcut (`make-shortcut.ps1`).
+- A full video call hasn't been tested with a live conversation yet. The video pieces were tested together: Chatterbox voice into Ditto face, inside the app.
+- More friends: see `docs/plan-contacts.md`.
+
+Done: the app lives in `Documents\Call Joe`, with a **Call Joe** desktop shortcut. The first real calls worked on October 23, 2026, and Joe's memory notes saved correctly.

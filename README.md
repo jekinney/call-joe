@@ -16,6 +16,11 @@ A desktop "phone call" with Joe Dirt, an AI buddy powered by Claude. Click Call,
   - Free Windows voices.
   - **Chatterbox:** free voice cloning on your own PC. It needs an NVIDIA graphics card to keep up on a call. Run `powershell -ExecutionPolicy Bypass -File voice\setup-chatterbox.ps1` once to install it, then record or upload about 15 seconds of the voice you want, using only voices you have permission to copy.
   - ElevenLabs, for realistic voices. Needs an ElevenLabs API key.
+- **Video calls (🎥):**
+  - Joe's face is animated from one picture, on your NVIDIA graphics card.
+  - Run `powershell -ExecutionPolicy Bypass -File video\setup-ditto.ps1` once to install it, then upload a face picture in settings. Use a made-up face, not a real person.
+  - Video calls need the Chatterbox or ElevenLabs voice.
+  - You can switch between video and voice during a call.
 
 ## Files
 
@@ -23,5 +28,7 @@ A desktop "phone call" with Joe Dirt, an AI buddy powered by Claude. Click Call,
 - `server.mjs` — local server that talks to Claude and ElevenLabs.
 - `index.html` — the call screen.
 - `voice/` — the Chatterbox installer and its local voice server.
-- `data/` — your API keys, Joe's memory notes, call logs and voice samples. Never committed.
+- `video/` — the Ditto installer, the face server for video calls, and the speed-ups that make it fast enough to run live.
+- `data/` — your API keys, Joe's memory notes, call logs, voice samples and face pictures. Never committed.
+- `docs/plan-contacts.md` — the plan for adding more friends.
 - `docs/session-notes.md` — how Joe was built, the decisions behind it, and the rules for keeping Joe himself as he learns.

@@ -2,5 +2,8 @@
 data/
 node_modules/
 voice/.venv/
+video/.venv/
+video/ditto/
+video/checkpoints/
 __pycache__/
 joe.ico

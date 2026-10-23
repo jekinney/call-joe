@@ -46,6 +46,21 @@
     mask-image: linear-gradient(to bottom, transparent, #000 25%);
   }
   #captions.hidden { visibility: hidden; }
+
+  /* Video calls: Joe's face fills the middle; captions shrink to a strip under it. */
+  #stage { flex: 1; min-height: 0; width: min(560px, calc(100% - 32px)); display: flex; justify-content: center; margin-top: 10px; }
+  #faceCanvas {
+    height: 100%; max-width: 100%; aspect-ratio: 3 / 4; object-fit: contain; border-radius: 16px;
+    background: #000; box-shadow: 0 10px 30px rgba(0,0,0,.5); border: 3px solid transparent;
+  }
+  body.video.listening #faceCanvas { border-color: var(--green); }
+  body.video .avatar { display: none; }
+  body.video .who { margin-top: 0; }
+  body.video .who h1 { font-size: 20px; }
+  body.video #captions { flex: 0 0 auto; max-height: 18vh; margin: 8px 0; }
+  #videoBtn, #switchBtn.to-video { background: #2f7fd1; }
+  .face-row { display: flex; gap: 10px; align-items: center; }
+  .face-row img { width: 54px; height: 72px; object-fit: cover; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); }
   .line { padding: 8px 12px; border-radius: 12px; max-width: 85%; line-height: 1.4; }
   .line.joe { background: var(--panel); align-self: flex-start; }
   .line.you { background: #31452f; align-self: flex-end; }
@@ -97,11 +112,15 @@
   <div id="timer"></div>
 </div>
 
+<div id="stage" hidden><canvas id="faceCanvas" width="540" height="720"></canvas></div>
+
 <div id="captions"></div>
 
 <div class="controls">
   <div class="ctl" id="muteCtl" hidden><button class="round soft" id="muteBtn" title="Mute your mic">🎙</button>Mute</div>
   <div class="ctl" id="callCtl"><button class="round" id="callBtn" title="Call Joe">📞</button>Call</div>
+  <div class="ctl" id="videoCtl"><button class="round" id="videoBtn" title="Video call Joe">🎥</button>Video</div>
+  <div class="ctl" id="switchCtl" hidden><button class="round soft" id="switchBtn" title="Switch between video and voice">🎥</button><span id="switchLabel">Video</span></div>
   <div class="ctl" id="hushCtl" hidden><button class="round soft" id="hushBtn" title="Cut Joe off so you can talk">✋</button>Hush</div>
   <div class="ctl" id="hangCtl" hidden><button class="round" id="hangBtn" title="Hang up">📞</button>Hang up</div>
   <div class="ctl" id="ccCtl"><button class="round soft on" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
@@ -178,6 +197,18 @@
     <div id="cbError" class="err"></div>
   </div>
 
+  <label for="faceSelect">Video calls: Joe's face</label>
+  <div class="face-row">
+    <img id="facePreview" alt="">
+    <select id="faceSelect"></select>
+  </div>
+  <div class="hint" id="vidStatus">Checking the video engine…</div>
+  <div class="hint">Video calls need the Chatterbox or ElevenLabs voice so his lips can match. Use a made-up face, not a photo of a real person: front-facing, mouth closed, plain background.</div>
+  <input id="faceName" type="text" placeholder="Name this face, like Joe" maxlength="40">
+  <div class="row"><button class="btn ghost" id="faceUploadBtn">Upload a picture</button></div>
+  <input id="faceFile" type="file" accept="image/*" hidden>
+  <div id="faceError" class="err"></div>
+
   <div class="row">
     <button class="btn ghost" id="testVoice">Test voice</button>
     <button class="btn ghost" id="changeKey">Change API key</button>
@@ -198,13 +229,16 @@ let callStart = 0, timerId = null, muted = false;
 
 function setState(s, text) {
   state = s;
-  document.body.className = s;
+  document.body.className = s + (videoMode ? " video" : "");
   $("status").textContent = text;
   const inCall = s !== "idle";
   $("callCtl").hidden = inCall;
+  $("videoCtl").hidden = inCall;
   $("hangCtl").hidden = !inCall;
   $("muteCtl").hidden = !inCall;
+  $("switchCtl").hidden = !inCall;
   $("hushCtl").hidden = s !== "speaking";
+  $("stage").hidden = !videoMode;
 }
 
 function addLine(who, text, cls = "") {
@@ -329,15 +363,155 @@ function prepareSpeech(text) {
     return URL.createObjectURL(await r.blob());
   });
   audio.catch(() => {});
-  return () => audio.then(playUrl, (err) => {
+  const fallback = (err) => {
     if (!voiceWarned) { voiceWarned = true; addLine("joe", `⚠ ${err.message} Using a Windows voice for now.`, "interim"); }
     return speakWindows(clean);
+  };
+  if (!videoMode || !faceName()) return () => audio.then(playUrl, fallback);
+  // Video: once the audio is ready, the face engine starts drawing this sentence's frames from it.
+  const video = audio.then(async (url) => {
+    const blob = await fetch(url).then((r) => r.blob());
+    return { url, frames: frameStream(`/api/video/frames?face=${encodeURIComponent(faceName())}`, { method: "POST", body: blob }) };
   });
+  video.catch(() => {});
+  return () => video.then(({ url, frames }) => playVideo(url, frames), fallback);
+}
+
+// ---------- Video calls ----------
+const FPS = 25;
+let videoMode = false, idle = null, idleTimer = null, talking = false, videoWarned = false;
+const activeStreams = new Set();
+const faceCanvas = $("faceCanvas");
+const faceCtx = faceCanvas.getContext("2d");
+const faceName = () => store.get("face", "");
+
+function drawFace(img) {
+  if (faceCanvas.width !== img.width || faceCanvas.height !== img.height) {
+    faceCanvas.width = img.width;
+    faceCanvas.height = img.height;
+  }
+  faceCtx.drawImage(img, 0, 0);
+}
+
+// Reads the face engine's stream of [4-byte length][JPEG] frames into ImageBitmaps as they arrive.
+function frameStream(url, init) {
+  const s = { frames: [], done: false, error: null, ctrl: new AbortController(), waiters: [] };
+  const wake = () => s.waiters.splice(0).forEach((w) => w());
+  s.until = (n) => new Promise((resolve) => {
+    const check = () => (s.frames.length >= n || s.done ? resolve() : s.waiters.push(check));
+    check();
+  });
+  s.stop = () => s.ctrl.abort();
+  activeStreams.add(s);
+  fetch(url, { ...init, signal: s.ctrl.signal }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "The video engine didn't answer.");
+    const reader = r.body.getReader();
+    let buf = new Uint8Array(0);
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const joined = new Uint8Array(buf.length + value.length);
+      joined.set(buf);
+      joined.set(value, buf.length);
+      buf = joined;
+      while (buf.length >= 4) {
+        const len = new DataView(buf.buffer, buf.byteOffset).getUint32(0);
+        if (buf.length < 4 + len) break;
+        s.frames.push(await createImageBitmap(new Blob([buf.subarray(4, 4 + len)], { type: "image/jpeg" })));
+        buf = buf.slice(4 + len);
+        wake();
+      }
+    }
+  }).catch((err) => { if (err.name !== "AbortError") s.error = err; })
+    .finally(() => { s.done = true; activeStreams.delete(s); wake(); });
+  return s;
+}
+
+// Plays one sentence: the audio drives the clock, and the frame for that moment is drawn each screen refresh.
+async function playVideo(url, frames) {
+  await frames.until(8); // a third of a second of frames in hand before he starts talking
+  if (frames.ctrl.signal.aborted) return URL.revokeObjectURL(url); // hushed or hung up while it was loading
+  if (!frames.frames.length) {
+    if (frames.error && !videoWarned) { videoWarned = true; addLine("joe", `⚠ ${frames.error.message} Showing his picture for now.`, "interim"); }
+    return playUrl(url);
+  }
+  return new Promise((resolve) => {
+    const a = new Audio(url);
+    let finished = false, raf = 0;
+    const draw = () => {
+      const i = Math.min(Math.floor(a.currentTime * FPS), frames.frames.length - 1);
+      if (i >= 0) drawFace(frames.frames[i]);
+      raf = requestAnimationFrame(draw);
+    };
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      cancelAnimationFrame(raf);
+      talking = false;
+      frames.stop();
+      URL.revokeObjectURL(url);
+      if (currentAudio === a) currentAudio = null;
+      resolve();
+    };
+    currentAudio = a;
+    talking = true;
+    a.onended = a.onerror = a.onpause = done;
+    a.play().then(draw, done);
+  });
+}
+
+// While Joe listens, his idle clip plays forward and back so there's no jump at the loop point.
+function startIdle() {
+  clearInterval(idleTimer);
+  let i = 0, dir = 1;
+  idleTimer = setInterval(() => {
+    const list = idle?.frames ?? [];
+    if (talking || !list.length) return;
+    i = Math.max(0, Math.min(i, list.length - 1));
+    drawFace(list[i]);
+    if (i + dir >= list.length || i + dir < 0) dir = -dir;
+    i += dir;
+  }, 1000 / FPS);
+}
+
+async function enterVideo() {
+  videoMode = true;
+  document.body.classList.add("video");
+  $("stage").hidden = false;
+  $("switchBtn").textContent = "📞";
+  $("switchBtn").classList.remove("to-video");
+  $("switchLabel").textContent = "Voice";
+  if (activeEngine() === "windows" && !videoWarned) {
+    videoWarned = true;
+    addLine("joe", "⚠ Video calls need the Chatterbox or ElevenLabs voice to move his lips. Pick one in ⚙ settings.", "interim");
+  }
+  const img = new Image();
+  img.onload = () => { if (!idle?.frames.length) drawFace(img); };
+  img.src = `/api/face?name=${encodeURIComponent(faceName())}&t=${Date.now()}`;
+  if (!idle || idle.error || idle.face !== faceName()) {
+    idle?.stop();
+    idle = frameStream(`/api/video/idle?face=${encodeURIComponent(faceName())}`);
+    idle.face = faceName();
+  }
+  startIdle();
+}
+
+function leaveVideo() {
+  videoMode = false;
+  document.body.classList.remove("video");
+  $("stage").hidden = true;
+  $("switchBtn").textContent = "🎥";
+  $("switchBtn").classList.add("to-video");
+  $("switchLabel").textContent = "Video";
+  clearInterval(idleTimer);
 }
 
 function stopSpeaking() {
   speechSynthesis.cancel();
   currentAudio?.pause();
+  // Stop drawing sentences nobody will see (but keep the idle clip).
+  for (const s of activeStreams) if (s !== idle) s.stop();
+  talking = false;
 }
 
 // ---------- Talking to the server ----------
@@ -453,20 +627,57 @@ function sendHeard() {
 }
 
 // ---------- Buttons ----------
-$("callBtn").onclick = async () => {
+// Waits (up to about a minute) for the face engine to load, so the first sentence isn't held up.
+async function videoReady() {
+  for (let i = 0; i < 60; i++) {
+    const s = await fetch(i ? "/api/video/status" : "/api/video/start", { method: i ? "GET" : "POST" })
+      .then((r) => r.json()).catch(() => ({}));
+    if (!s.installed) return "The video engine isn't installed. Run video\\setup-ditto.ps1 once to set it up.";
+    if (s.error) return `The video engine couldn't start: ${s.error}`;
+    if (s.ready) return null;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return "The video engine is taking too long to start.";
+}
+
+async function startCall(video) {
   const status = await fetch("/api/status").then((r) => r.json());
   if (!status.hasKey) return $("keyDialog").showModal();
+  if (video && !faceName()) {
+    $("status").textContent = "Pick Joe's face in ⚙ settings first.";
+    return $("settingsBtn").click();
+  }
   // Ask for the mic up front so the first prompt doesn't interrupt Joe.
   try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); }
   catch { $("status").textContent = "Joe needs your microphone. Allow it and call again."; return; }
   $("captions").innerHTML = "";
   voiceWarned = false;
+  videoWarned = false;
   if (activeEngine() === "chatterbox") fetch("/api/chatterbox/start", { method: "POST" }).catch(() => {});
+  if (video) {
+    $("status").textContent = "Connecting video…";
+    const problem = await videoReady();
+    if (problem) { $("status").textContent = problem; return; }
+    enterVideo();
+  } else {
+    leaveVideo();
+  }
   setState("ringing", "Ringing…");
   const ringing = ring(2);
   startTimer();
   // Let it ring a couple of times before Joe picks up.
   joeTurn("/api/call", null, ringing);
+}
+$("callBtn").onclick = () => startCall(false);
+$("videoBtn").onclick = () => startCall(true);
+
+// Switch between video and voice in the middle of a call. Sentences already on their way play as they were made.
+$("switchBtn").onclick = async () => {
+  if (videoMode) return leaveVideo();
+  if (!faceName()) { addLine("joe", "⚠ Pick Joe's face in ⚙ settings to turn on video.", "interim"); return; }
+  const problem = await videoReady();
+  if (problem) { addLine("joe", `⚠ ${problem}`, "interim"); return; }
+  enterVideo();
 };
 
 async function hangUp() {
@@ -474,8 +685,10 @@ async function hangUp() {
   stopListening();
   stopSpeaking();
   clearInterval(timerId);
+  clearInterval(idleTimer);
   setState("idle", "Hanging up… Joe's jotting down notes");
   await fetch("/api/hangup", { method: "POST" }).catch(() => {});
+  leaveVideo();
   setState("idle", "Call ended. Talk soon!");
 }
 $("hangBtn").onclick = hangUp;
@@ -518,6 +731,7 @@ $("settingsBtn").onclick = async () => {
   hasEleven = !!s.hasEleven;
   $("engineSelect").value = store.get("engine", "windows");
   showEngine();
+  refreshFaces();
   $("settingsDialog").showModal();
 };
 $("settingsClose").onclick = () => { recorder?.stop(); $("settingsDialog").close(); };
@@ -612,6 +826,57 @@ const needName = () => {
 
 $("cbUploadBtn").onclick = () => { if (!needName()) $("cbFile").click(); };
 $("cbFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) saveVoice(f); };
+
+// Face pictures for video calls
+async function refreshFaces() {
+  const names = await fetch("/api/faces").then((r) => r.json()).catch(() => []);
+  const sel = $("faceSelect");
+  sel.innerHTML = "";
+  if (!names.length) sel.add(new Option("No faces yet: upload a picture below", ""));
+  for (const n of names) sel.add(new Option(n, n));
+  const saved = faceName();
+  sel.value = names.includes(saved) ? saved : names[0] ?? "";
+  store.set("face", sel.value);
+  $("facePreview").src = sel.value ? `/api/face?name=${encodeURIComponent(sel.value)}&t=${Date.now()}` : "";
+  const s = await fetch("/api/video/status").then((r) => r.json()).catch(() => ({}));
+  $("vidStatus").textContent = !s.installed
+    ? "The video engine isn't installed yet. Run video\\setup-ditto.ps1 once to set it up."
+    : s.error ? `The video engine had a problem: ${s.error}`
+    : s.ready ? `The video engine is running on your ${s.device === "cuda" ? "graphics card" : "processor"}.`
+    : "The video engine starts when you make a video call.";
+}
+$("faceSelect").onchange = (e) => { store.set("face", e.target.value); refreshFaces(); if (videoMode) enterVideo(); };
+$("faceUploadBtn").onclick = () => {
+  if ($("faceName").value.trim()) return $("faceFile").click();
+  $("faceError").textContent = "Give the face a name first.";
+  $("faceName").focus();
+};
+// Crops any picture to a 3:4 portrait (keeping the top, where faces usually are) at 540x720, then saves it.
+$("faceFile").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  $("faceError").textContent = "Saving…";
+  try {
+    const img = await createImageBitmap(file);
+    const ratio = 3 / 4;
+    let sw = img.width, sh = img.height, sx = 0, sy = 0;
+    if (sw / sh > ratio) { sw = sh * ratio; sx = (img.width - sw) / 2; } else { sh = sw / ratio; sy = (img.height - sh) * 0.25; }
+    const c = document.createElement("canvas");
+    c.width = 540; c.height = 720;
+    c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, 540, 720);
+    const png = await new Promise((r) => c.toBlob(r, "image/png"));
+    const res = await fetch(`/api/faces?name=${encodeURIComponent($("faceName").value.trim())}`, { method: "POST", body: png });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error);
+    store.set("face", out.name);
+    $("faceName").value = "";
+    $("faceError").textContent = "";
+    refreshFaces();
+  } catch (err) {
+    $("faceError").textContent = err.message || "Couldn't read that picture. Try a JPG or PNG.";
+  }
+};
 
 let recorder = null;
 $("cbRecordBtn").onclick = async () => {

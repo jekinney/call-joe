@@ -46,32 +46,45 @@ let client = null;
 let call = null; // { system, messages, started }
 let lastPing = Date.now();
 
-// ---- Chatterbox: free local voice cloning, run by a Python helper on the graphics card ----
+// ---- Python helpers on the graphics card, started on demand: Chatterbox (voice cloning) and Ditto (talking face) ----
+// Each one quits by itself about 30 seconds after this server stops answering /api/alive.
+function pythonHelper(name, folder, script, port) {
+  const python = path.join(dir, folder, ".venv", "Scripts", "python.exe");
+  const url = `http://127.0.0.1:${port}`;
+  let proc = null;
+  const health = () => fetch(`${url}/health`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
+  process.on("exit", () => proc?.kill());
+  return {
+    url,
+    async start() {
+      if (proc || !fs.existsSync(python) || (await health())) return;
+      const log = fs.openSync(path.join(dataDir, `${name}.log`), "a");
+      proc = spawn(python, [path.join(dir, folder, script), String(port), String(PORT)], {
+        cwd: dir, stdio: ["ignore", log, log], windowsHide: true,
+      });
+      proc.on("exit", () => { proc = null; });
+    },
+    async status() {
+      if (!fs.existsSync(python)) return { installed: false };
+      const h = await health();
+      return { installed: true, running: !!(h || proc), ready: !!h?.ready, error: h?.error ?? null, device: h?.device ?? null };
+    },
+  };
+}
+
+const chatterbox = pythonHelper("chatterbox", "voice", "chatterbox_server.py", 5175);
+const faceEngine = pythonHelper("face", "video", "face_server.py", 5176);
+
 const voicesDir = path.join(dataDir, "voices"); // voice samples to clone; private, never committed
+const facesDir = path.join(dataDir, "faces"); // face pictures for video calls; private, never committed
 fs.mkdirSync(voicesDir, { recursive: true });
-const CHATTERBOX_PORT = 5175;
-const chatterboxPython = path.join(dir, "voice", ".venv", "Scripts", "python.exe");
-const chatterboxUrl = `http://127.0.0.1:${CHATTERBOX_PORT}`;
-let chatterbox = null;
+fs.mkdirSync(facesDir, { recursive: true });
 
-const chatterboxHealth = () =>
-  fetch(`${chatterboxUrl}/health`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
-
-async function startChatterbox() {
-  if (chatterbox || !fs.existsSync(chatterboxPython) || (await chatterboxHealth())) return;
-  const log = fs.openSync(path.join(dataDir, "chatterbox.log"), "a");
-  chatterbox = spawn(chatterboxPython, [path.join(dir, "voice", "chatterbox_server.py"), String(CHATTERBOX_PORT), String(PORT)], {
-    cwd: dir, stdio: ["ignore", log, log], windowsHide: true,
-  });
-  chatterbox.on("exit", () => { chatterbox = null; });
-}
-process.on("exit", () => chatterbox?.kill());
-
-async function chatterboxStatus() {
-  if (!fs.existsSync(chatterboxPython)) return { installed: false };
-  const health = await chatterboxHealth();
-  return { installed: true, running: !!(health || chatterbox), ready: !!health?.ready, error: health?.error ?? null, device: health?.device ?? null };
-}
+const faceFile = (name) => {
+  const clean = voiceName(name);
+  const file = clean && path.join(facesDir, `${clean}.png`);
+  return file && fs.existsSync(file) ? file : null;
+};
 
 // Voice sample names are plain file names inside data/voices.
 const voiceName = (name) => String(name || "").replace(/[^\w\- ]/g, "").trim().slice(0, 40);
@@ -266,10 +279,55 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ---- Chatterbox voices ----
-  if (url.pathname === "/api/chatterbox/status") return json(res, 200, await chatterboxStatus());
+  if (url.pathname === "/api/chatterbox/status") return json(res, 200, await chatterbox.status());
   if (req.method === "POST" && url.pathname === "/api/chatterbox/start") {
-    await startChatterbox();
-    return json(res, 200, await chatterboxStatus());
+    await chatterbox.start();
+    return json(res, 200, await chatterbox.status());
+  }
+
+  // ---- Video calls: face pictures and the talking-face engine ----
+  if (url.pathname === "/api/video/status") return json(res, 200, await faceEngine.status());
+  if (req.method === "POST" && url.pathname === "/api/video/start") {
+    await faceEngine.start();
+    return json(res, 200, await faceEngine.status());
+  }
+  if (req.method === "GET" && url.pathname === "/api/faces") {
+    const names = fs.readdirSync(facesDir).filter((f) => f.endsWith(".png")).map((f) => f.slice(0, -4));
+    return json(res, 200, names.sort());
+  }
+  if (req.method === "GET" && url.pathname === "/api/face") {
+    const file = faceFile(url.searchParams.get("name"));
+    if (!file) return json(res, 404, { error: "No such face." });
+    res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-cache" });
+    return fs.createReadStream(file).pipe(res);
+  }
+  if (req.method === "POST" && url.pathname === "/api/faces") {
+    const name = voiceName(url.searchParams.get("name"));
+    if (!name) return json(res, 400, { error: "Give the face a name." });
+    const img = await readRaw(req, 15 * 1024 * 1024).catch(() => null);
+    if (!img || img.subarray(1, 4).toString() !== "PNG") return json(res, 400, { error: "That picture didn't come through. Try again." });
+    fs.writeFileSync(path.join(facesDir, `${name}.png`), img);
+    return json(res, 200, { ok: true, name });
+  }
+  // Frames come back as a stream of [4-byte length][JPEG], drawn while the call screen is already playing them.
+  if (url.pathname === "/api/video/idle" || (req.method === "POST" && url.pathname === "/api/video/frames")) {
+    const file = faceFile(url.searchParams.get("face"));
+    if (!file) return json(res, 400, { error: "Pick a face picture for video calls first." });
+    await faceEngine.start();
+    const idle = url.pathname === "/api/video/idle";
+    const body = idle ? undefined : await readRaw(req, 25 * 1024 * 1024).catch(() => null);
+    const r = await fetch(`${faceEngine.url}/${idle ? "idle" : "render"}?face=${encodeURIComponent(file)}`, {
+      method: idle ? "GET" : "POST", body,
+    }).catch(() => null);
+    if (!r) return json(res, 502, { error: "The video engine is still starting up." });
+    if (!r.ok) {
+      const out = await r.json().catch(() => ({}));
+      return json(res, 502, { error: r.status === 503 ? "The video engine is still loading." : `Video had a problem: ${out.error ?? r.status}` });
+    }
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Cache-Control": "no-cache" });
+    const stream = Readable.fromWeb(r.body);
+    res.on("close", () => stream.destroy()); // hushed or hung up: stop drawing frames nobody will see
+    return stream.pipe(res);
   }
   if (req.method === "GET" && url.pathname === "/api/voices") {
     const names = fs.readdirSync(voicesDir).filter((f) => f.endsWith(".wav")).map((f) => f.slice(0, -4));
@@ -289,8 +347,8 @@ const server = http.createServer(async (req, res) => {
     if (engine === "chatterbox") {
       const file = voiceFile(voice);
       if (!file) return json(res, 400, { error: "Pick a voice sample for Chatterbox first." });
-      await startChatterbox();
-      const r = await fetch(`${chatterboxUrl}/tts`, {
+      await chatterbox.start();
+      const r = await fetch(`${chatterbox.url}/tts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: String(text || "").slice(0, 1000), voice_path: file }),
