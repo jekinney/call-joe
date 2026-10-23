@@ -5,13 +5,14 @@
 Commands:
     list                                  show every friend
     show <id>                             a friend's settings, files and memory size
-    create <id> --name "Full Name" --persona draft.md [--model sonnet]
-                                          make a new friend from a persona draft (the shared phone-call
-                                          rules in contacts/_call-rules.md are added to the end)
+    create <id> --name "Full Name" --persona draft.md --voice clip.mp3 [--voice-start SECONDS] [--model sonnet]
+                                          make a new friend from a persona draft and a voice clip (every
+                                          friend needs one); the shared phone-call rules in
+                                          contacts/_call-rules.md are added to the end of the persona
     persona <id> draft.md                 replace a friend's persona (call rules added the same way)
     voice <id> clip.(mp3|m4a|wav|...) [--start SECONDS] [--name "Voice name"]
-                                          clone a voice from a clip: cleaned up to 20 s of mono WAV in
-                                          data/voices, and the friend set to use Chatterbox with it
+                                          give a friend a new voice clip: cleaned up to 20 s of mono WAV in
+                                          data/voices, and cloned by Chatterbox on their calls
     face <id> picture.(jpg|png|...) [--name "Face name"]
                                           crop a picture around the face to a 540x720 portrait in
                                           data/faces, and set it as the friend's video face
@@ -114,8 +115,8 @@ def cmd_list(args):
         info = load(cid)
         s = info.get("settings", {})
         mem = read_json(os.path.join(CONTACTS, cid, "memory.json"), {"calls": 0})
-        voice = s.get("cbVoice") if s.get("engine") == "chatterbox" else s.get("engine", "windows")
-        print(f"{cid:16s} {info['name']:24s} calls: {mem.get('calls', 0):<4} voice: {voice or '-':20s} face: {s.get('face') or '-'}")
+        voice = s.get("cbVoice") if s.get("cbVoice") and os.path.isfile(os.path.join(VOICES, f"{s['cbVoice']}.wav")) else "NEEDS A CLIP"
+        print(f"{cid:16s} {info['name']:24s} calls: {mem.get('calls', 0):<4} voice: {voice:20s} face: {s.get('face') or '-'}")
 
 
 def cmd_show(args):
@@ -132,14 +133,17 @@ def cmd_create(args):
         fail(f'A friend with id "{cid}" already exists. Pick another id, or use "persona" to update them.')
     if args.model not in MODELS:
         fail(f"--model must be one of {', '.join(MODELS)}")
+    # The voice clip is converted first, so a friend is never created without a working voice.
+    voice_name, seconds = make_voice(args.voice, args.voice_start, f"{args.name.strip()} voice")
     os.makedirs(os.path.join(PERSONAS, cid), exist_ok=True)
     with open(os.path.join(PERSONAS, cid, "persona.md"), "w", encoding="utf8") as f:
         f.write(persona_text(args.persona, args.name))
     os.makedirs(os.path.join(CONTACTS, cid), exist_ok=True)
     save(cid, {"name": args.name.strip(), "created": datetime.datetime.now().isoformat(timespec="seconds"),
-               "settings": {"model": args.model, "engine": "windows"}})
+               "settings": {"model": args.model, "cbVoice": voice_name}})
     print(f'Created {args.name} ("{cid}"). Persona: contacts/{cid}/persona.md')
-    print("Next: add a voice clip with \"voice\" and a picture with \"face\".")
+    print(f'Voice "{voice_name}" saved ({seconds:.1f} s).' + (" Tip: a 10-20 second clip usually clones better." if seconds < 10 else ""))
+    print("Next: add a face picture with \"face\" for video calls.")
 
 
 def cmd_persona(args):
@@ -149,15 +153,15 @@ def cmd_persona(args):
     print(f"Updated contacts/{args.id}/persona.md. It takes effect on the next call.")
 
 
-def cmd_voice(args):
-    info = load(args.id)
-    if not os.path.isfile(args.clip):
-        fail(f"Can't find {args.clip}")
-    name = file_name(args.name or f"{info['name']} voice")
+def make_voice(clip, start, voice_name):
+    """Converts a clip into data/voices/<name>.wav for Chatterbox. Returns (name, seconds of speech)."""
+    if not os.path.isfile(clip):
+        fail(f"Can't find {clip}")
+    name = file_name(voice_name)
     os.makedirs(VOICES, exist_ok=True)
     out = os.path.join(VOICES, f"{name}.wav")
     # Mono, 24 kHz, 16-bit; trimmed to 20 s; leading silence removed; loudness evened out.
-    cmd = [ffmpeg(), "-y", "-loglevel", "error", "-ss", str(args.start), "-i", args.clip,
+    cmd = [ffmpeg(), "-y", "-loglevel", "error", "-ss", str(start), "-i", clip,
            "-af", "silenceremove=start_periods=1:start_threshold=-45dB,loudnorm=I=-18:TP=-2,"
                   f"atrim=0:{VOICE_SECONDS}",
            "-ac", "1", "-ar", "24000", "-sample_fmt", "s16", out]
@@ -171,9 +175,18 @@ def cmd_voice(args):
     if seconds < 5:
         os.remove(out)
         fail(f"The clip only has {seconds:.1f} s of speech. Chatterbox needs at least 5 s (10-20 s is best).")
-    info.setdefault("settings", {}).update({"engine": "chatterbox", "cbVoice": name})
+    return name, seconds
+
+
+def cmd_voice(args):
+    info = load(args.id)
+    name, seconds = make_voice(args.clip, args.start, args.name or f"{info['name']} voice")
+    settings = info.setdefault("settings", {})
+    for old in ("engine", "voice", "rate", "elevenVoice"):  # settings from voice services that were removed
+        settings.pop(old, None)
+    settings["cbVoice"] = name
     save(args.id, info)
-    print(f'Voice "{name}" saved ({seconds:.1f} s) and set for {info["name"]} (Chatterbox).')
+    print(f'Voice "{name}" saved ({seconds:.1f} s) and set for {info["name"]}.')
     if seconds < 10:
         print("Tip: a 10-20 second clip usually clones better.")
 
@@ -258,7 +271,8 @@ def main():
     sub.add_parser("list").set_defaults(fn=cmd_list)
     s = sub.add_parser("show"); s.add_argument("id"); s.set_defaults(fn=cmd_show)
     s = sub.add_parser("create"); s.add_argument("id"); s.add_argument("--name", required=True)
-    s.add_argument("--persona", required=True); s.add_argument("--model", default="sonnet"); s.set_defaults(fn=cmd_create)
+    s.add_argument("--persona", required=True); s.add_argument("--voice", required=True, help="voice clip to clone")
+    s.add_argument("--voice-start", type=float, default=0); s.add_argument("--model", default="sonnet"); s.set_defaults(fn=cmd_create)
     s = sub.add_parser("persona"); s.add_argument("id"); s.add_argument("draft"); s.set_defaults(fn=cmd_persona)
     s = sub.add_parser("voice"); s.add_argument("id"); s.add_argument("clip"); s.add_argument("--start", type=float, default=0)
     s.add_argument("--name"); s.set_defaults(fn=cmd_voice)

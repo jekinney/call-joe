@@ -8,7 +8,7 @@ Each friend in Call Joe has their own personality, voice, face and memory of you
 |---|---|---|
 | **A name** | A full name, like "Earl Hollis". They'll go by their first name. | Yes |
 | **Who they are** | A few sentences: personality, age, where they're from, job, family, how they talk, how they know you. | Yes |
-| **A voice clip** | 10–20 seconds of one person talking clearly, with no music or other voices, in the accent you want. Any audio format (mp3, m4a, wav, a phone voice memo). | No. Without one, they use a Windows voice. |
+| **A voice clip** | 10–20 seconds of one person talking clearly, with no music or other voices, in the accent you want. Any audio format (mp3, m4a, wav, a phone voice memo). | **Yes.** Every friend's voice is cloned from a clip. A friend can't be created or called without one. |
 | **A face picture** | One front-facing face, mouth closed, soft even light, plain background. A head-and-shoulders portrait is ideal. Any size; the tool crops it. | No. Without one, they're voice calls only. |
 
 **Permission matters:**
@@ -30,14 +30,14 @@ The friend then shows up on the **Friends** screen in the app. If the app is ope
 Run these from the `Call Joe` folder:
 
 ```
-video\.venv\Scripts\python.exe tools\contact.py create earl --name "Earl Hollis" --persona earl.md
-video\.venv\Scripts\python.exe tools\contact.py voice earl "C:\path\to\earl-voice.m4a"
+video\.venv\Scripts\python.exe tools\contact.py create earl --name "Earl Hollis" --persona earl.md --voice "C:\path\to\earl-voice.m4a"
 video\.venv\Scripts\python.exe tools\contact.py face earl "C:\path\to\earl.jpg"
 video\.venv\Scripts\python.exe tools\contact.py list
 ```
 
 - **`earl.md`** is the personality, written in second person ("You're Earl..."). Use `contacts/joe/persona.md` as a model. Leave out the phone and safety rules: `create` adds `contacts/_call-rules.md` automatically, which covers talking naturally on a call, being honest about being an AI, crisis help (988/911), and nudging you toward real-life people.
-- **`voice`** trims leading silence, evens out the volume, and keeps the first 20 seconds as clean mono audio for Chatterbox. If the clip starts with an intro, skip it with `--start 3`.
+- **`--voice`** (required) is the voice clip. The tool trims leading silence, evens out the volume, and keeps the first 20 seconds as clean mono audio for Chatterbox. If the clip starts with an intro, skip it with `--voice-start 3`. A clip with under 5 seconds of speech is refused, and the friend isn't created.
+- **`voice <id> <clip>`** gives an existing friend a new voice clip later (with `--start 3` to skip an intro).
 - **`face`** finds the face and crops a 540×720 head-and-shoulders portrait around it. If it can't find a face, it center-crops and warns you. Look at the result in `data/faces/` either way.
 - **Other commands:**
   - `show <id>` prints a friend's settings.
@@ -49,7 +49,7 @@ video\.venv\Scripts\python.exe tools\contact.py list
 | File | What it is | In GitHub? |
 |---|---|---|
 | `contacts/<id>/persona.md` | Who they are, plus the shared call rules | Yes |
-| `data/contacts/<id>/contact.json` | Name and settings: brain (model), voice service and voice, face | No |
+| `data/contacts/<id>/contact.json` | Name and settings: brain (model), voice, face | No |
 | `data/contacts/<id>/memory.json` | What they remember about you, written after each call | No |
 | `data/contacts/<id>/call-log.txt` | Every call's transcript | No |
 | `data/voices/<name>.wav` | The cleaned-up voice clip | No |
@@ -57,7 +57,7 @@ video\.venv\Scripts\python.exe tools\contact.py list
 
 ## Tweaking a friend later
 
-- **In the app:** open the friend and press ⚙ to change their brain (Haiku, Sonnet or Opus), voice service and voice, or face. You can also record or upload a new voice clip, or upload a new face, right there.
+- **In the app:** open the friend and press ⚙ to change their brain (Haiku, Sonnet or Opus), voice, or face. You can also record or upload a new voice clip, or upload a new face, right there.
 - **Personality:** ask Claude ("make Earl grumpier"), or edit `contacts/<id>/persona.md` and run `persona`.
 
 ## Rules that keep every friend themselves

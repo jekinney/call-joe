@@ -19,17 +19,17 @@ Ask for anything the user hasn't already given:
 
 - **Name.** A full name like "Earl Hollis". Their first name is how they introduce themselves.
 - **Who they are.** A few sentences: personality, age, where they're from, job, family, how they talk, and how they know the user, if that matters.
-- **Voice clip.** A file path to 10–20 seconds of one person talking clearly, with no music. Audio can't be pasted into the chat, so the user drags the file into the prompt or types its path. Most formats work (mp3, m4a, wav, ogg, a phone voice memo).
+- **Voice clip (required).** A file path to 10–20 seconds of one person talking clearly, with no music. Audio can't be pasted into the chat, so the user drags the file into the prompt or types its path. Most formats work (mp3, m4a, wav, ogg, a phone voice memo).
 - **Face picture.** A path or a pasted image. It should be one front-facing face, mouth closed, with plain light and background. A pasted image comes with a file path you can use.
 
-The voice and face can come later. A friend works without them, using a Windows voice and voice calls only.
+Every friend needs a voice clip: there's no other voice, and a friend can't be created without one. The face can come later; without one, the friend has voice calls only.
 
 ## 2. Check permission (always, briefly)
 
 - **Voice:** only clone a voice the user has permission to use: their own, someone who agreed, or a clip licensed for cloning. Don't clone a celebrity, a public figure, or a real person who hasn't agreed. If it's unclear, ask once.
 - **Face:** use a made-up face (an AI-generated portrait is fine), or the user's own or a consenting person's. Don't use a photo of a real person without their consent, or a celebrity.
 
-If either check fails, say so plainly and continue without that piece.
+If the face check fails, say so plainly and continue without a face. If the voice check fails, the friend can't be built until there's a clip that passes, so ask for another one.
 
 ## 3. Interview, briefly
 
@@ -57,11 +57,10 @@ Show the user the draft and revise it until they approve. Keep it to about 250�
 2. Save the approved draft to a file in your scratchpad folder, not in the project.
 3. Run each command:
    ```
-   video\.venv\Scripts\python.exe tools\contact.py create <id> --name "<Full Name>" --persona <draft file>
-   video\.venv\Scripts\python.exe tools\contact.py voice <id> "<clip path>"
+   video\.venv\Scripts\python.exe tools\contact.py create <id> --name "<Full Name>" --persona <draft file> --voice "<clip path>"
    video\.venv\Scripts\python.exe tools\contact.py face <id> "<picture path>"
    ```
-   - `voice` takes `--start <seconds>` to skip an intro or music at the start of the clip.
+   - `create` takes `--voice-start <seconds>` to skip an intro or music at the start of the clip. A clip with under 5 seconds of speech is refused and nothing is created; ask for a longer clip.
    - The default brain is Sonnet. Add `--model haiku` or `--model opus` to `create` if the user asks.
 
 ## 6. Check the result

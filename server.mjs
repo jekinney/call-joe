@@ -13,7 +13,7 @@ const dataDir = process.env.CALLJOE_DATA || path.join(dir, "data");
 fs.mkdirSync(dataDir, { recursive: true });
 
 const PORT = Number(process.env.CALLJOE_PORT) || 5174;
-// Models a friend can talk on. Thinking is kept as low as each model allows so they answer quickly.
+// Models a friend can think with. Thinking is kept as low as each model allows so they answer quickly.
 const MODELS = {
   haiku: {
     id: "claude-haiku-5-5",
@@ -99,7 +99,8 @@ function voiceFile(name) {
 const personasDir = path.join(dir, "contacts");
 const contactsDir = path.join(dataDir, "contacts");
 fs.mkdirSync(contactsDir, { recursive: true });
-const SETTING_KEYS = ["model", "engine", "voice", "rate", "elevenVoice", "cbVoice", "face"];
+// Every friend talks with a Chatterbox voice cloned from their clip (cbVoice); face is optional (video calls).
+const SETTING_KEYS = ["model", "cbVoice", "face"];
 
 const validId = (id) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(String(id || ""));
 const contactPath = (id, file) => path.join(contactsDir, id, file);
@@ -243,9 +244,6 @@ async function hangUp() {
   writeJson(memoryFile, memory);
 }
 
-const eleven = (apiPath, key, init = {}) =>
-  fetch(`https://api.elevenlabs.io${apiPath}`, { ...init, headers: { ...init.headers, "xi-api-key": key } });
-
 function readBody(req) {
   return new Promise((resolve) => {
     let body = "";
@@ -282,7 +280,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(dir, "index.html")));
   }
   if (url.pathname === "/api/status") {
-    return json(res, 200, { hasKey: !!config.apiKey, hasEleven: !!config.elevenKey, inCall: call?.contactId ?? null });
+    return json(res, 200, { hasKey: !!config.apiKey, inCall: call?.contactId ?? null });
   }
   if (url.pathname === "/api/ping") return json(res, 200, { ok: true });
 
@@ -301,32 +299,6 @@ const server = http.createServer(async (req, res) => {
     client = null;
     writeJson(configFile, config);
     return json(res, 200, { ok: true });
-  }
-
-  // ---- ElevenLabs voices (the key stays on this computer; the page only gets audio) ----
-  if (req.method === "POST" && url.pathname === "/api/eleven/key") {
-    const key = String((await readBody(req)).key || "").trim();
-    const check = await eleven("/v1/voices", key).catch((err) => ({ ok: false, status: 0, err }));
-    if (!check.ok) {
-      return json(res, 400, {
-        error: check.status === 401 ? "That ElevenLabs key didn't work. Make sure you copied the whole key." : "Couldn't reach ElevenLabs. Check your internet and try again.",
-      });
-    }
-    config.elevenKey = key;
-    writeJson(configFile, config);
-    return json(res, 200, { ok: true });
-  }
-
-  if (url.pathname === "/api/eleven/voices") {
-    if (!config.elevenKey) return json(res, 400, { error: "No ElevenLabs key yet." });
-    const r = await eleven("/v1/voices", config.elevenKey).catch(() => null);
-    if (!r?.ok) return json(res, 502, { error: "Couldn't load your ElevenLabs voices." });
-    const { voices = [] } = await r.json();
-    return json(res, 200, voices.map((v) => ({
-      id: v.voice_id,
-      name: v.name,
-      about: [v.labels?.accent, v.labels?.gender, v.labels?.age, v.labels?.description].filter(Boolean).join(", "),
-    })));
   }
 
   // ---- Chatterbox voices ----
@@ -394,35 +366,21 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/tts") {
-    const { text, voiceId, engine, voice } = await readBody(req);
-    if (engine === "chatterbox") {
-      const file = voiceFile(voice);
-      if (!file) return json(res, 400, { error: "Pick a voice sample for Chatterbox first." });
-      await chatterbox.start();
-      const r = await fetch(`${chatterbox.url}/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: String(text || "").slice(0, 1000), voice_path: file }),
-      }).catch(() => null);
-      if (!r) return json(res, 502, { error: "Chatterbox is still starting up." });
-      if (!r.ok) {
-        const out = await r.json().catch(() => ({}));
-        return json(res, 502, { error: r.status === 503 ? "Chatterbox is still loading." : `Chatterbox had a problem: ${out.error ?? r.status}` });
-      }
-      res.writeHead(200, { "Content-Type": "audio/wav" });
-      return Readable.fromWeb(r.body).pipe(res);
-    }
-    if (!config.elevenKey || !voiceId) return json(res, 400, { error: "ElevenLabs isn't set up." });
-    const r = await eleven(`/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, config.elevenKey, {
+    const { text, voice } = await readBody(req);
+    const file = voiceFile(voice);
+    if (!file) return json(res, 400, { error: "This friend needs a voice clip. Add one in their ⚙ settings." });
+    await chatterbox.start();
+    const r = await fetch(`${chatterbox.url}/tts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: String(text || "").slice(0, 2000), model_id: "eleven_flash_v2_5" }),
+      body: JSON.stringify({ text: String(text || "").slice(0, 1000), voice_path: file }),
     }).catch(() => null);
-    if (!r?.ok) {
-      const detail = r ? await r.text().catch(() => "") : "";
-      return json(res, 502, { error: r?.status === 401 || /quota|credits/i.test(detail) ? "ElevenLabs is out of credits or the key stopped working." : "ElevenLabs didn't answer." });
+    if (!r) return json(res, 502, { error: "Chatterbox is still starting up." });
+    if (!r.ok) {
+      const out = await r.json().catch(() => ({}));
+      return json(res, 502, { error: r.status === 503 ? "Chatterbox is still loading." : `Chatterbox had a problem: ${out.error ?? r.status}` });
     }
-    res.writeHead(200, { "Content-Type": "audio/mpeg" });
+    res.writeHead(200, { "Content-Type": "audio/wav" });
     return Readable.fromWeb(r.body).pipe(res);
   }
 
@@ -430,6 +388,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/contacts") {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
+      hasVoice: !!voiceFile(c.settings.cbVoice),
       calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }
