@@ -33,6 +33,18 @@
     width: 56px; height: 56px; border-radius: 50%; flex: none; overflow: hidden; display: grid; place-items: center;
     background: linear-gradient(160deg, #8a5a2b, #4e3218); font-size: 24px; font-weight: 700;
   }
+  /* Incoming call */
+  #incoming {
+    position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: radial-gradient(circle at 50% 30%, #3a2a1c, var(--bg) 75%); text-align: center; padding: 16px;
+  }
+  #incoming .avatar { animation: shake .5s ease-in-out infinite; }
+  #incoming h1 { font-size: 30px; }
+  #incoming .controls { padding-bottom: 0; }
+  #declineBtn { background: var(--red); transform: rotate(135deg); }
+  #answerBtn { background: var(--green); }
+  #answerVideoBtn { background: #2f7fd1; }
+  .c-missed { color: #ff8a80; }
   .c-wrap { position: relative; flex: none; }
   .dot {
     position: absolute; right: 0; bottom: 0; width: 15px; height: 15px; border-radius: 50%;
@@ -179,6 +191,17 @@
 </div>
 </main>
 
+<div id="incoming" hidden>
+  <div class="avatar" id="inAvatar"></div>
+  <h1 id="inName"></h1>
+  <div class="hint" style="font-size:15px">is calling you…</div>
+  <div class="controls">
+    <div class="ctl"><button class="round" id="declineBtn" title="Decline">📞</button>Decline</div>
+    <div class="ctl" id="answerVideoCtl"><button class="round" id="answerVideoBtn" title="Answer with video">🎥</button>Video</div>
+    <div class="ctl"><button class="round" id="answerBtn" title="Answer">📞</button>Answer</div>
+  </div>
+</div>
+
 <dialog id="keyDialog">
   <h2>One-time setup</h2>
   <p class="hint">Your friends need an Anthropic API key to think. Get one at
@@ -192,6 +215,16 @@
 
 <dialog id="settingsDialog">
   <h2><span class="fn">Joe</span>'s settings</h2>
+  <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
+  <div class="face-row">
+    <select id="callsYouSelect">
+      <option value="never">Never (you always call)</option>
+      <option value="sometimes">Now and then (about every few hours)</option>
+      <option value="often">Often (about once an hour)</option>
+    </select>
+    <button class="btn ghost" id="callMeNow" title="Try it: they call you in a few seconds">Try it</button>
+  </div>
+  <div class="hint">Only while Call Joe is open, and never between 9 PM and 8 AM.</div>
   <label for="modelSelect"><span class="fn">Joe</span>'s brain</label>
   <select id="modelSelect">
     <option value="haiku">Haiku: fastest and cheapest</option>
@@ -239,7 +272,7 @@
 const $ = (id) => document.getElementById(id);
 // Voice, face and model settings belong to the friend on the call screen and are saved on the server.
 // Everything else (like captions on or off) is a preference kept in this browser.
-const PER_FRIEND = new Set(["model", "cbVoice", "face"]);
+const PER_FRIEND = new Set(["model", "cbVoice", "face", "callsYou"]);
 let contact = null; // the friend on the call screen: { id, name, firstName, settings, calls, lastCall }
 let saveTimer = null;
 const store = {
@@ -645,7 +678,7 @@ async function videoReady() {
   return "The video engine is taking too long to start.";
 }
 
-async function startCall(video) {
+async function startCall(video, incoming = false) {
   const status = await fetch("/api/status").then((r) => r.json());
   if (!status.hasKey) return $("keyDialog").showModal();
   if (!hasVoice()) {
@@ -677,11 +710,11 @@ async function startCall(video) {
   } else {
     leaveVideo();
   }
-  setState("ringing", "Ringing…");
-  const ringing = ring(2);
+  setState("ringing", incoming ? "Connecting…" : "Ringing…");
+  const ringing = incoming ? Promise.resolve() : ring(2);
   startTimer();
-  // Let it ring a couple of times before they pick up.
-  joeTurn("/api/call", { contact: contact.id }, ringing);
+  // Let it ring a couple of times before they pick up. On an incoming call you already answered.
+  joeTurn("/api/call", { contact: contact.id, incoming }, ringing);
 }
 $("callBtn").onclick = () => startCall(false);
 $("videoBtn").onclick = () => startCall(true);
@@ -705,6 +738,7 @@ async function hangUp() {
   await fetch("/api/hangup", { method: "POST" }).catch(() => {});
   leaveVideo();
   setState("idle", "Call ended. Talk soon!");
+  lastCallEnded = Date.now();
 }
 $("hangBtn").onclick = hangUp;
 
@@ -744,12 +778,24 @@ $("keySave").onclick = async () => {
 $("settingsBtn").onclick = async () => {
   if (!contact) return $("keyDialog").showModal();
   $("modelSelect").value = store.get("model", "sonnet");
+  $("callsYouSelect").value = store.get("callsYou", "never");
   refreshChatterbox();
   refreshFaces();
   $("settingsDialog").showModal();
 };
 $("settingsClose").onclick = () => { recorder?.stop(); $("settingsDialog").close(); };
 $("modelSelect").onchange = (e) => store.set("model", e.target.value);
+$("callsYouSelect").onchange = (e) => {
+  store.set("callsYou", e.target.value);
+  // So an incoming call can show up even when the window is behind others.
+  if (e.target.value !== "never" && window.Notification?.permission === "default") Notification.requestPermission();
+};
+$("callMeNow").onclick = () => {
+  const c = contact;
+  $("settingsDialog").close();
+  showHome();
+  setTimeout(() => ringYou(c.id), 3000);
+};
 const sampleVoice = () => {
   if (state === "speaking") return; // don't talk over your friend mid-call
   stopSpeaking();
@@ -931,7 +977,9 @@ async function showHome() {
       </div>
       <div class="c-info">
         <div class="c-name">${esc(c.name)}</div>
-        <div class="c-last">${!c.hasVoice ? "Needs a voice clip" : c.lastCall ? `Last call ${esc(c.lastCall)}` : "You haven't called yet"}</div>
+        <div class="c-last">${!c.hasVoice ? "Needs a voice clip"
+          : missed[c.id] ? `<span class="c-missed">Missed call ${esc(missed[c.id])}</span>`
+          : c.lastCall ? `Last call ${esc(c.lastCall)}` : "You haven't called yet"}</div>
       </div>
       <button class="round mini call" data-start="voice" title="${c.hasVoice ? `Voice call ${esc(c.name)}` : "Needs a voice clip first (in their settings)"}" ${c.hasVoice ? "" : "disabled"}>📞</button>
       <button class="round mini video" data-start="video" title="${!c.hasVoice ? "Needs a voice clip first (in their settings)" : c.face ? `Video call ${esc(c.name)}` : "Add a face picture in their settings for video calls"}" ${c.face && c.hasVoice ? "" : "disabled"}>🎥</button>
@@ -960,7 +1008,7 @@ $("contactList").onclick = (e) => {
   openContact(card.dataset.id, e.target.closest("[data-start]")?.dataset.start);
 };
 
-async function openContact(id, startWith) {
+async function openContact(id, startWith, incoming = false) {
   const c = await fetch(`/api/contacts/${id}`).then((r) => r.json());
   contact = c;
   // Joe's voice settings used to live only in this browser; bring them over to his contact once.
@@ -982,7 +1030,7 @@ async function openContact(id, startWith) {
   $("callScreen").hidden = false;
   idle = null;
   setState("idle", c.calls ? `Ready when you are · ${c.calls} call${c.calls === 1 ? "" : "s"} so far` : "Ready when you are");
-  if (startWith) startCall(startWith === "video");
+  if (startWith) startCall(startWith === "video", incoming);
 }
 
 $("backBtn").onclick = () => { if (state === "idle") showHome(); };
@@ -990,6 +1038,68 @@ $("backBtn").onclick = () => { if (state === "idle") showHome(); };
 fetch("/api/status").then((r) => r.json()).then((s) => {
   if (!s.hasKey) $("keyDialog").showModal();
 });
+// ---------- Friends who call you ----------
+// While the app is open and you're not on a call, each friend set to call you rolls the dice once a minute.
+// "sometimes" averages a call every ~3 hours of the app being open, "often" every ~1 hour. Never at night,
+// and never within 45 minutes of your last call with anyone.
+const CALL_ODDS = { sometimes: 1 / 180, often: 1 / 60 };
+const QUIET_FROM = 21, QUIET_UNTIL = 8;
+const missed = {}; // friend id -> time of a missed call, shown on the friends list
+let lastCallEnded = Date.now(), ringingIn = null;
+
+function quietHours() {
+  const h = new Date().getHours();
+  return h >= QUIET_FROM || h < QUIET_UNTIL;
+}
+
+setInterval(async () => {
+  if (state !== "idle" || ringingIn || quietHours() || Date.now() - lastCallEnded < 45 * 60 * 1000) return;
+  const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
+  for (const c of list) {
+    if (c.hasVoice && Math.random() < (CALL_ODDS[c.callsYou] ?? 0)) return ringYou(c.id);
+  }
+}, 60 * 1000);
+
+async function ringYou(id) {
+  if (state !== "idle" || ringingIn) return;
+  const c = (await fetch("/api/contacts").then((r) => r.json()).catch(() => [])).find((x) => x.id === id);
+  if (!c?.hasVoice) return;
+  ringingIn = { c, stop: false };
+  $("inName").textContent = c.name;
+  $("inAvatar").innerHTML = c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0]);
+  $("answerVideoCtl").hidden = !c.face;
+  $("incoming").hidden = false;
+  const title = document.title;
+  document.title = `📞 ${c.name} is calling…`;
+  if (document.hidden && window.Notification?.permission === "granted") {
+    const n = new Notification(`${c.name} is calling`, { body: "Open Call Joe to answer.", silent: true });
+    n.onclick = () => { window.focus(); n.close(); };
+  }
+  // Ring for about 30 seconds, then it's a missed call.
+  const me = ringingIn;
+  for (let i = 0; i < 10 && !me.stop; i++) await ring(2).then(() => new Promise((r) => setTimeout(r, 1000)));
+  document.title = title;
+  $("incoming").hidden = true;
+  ringingIn = null;
+  if (!me.answered) {
+    missed[c.id] = new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
+    if (!$("home").hidden) showHome();
+  }
+}
+
+function answer(video) {
+  if (!ringingIn) return;
+  ringingIn.stop = true;
+  ringingIn.answered = true;
+  const id = ringingIn.c.id;
+  delete missed[id];
+  $("incoming").hidden = true;
+  openContact(id, video ? "video" : "voice", true);
+}
+$("answerBtn").onclick = () => answer(false);
+$("answerVideoBtn").onclick = () => answer(true);
+$("declineBtn").onclick = () => { if (ringingIn) ringingIn.stop = true; };
+
 showHome();
 </script>
 </body>

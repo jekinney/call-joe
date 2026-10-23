@@ -17,6 +17,7 @@ Open Claude Code in this folder and type `/new-contact`, then give Claude a name
 
 ## Each friend's settings (⚙ on their call screen)
 
+- **Calls you:** how often this friend rings you while the app is open: never, now and then, or often. The "Try it" button makes them call in a few seconds.
 - **Brain:** Haiku (fastest, cheapest), Sonnet (default), or Opus (deepest). Their notes about you are always written by Opus.
 - **Voice:** each friend's voice is cloned by Chatterbox, for free on your PC, from a 10–20 second clip. Pick a saved voice, or record or upload a new clip. Only use voices you have permission to copy. A friend can't be called until they have a voice.
 - **Video calls (🎥):**

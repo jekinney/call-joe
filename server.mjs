@@ -100,7 +100,8 @@ const personasDir = path.join(dir, "contacts");
 const contactsDir = path.join(dataDir, "contacts");
 fs.mkdirSync(contactsDir, { recursive: true });
 // Every friend talks with a Chatterbox voice cloned from their clip (cbVoice); face is optional (video calls).
-const SETTING_KEYS = ["model", "cbVoice", "face"];
+// callsYou: how often this friend rings you while the app is open ("never", "sometimes", "often").
+const SETTING_KEYS = ["model", "cbVoice", "face", "callsYou"];
 
 const validId = (id) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(String(id || ""));
 const contactPath = (id, file) => path.join(contactsDir, id, file);
@@ -405,7 +406,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/contacts") {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
-      hasVoice: !!voiceFile(c.settings.cbVoice),
+      hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
       calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }
@@ -428,14 +429,21 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/call") {
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
-    const c = loadContact((await readBody(req)).contact);
+    const { contact: contactId, incoming } = await readBody(req);
+    const c = loadContact(contactId);
     if (!c) return json(res, 400, { error: "No such friend." });
     if (call) await hangUp();
     call = {
       contactId: c.id,
       started: new Date(),
       system: systemPrompt(c),
-      messages: [{ role: "user", content: "(Your phone rings. It's your buddy calling. Pick up and answer the way you would.)" }],
+      messages: [{
+        role: "user",
+        content: incoming
+          // They rang the buddy (a random incoming call), so they speak first and say why they called.
+          ? "(You called your buddy, and they just picked up. Say hello and why you called, the way you would.)"
+          : "(Your phone rings. It's your buddy calling. Pick up and answer the way you would.)",
+      }],
     };
     return streamReply(res);
   }
