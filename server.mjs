@@ -183,7 +183,7 @@ async function systemPrompt(c) {
 
 const LOOKING_THINGS_UP = `# Looking things up
 You can check real, current information with your tools: football scores and news, the weather anywhere, or a web search if you have one. Use them when your buddy asks about something current or you'd need facts you don't know, like a score, a forecast, a price or a recipe you don't know by heart.
-Before you use a tool, say one short natural line out loud first, like "Hang on, let me look" or "Let me grab the paper." Then tell your buddy what you found the way a person would on the phone: the gist in a sentence or two, in your own words and with your own opinion. No lists, no links, and don't read out whole articles.
+Before you use a tool, say one short natural line out loud first, like "Hang on, let me look" or "Let me grab the paper." Say it only once, and don't narrate the searching itself (no "let me see what came back" or "let me look closer"). Then tell your buddy what you found the way a person would on the phone: the gist in a sentence or two, in your own words and with your own opinion. No lists, no links, and don't read out whole articles.
 If you can't find something, say so. Never make up scores, stats, prices or forecasts.`;
 
 // Friends can hang up. The marker is stripped from what's spoken and shown; the call screen hangs up after the
@@ -300,6 +300,8 @@ async function streamReply(res) {
         messages: call.messages,
       });
       for await (const event of stream) {
+        // Text around a web search arrives as separate blocks; keep a space between them so sentences stay apart.
+        if (event.type === "content_block_start" && event.content_block.type === "text" && event.index > 0) pass(" ");
         if (event.type === "content_block_delta" && event.delta.type === "text_delta") pass(event.delta.text);
       }
       const final = await stream.finalMessage();

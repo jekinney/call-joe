@@ -6,6 +6,7 @@ Commands:
     list                                  show every friend
     show <id>                             a friend's settings, files and memory size
     create <id> --name "Full Name" --persona draft.md --voice clip.mp3 [--voice-start SECONDS] [--model sonnet]
+           [--role friend]
                                           make a new friend from a persona draft and a voice clip (every
                                           friend needs one); the shared phone-call rules in
                                           contacts/_call-rules.md are added to the end of the persona
@@ -21,12 +22,21 @@ Commands:
                                           hears what you told them on their own calls; --relation is what
                                           <other-id> is to <id>, --back is what <id> is to <other-id>
     unlink <id> <other-id>                remove a link both ways
+    role <id> <role>                      set the friend's role in your life, one of contacts/_roles/ (friend,
+                                          best-friend, spouse, mom, dad, sister, brother, grandparent,
+                                          coworker, neighbor); it decides what news reaches them from
+                                          linked friends, and is added to their instructions
+    knows <id> [--nfl-team MIN] [--home "Town, State"] [--web | --no-web] [--clear]
+                                          live knowledge: an NFL team to follow (briefing plus lookups), a
+                                          hometown for weather, and web search during calls
+    reset <id>                            start a friend over: their memory, call log and news from linked
+                                          friends move to data/contacts/<id>/archive/ (never deleted)
     activate <id> / deactivate <id>       show or hide a friend on the friends list (hidden friends never
                                           call you; nothing else about them changes)
     remove <id>                           archive a friend to data/removed/ (never deletes memory)
 
 A friend's id is short and lowercase, like "joe" or "uncle-earl". Their memory and call logs are never
-touched by this tool except "remove", which moves them to an archive folder.
+touched by this tool except "reset" and "remove", which move them to an archive folder.
 """
 import argparse
 import datetime
@@ -44,6 +54,7 @@ CONTACTS = os.path.join(DATA, "contacts")
 VOICES = os.path.join(DATA, "voices")
 FACES = os.path.join(DATA, "faces")
 CALL_RULES = os.path.join(PERSONAS, "_call-rules.md")
+ROLES = os.path.join(PERSONAS, "_roles")
 LANDMARKER = os.path.join(ROOT, "video", "checkpoints", "ditto_pytorch", "aux_models", "face_landmarker.task")
 MODELS = ("haiku", "sonnet", "opus")
 VOICE_SECONDS = 20  # Chatterbox needs about 10-20 seconds of clean speech
@@ -124,7 +135,10 @@ def cmd_list(args):
         mem = read_json(os.path.join(CONTACTS, cid, "memory.json"), {"calls": 0})
         voice = s.get("cbVoice") if s.get("cbVoice") and os.path.isfile(os.path.join(VOICES, f"{s['cbVoice']}.wav")) else "NEEDS A CLIP"
         links = ", ".join(f"{l['relation']}: {l['id']}" for l in info.get("links", []))
+        knows = info.get("knows", {})
+        knows = ", ".join(filter(None, [knows.get("nflTeam") and f"NFL {knows['nflTeam']}", knows.get("home"), knows.get("web") and "web"]))
         print(f"{cid:16s} {info['name']:24s} calls: {mem.get('calls', 0):<4} voice: {voice:20s} face: {s.get('face') or '-'}"
+              + (f"  role: {info['role']}" if info.get("role") else "") + (f"  knows: {knows}" if knows else "")
               + (f"  linked ({links})" if links else "") + ("  [off]" if info.get("active") is False else ""))
 
 
@@ -143,13 +157,18 @@ def cmd_create(args):
     if args.model not in MODELS:
         fail(f"--model must be one of {', '.join(MODELS)}")
     # The voice clip is converted first, so a friend is never created without a working voice.
+    if args.role:
+        check_role(args.role)
     voice_name, seconds = make_voice(args.voice, args.voice_start, f"{args.name.strip()} voice")
     os.makedirs(os.path.join(PERSONAS, cid), exist_ok=True)
     with open(os.path.join(PERSONAS, cid, "persona.md"), "w", encoding="utf8") as f:
         f.write(persona_text(args.persona, args.name))
     os.makedirs(os.path.join(CONTACTS, cid), exist_ok=True)
-    save(cid, {"name": args.name.strip(), "created": datetime.datetime.now().isoformat(timespec="seconds"),
-               "settings": {"model": args.model, "cbVoice": voice_name}})
+    info = {"name": args.name.strip(), "created": datetime.datetime.now().isoformat(timespec="seconds"),
+            "settings": {"model": args.model, "cbVoice": voice_name}}
+    if args.role:
+        info["role"] = args.role
+    save(cid, info)
     print(f'Created {args.name} ("{cid}"). Persona: contacts/{cid}/persona.md')
     print(f'Voice "{voice_name}" saved ({seconds:.1f} s).' + (" Tip: a 10-20 second clip usually clones better." if seconds < 10 else ""))
     print("Next: add a face picture with \"face\" for video calls.")
@@ -303,6 +322,59 @@ def cmd_active(args):
     print(f'{info["name"]} is now {"active" if args.on else "off (hidden from the friends list)"}.')
 
 
+def roles():
+    return sorted(f[:-3] for f in os.listdir(ROLES) if f.endswith(".md")) if os.path.isdir(ROLES) else []
+
+
+def check_role(role):
+    if role not in roles():
+        fail(f'"{role}" isn\'t a role. Pick one of: {", ".join(roles())} (or add contacts/_roles/{role}.md).')
+
+
+def cmd_role(args):
+    info = load(args.id)
+    check_role(args.role)
+    info["role"] = args.role
+    save(args.id, info)
+    print(f'{info["name"]} is now your {args.role.replace("-", " ")}. It takes effect on their next call.')
+
+
+def cmd_knows(args):
+    info = load(args.id)
+    k = {} if args.clear else dict(info.get("knows", {}))
+    if args.nfl_team:
+        k["nflTeam"] = args.nfl_team.upper()
+    if args.home:
+        k["home"] = args.home.strip()
+    if args.web is not None:
+        k["web"] = args.web
+    k = {key: v for key, v in k.items() if v}
+    if k:
+        info["knows"] = k
+    else:
+        info.pop("knows", None)
+    save(args.id, info)
+    print(f'{info["name"]} knows: {json.dumps(k) if k else "nothing live (no briefing or lookups)"}.')
+
+
+def cmd_reset(args):
+    info = load(args.id)
+    folder = os.path.join(CONTACTS, args.id)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    archive = os.path.join(folder, "archive", stamp)
+    moved = []
+    for name in ("memory.json", "call-log.txt", "heard-from"):
+        src = os.path.join(folder, name)
+        if os.path.exists(src):
+            os.makedirs(archive, exist_ok=True)
+            shutil.move(src, os.path.join(archive, name))
+            moved.append(name)
+    if moved:
+        print(f'{info["name"]} starts over. Archived {", ".join(moved)} to data/contacts/{args.id}/archive/{stamp}/.')
+    else:
+        print(f'{info["name"]} had no memory yet; nothing to archive.')
+
+
 def cmd_remove(args):
     info = load(args.id)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
@@ -322,7 +394,8 @@ def main():
     s = sub.add_parser("show"); s.add_argument("id"); s.set_defaults(fn=cmd_show)
     s = sub.add_parser("create"); s.add_argument("id"); s.add_argument("--name", required=True)
     s.add_argument("--persona", required=True); s.add_argument("--voice", required=True, help="voice clip to clone")
-    s.add_argument("--voice-start", type=float, default=0); s.add_argument("--model", default="sonnet"); s.set_defaults(fn=cmd_create)
+    s.add_argument("--voice-start", type=float, default=0); s.add_argument("--model", default="sonnet")
+    s.add_argument("--role"); s.set_defaults(fn=cmd_create)
     s = sub.add_parser("persona"); s.add_argument("id"); s.add_argument("draft"); s.set_defaults(fn=cmd_persona)
     s = sub.add_parser("voice"); s.add_argument("id"); s.add_argument("clip"); s.add_argument("--start", type=float, default=0)
     s.add_argument("--name"); s.set_defaults(fn=cmd_voice)
@@ -331,6 +404,11 @@ def main():
     s.add_argument("--relation", required=True, help='what <other> is to <id>, like "your husband"')
     s.add_argument("--back", required=True, help='what <id> is to <other>, like "your wife"'); s.set_defaults(fn=cmd_link)
     s = sub.add_parser("unlink"); s.add_argument("id"); s.add_argument("other"); s.set_defaults(fn=cmd_unlink)
+    s = sub.add_parser("role"); s.add_argument("id"); s.add_argument("role"); s.set_defaults(fn=cmd_role)
+    s = sub.add_parser("knows"); s.add_argument("id"); s.add_argument("--nfl-team"); s.add_argument("--home")
+    s.add_argument("--web", action="store_true", default=None); s.add_argument("--no-web", dest="web", action="store_false")
+    s.add_argument("--clear", action="store_true"); s.set_defaults(fn=cmd_knows)
+    s = sub.add_parser("reset"); s.add_argument("id"); s.set_defaults(fn=cmd_reset)
     s = sub.add_parser("activate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=True)
     s = sub.add_parser("deactivate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=False)
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
