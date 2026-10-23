@@ -146,6 +146,10 @@ function moveJoeIntoContacts() {
 }
 moveJoeIntoContacts();
 
+// Live facts for friends who follow a team or have a hometown (see knowledge.mjs); refreshed while the app is open.
+const knowledge = createKnowledge(dataDir);
+knowledge.startRefreshing(() => listContacts());
+
 function getClient() {
   if (!config.apiKey) return null;
   client ??= new Anthropic({ apiKey: config.apiKey });
@@ -256,54 +260,72 @@ const textOf = (content) =>
     ? content
     : content.filter((b) => b.type === "text").map((b) => b.text).join("");
 
-// Streams Joe's next reply as plain text and records the full turn in the call history.
+// Streams the friend's next reply as plain text and records the full turn in the call history. If they use a
+// lookup tool mid-reply, the server runs it and the reply continues in the same stream: the short "let me check"
+// line they say first is spoken while the lookup runs.
 async function streamReply(res) {
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
+  const startLength = call.messages.length - 1; // where this turn's user message sits
+  // Strip the hang-up marker as text streams in. It can arrive split across chunks, so hold back any ending
+  // that could be the start of it.
+  let held = "", hangingUp = false;
+  const pass = (text) => {
+    held += text;
+    let i;
+    while ((i = held.indexOf(HANGUP)) >= 0) {
+      res.write(held.slice(0, i));
+      held = held.slice(i + HANGUP.length);
+      hangingUp = true;
+    }
+    let keep = 0;
+    for (let k = Math.min(HANGUP.length - 1, held.length); k > 0; k--) {
+      if (HANGUP.startsWith(held.slice(-k))) { keep = k; break; }
+    }
+    res.write(held.slice(0, held.length - keep));
+    held = held.slice(held.length - keep);
+  };
   try {
-    const model = chatModel(loadContact(call.contactId));
-    const stream = getClient().beta.messages.stream({
-      model: model.id,
-      max_tokens: 16000,
-      output_config: { effort: "low" },
-      cache_control: { type: "ephemeral" },
-      ...model.params,
-      system: call.system,
-      messages: call.messages,
-    });
-    // Strip the hang-up marker as text streams in. It can arrive split across chunks, so hold back any ending
-    // that could be the start of it.
-    let held = "", hangingUp = false;
-    const pass = (text) => {
-      held += text;
-      let i;
-      while ((i = held.indexOf(HANGUP)) >= 0) {
-        res.write(held.slice(0, i));
-        held = held.slice(i + HANGUP.length);
-        hangingUp = true;
+    const c = loadContact(call.contactId);
+    const model = chatModel(c);
+    const tools = knowledge.tools(c);
+    for (let round = 0; round < 6; round++) {
+      const stream = getClient().beta.messages.stream({
+        model: model.id,
+        max_tokens: 16000,
+        output_config: { effort: "low" },
+        cache_control: { type: "ephemeral" },
+        ...model.params,
+        ...(tools.length ? { tools } : {}),
+        system: call.system,
+        messages: call.messages,
+      });
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") pass(event.delta.text);
       }
-      let keep = 0;
-      for (let k = Math.min(HANGUP.length - 1, held.length); k > 0; k--) {
-        if (HANGUP.startsWith(held.slice(-k))) { keep = k; break; }
+      const final = await stream.finalMessage();
+      if (final.stop_reason === "refusal") {
+        const line = "Huh, you cut out on me there, buddy. Say that again?";
+        pass(line);
+        call.messages.push({ role: "assistant", content: line });
+        break;
       }
-      res.write(held.slice(0, held.length - keep));
-      held = held.slice(held.length - keep);
-    };
-    for await (const event of stream) {
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") pass(event.delta.text);
+      call.messages.push({ role: "assistant", content: final.content });
+      if (final.stop_reason === "pause_turn") continue; // a long web search; the API picks up where it left off
+      const uses = final.content.filter((b) => b.type === "tool_use");
+      if (final.stop_reason !== "tool_use" || !uses.length) break;
+      const results = await Promise.all(uses.map((u) =>
+        knowledge.runTool(u.name, u.input).then(
+          (content) => ({ type: "tool_result", tool_use_id: u.id, content }),
+          (err) => ({ type: "tool_result", tool_use_id: u.id, content: `Couldn't get that right now: ${err.message}`, is_error: true }),
+        )));
+      call.messages.push({ role: "user", content: results });
+      pass(" "); // keep "let me look." and what comes after it as separate sentences
     }
     res.write(held);
     if (hangingUp) res.write("\u0000HANGUP");
-    const final = await stream.finalMessage();
-    if (final.stop_reason === "refusal") {
-      const line = "Huh, you cut out on me there, buddy. Say that again?";
-      res.write(line);
-      call.messages.push({ role: "assistant", content: line });
-    } else {
-      call.messages.push({ role: "assistant", content: final.content });
-    }
   } catch (err) {
     console.error(err);
-    call.messages.pop(); // drop the unanswered user turn so the history stays valid
+    call.messages.length = startLength; // drop this unanswered turn (and any lookups) so the history stays valid
     res.write("\u0000ERROR:" + (err?.message ?? String(err)));
   }
   res.end();
@@ -527,7 +549,7 @@ const server = http.createServer(async (req, res) => {
     call = {
       contactId: c.id,
       started: new Date(),
-      system: systemPrompt(c),
+      system: await systemPrompt(c),
       messages: [{
         role: "user",
         content: incoming
