@@ -68,6 +68,13 @@ video\.venv\Scripts\python.exe tools\contact.py link rosa george --relation "you
 | `data/voices/<name>.wav` | The cleaned-up voice clip | No |
 | `data/faces/<name>.png` | The cropped face picture | No |
 
+## Turning friends on and off
+
+On the friends list, press ⚙ to open **Settings**. Every friend has an **Active** switch there.
+- Only active friends show on the friends list, and only active friends call you.
+- Turning a friend off only hides them. Their personality, voice, face, memory and links stay exactly as they are. Turn them back on any time.
+- From the command line: `tools\contact.py deactivate <id>` and `activate <id>`. In `list`, friends who are off show `[off]`.
+
 ## Tweaking a friend later
 
 - **In the app:** open the friend and press ⚙ to change their brain (Haiku, Sonnet or Opus), voice, or face. You can also record or upload a new voice clip, or upload a new face, right there.

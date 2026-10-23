@@ -64,6 +64,18 @@
   .round.mini:disabled { opacity: .35; cursor: not-allowed; }
   .home-hint { width: min(520px, calc(100% - 32px)); margin-top: 18px; text-align: center; }
   .home-hint code { background: var(--panel); padding: 1px 6px; border-radius: 6px; }
+
+  /* App settings: an Active switch per friend */
+  .toggles { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .toggle-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+  .toggle-row .c-avatar { width: 38px; height: 38px; font-size: 16px; }
+  .toggle-row .t-name { flex: 1; }
+  .toggle-row .t-state { font-size: 12px; color: var(--muted); width: 52px; text-align: right; }
+  .toggle-row input { appearance: none; width: 40px; height: 22px; border-radius: 11px; background: var(--line); position: relative; cursor: pointer; flex: none; padding: 0; border: 0; transition: background .15s; }
+  .toggle-row input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .toggle-row input:checked { background: var(--green); }
+  .toggle-row input:checked::after { left: 21px; }
+  .toggle-row.off .t-name { color: var(--muted); }
   .icon-btn { background: none; border: 0; color: var(--muted); font-size: 22px; cursor: pointer; }
   .icon-btn:hover { color: var(--ink); }
 
@@ -201,6 +213,17 @@
     <div class="ctl"><button class="round" id="answerBtn" title="Answer">📞</button>Answer</div>
   </div>
 </div>
+
+<dialog id="appDialog">
+  <h2>Settings</h2>
+  <label>Your friends</label>
+  <div class="hint">Only active friends show on your friends list and call you. Turning a friend off keeps everything about them, including their memory of you. Turn them back on any time.</div>
+  <div id="friendToggles" class="toggles"></div>
+  <div class="row">
+    <button class="btn ghost" id="appChangeKey">Change API key</button>
+    <button class="btn" id="appClose">Done</button>
+  </div>
+</dialog>
 
 <dialog id="keyDialog">
   <h2>One-time setup</h2>
@@ -776,7 +799,7 @@ $("keySave").onclick = async () => {
 };
 
 $("settingsBtn").onclick = async () => {
-  if (!contact) return $("keyDialog").showModal();
+  if (!contact) return openAppSettings();
   $("modelSelect").value = store.get("model", "sonnet");
   $("callsYouSelect").value = store.get("callsYou", "never");
   refreshChatterbox();
@@ -968,7 +991,8 @@ async function showHome() {
   $("callScreen").hidden = true;
   $("home").hidden = false;
   $("backBtn").hidden = true;
-  const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
+  const all = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
+  const list = all.filter((c) => c.active);
   $("contactList").innerHTML = list.map((c) => `
     <div class="contact" data-id="${esc(c.id)}">
       <div class="c-wrap">
@@ -983,7 +1007,7 @@ async function showHome() {
       </div>
       <button class="round mini call" data-start="voice" title="${c.hasVoice ? `Voice call ${esc(c.name)}` : "Needs a voice clip first (in their settings)"}" ${c.hasVoice ? "" : "disabled"}>📞</button>
       <button class="round mini video" data-start="video" title="${!c.hasVoice ? "Needs a voice clip first (in their settings)" : c.face ? `Video call ${esc(c.name)}` : "Add a face picture in their settings for video calls"}" ${c.face && c.hasVoice ? "" : "disabled"}>🎥</button>
-    </div>`).join("") || `<div class="hint">No friends yet.</div>`;
+    </div>`).join("") || `<div class="hint">${all.length ? "All your friends are turned off. Turn some back on in ⚙ Settings." : "No friends yet."}</div>`;
   updateDots();
 }
 
@@ -1035,6 +1059,31 @@ async function openContact(id, startWith, incoming = false) {
 
 $("backBtn").onclick = () => { if (state === "idle") showHome(); };
 
+// ---------- App settings: which friends are active ----------
+async function openAppSettings() {
+  const all = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
+  $("friendToggles").innerHTML = all.map((c) => `
+    <label class="toggle-row ${c.active ? "" : "off"}">
+      <div class="c-avatar">${c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0])}</div>
+      <span class="t-name">${esc(c.name)}</span>
+      <span class="t-state">${c.active ? "Active" : "Off"}</span>
+      <input type="checkbox" data-id="${esc(c.id)}" ${c.active ? "checked" : ""} aria-label="${esc(c.name)} active">
+    </label>`).join("") || `<div class="hint">No friends yet.</div>`;
+  $("appDialog").showModal();
+}
+$("friendToggles").onchange = async (e) => {
+  const box = e.target.closest("input[data-id]");
+  if (!box) return;
+  const row = box.closest(".toggle-row");
+  row.classList.toggle("off", !box.checked);
+  row.querySelector(".t-state").textContent = box.checked ? "Active" : "Off";
+  await fetch(`/api/contacts/${box.dataset.id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: box.checked }),
+  });
+};
+$("appClose").onclick = () => { $("appDialog").close(); showHome(); };
+$("appChangeKey").onclick = () => { $("appDialog").close(); $("keyDialog").showModal(); };
+
 fetch("/api/status").then((r) => r.json()).then((s) => {
   if (!s.hasKey) $("keyDialog").showModal();
 });
@@ -1056,14 +1105,14 @@ setInterval(async () => {
   if (state !== "idle" || ringingIn || quietHours() || Date.now() - lastCallEnded < 45 * 60 * 1000) return;
   const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
   for (const c of list) {
-    if (c.hasVoice && Math.random() < (CALL_ODDS[c.callsYou] ?? 0)) return ringYou(c.id);
+    if (c.active && c.hasVoice && Math.random() < (CALL_ODDS[c.callsYou] ?? 0)) return ringYou(c.id);
   }
 }, 60 * 1000);
 
 async function ringYou(id) {
   if (state !== "idle" || ringingIn) return;
   const c = (await fetch("/api/contacts").then((r) => r.json()).catch(() => [])).find((x) => x.id === id);
-  if (!c?.hasVoice) return;
+  if (!c?.hasVoice || !c.active) return;
   ringingIn = { c, stop: false };
   $("inName").textContent = c.name;
   $("inAvatar").innerHTML = c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0]);

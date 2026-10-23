@@ -15,6 +15,10 @@ Desktop voice and video calls with AI friends powered by Claude. Joe Dirt is the
 
 Open Claude Code in this folder and type `/new-contact`, then give Claude a name, a few sentences about who they are, a short voice clip and a face picture. Details are in `docs/building-a-contact.md`.
 
+## Settings (⚙ on the friends list)
+
+Turn each friend on or off. Only active friends show on the friends list and call you; turning a friend off keeps their memory. Change your API key here too.
+
 ## Each friend's settings (⚙ on their call screen)
 
 - **Calls you:** how often this friend rings you while the app is open: never, now and then, or often. The "Try it" button makes them call in a few seconds.

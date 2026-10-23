@@ -21,6 +21,8 @@ Commands:
                                           hears what you told them on their own calls; --relation is what
                                           <other-id> is to <id>, --back is what <id> is to <other-id>
     unlink <id> <other-id>                remove a link both ways
+    activate <id> / deactivate <id>       show or hide a friend on the friends list (hidden friends never
+                                          call you; nothing else about them changes)
     remove <id>                           archive a friend to data/removed/ (never deletes memory)
 
 A friend's id is short and lowercase, like "joe" or "uncle-earl". Their memory and call logs are never
@@ -123,7 +125,7 @@ def cmd_list(args):
         voice = s.get("cbVoice") if s.get("cbVoice") and os.path.isfile(os.path.join(VOICES, f"{s['cbVoice']}.wav")) else "NEEDS A CLIP"
         links = ", ".join(f"{l['relation']}: {l['id']}" for l in info.get("links", []))
         print(f"{cid:16s} {info['name']:24s} calls: {mem.get('calls', 0):<4} voice: {voice:20s} face: {s.get('face') or '-'}"
-              + (f"  linked ({links})" if links else ""))
+              + (f"  linked ({links})" if links else "") + ("  [off]" if info.get("active") is False else ""))
 
 
 def cmd_show(args):
@@ -291,6 +293,16 @@ def cmd_unlink(args):
     print(f'Unlinked {a["name"]} and {b["name"]}. Their memories stay as they are.')
 
 
+def cmd_active(args):
+    info = load(args.id)
+    if args.on:
+        info.pop("active", None)  # active is the default
+    else:
+        info["active"] = False
+    save(args.id, info)
+    print(f'{info["name"]} is now {"active" if args.on else "off (hidden from the friends list)"}.')
+
+
 def cmd_remove(args):
     info = load(args.id)
     stamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
@@ -319,6 +331,8 @@ def main():
     s.add_argument("--relation", required=True, help='what <other> is to <id>, like "your husband"')
     s.add_argument("--back", required=True, help='what <id> is to <other>, like "your wife"'); s.set_defaults(fn=cmd_link)
     s = sub.add_parser("unlink"); s.add_argument("id"); s.add_argument("other"); s.set_defaults(fn=cmd_unlink)
+    s = sub.add_parser("activate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=True)
+    s = sub.add_parser("deactivate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=False)
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
     args = p.parse_args()
     args.fn(args)

@@ -407,7 +407,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
-      calls: c.memory.calls, lastCall: c.memory.lastCall,
+      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }
   const contactRoute = url.pathname.match(/^\/api\/contacts\/([a-z0-9-]+)$/);
@@ -415,15 +415,17 @@ const server = http.createServer(async (req, res) => {
     const c = loadContact(contactRoute[1]);
     if (!c) return json(res, 404, { error: "No such friend." });
     if (req.method === "PUT") {
-      const { settings = {} } = await readBody(req);
+      const { settings = {}, active } = await readBody(req);
       for (const k of SETTING_KEYS) if (k in settings) c.settings[k] = settings[k];
+      // Inactive friends are hidden from the friends list and never call you; nothing else about them changes.
+      if (typeof active === "boolean") c.active = active;
       if (c.settings.model && !MODELS[c.settings.model]) c.settings.model = DEFAULT_MODEL;
-      delete c.legacy;
+      if (Object.keys(settings).length) delete c.legacy;
       saveContact(c);
     }
     return json(res, 200, {
       id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy,
-      calls: c.memory.calls, lastCall: c.memory.lastCall,
+      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     });
   }
 
