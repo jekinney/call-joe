@@ -605,7 +605,7 @@ setInterval(async () => {
       continue;
     }
     const p = readPending(c.id);
-    if (!p || p.dueAt > Date.now() || delivering.has(c.id) || c.active === false) continue;
+    if (!p || p.dueAt > Date.now() || delivering.has(c.id) || c.active === false || call?.contactId === c.id) continue;
     delivering.add(c.id);
     fs.rmSync(pendingFile(c.id), { force: true });
     try {
@@ -1473,6 +1473,25 @@ function missedCalls(c) {
     `React the way you naturally would, given who you are to them: relief, worry, teasing, or not a big deal.`;
 }
 
+const TEXTING_DURING_CALL = `# Texting during the call
+Like on a real phone, you can text your buddy while you talk when it's handy: an address, a phone number, a recipe, a link, or a photo you're talking about. Put a text in <text>...</text> or a photo in <photo>what the picture shows</photo> anywhere in your reply. It goes to their phone and isn't said out loud, so also say something like "I'm texting it to you now." Only now and then, when it really fits.`;
+// What the friend texted during the call: sent to the phone, picked up by the page through /api/updates.
+async function textsDuringCall(c, said) {
+  const words = [...said.matchAll(/<text>([\s\S]*?)<\/text>/g)].map((m) => untag(m[1]).trim()).filter(Boolean);
+  const pics = [...said.matchAll(/<photo>([\s\S]*?)<\/photo>/g)].map((m) => m[1].trim()).filter(Boolean);
+  if (!words.length && !pics.length) return;
+  const added = [];
+  const entry = (extra) => ({ id: `${Date.now()}-${added.length}`, from: "them", text: "", at: new Date().toISOString(), read: false, ...extra });
+  for (const w of pics) {
+    const photo = await friendPhoto(c, w).catch(() => null);
+    if (photo) added.push(entry({ photo }));
+  }
+  for (const w of words) added.push(entry({ text: w }));
+  if (!added.length) return;
+  writeTexts(c.id, [...readTexts(c.id), ...added]);
+  pushUpdate({ type: "texts", contact: c.id, texts: added });
+}
+
 const ENDING_THE_CALL = `# Ending the call
 You can hang up, like on a real phone, but end calls the way people really do: goodbyes go back and forth. When things are winding down, say your goodbye (the "alright, well, I'll let you go" part) without hanging up, and let your buddy answer. Only once they've said bye back, or they clearly said they have to go and you've answered, reply with a short last line ("Bye now!", "Talk soon, love ya") and put ${HANGUP} at the very end of it. It's a signal, not something you say.
 Never put ${HANGUP} after a long goodbye your buddy hasn't answered yet. Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
@@ -1821,26 +1840,35 @@ const textOf = (content) =>
 async function streamReply(res) {
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
   const startLength = call.messages.length - 1; // where this turn's user message sits
-  // Strip the hang-up marker as text streams in. It can arrive split across chunks, so hold back any ending
-  // that could be the start of it.
-  let held = "", hangingUp = false;
+  // Strip the hang-up marker, and texts or photos sent during the call (<text>...</text>, <photo>...</photo>, never
+  // spoken), as text streams in. Markers can arrive split across chunks, so hold back any ending that could start one.
+  const MARKS = [HANGUP, "<text>", "<photo>"];
+  let held = "", hangingUp = false, hiding = null;
   const pass = (text) => {
     held += text;
-    let i;
-    while ((i = held.indexOf(HANGUP)) >= 0) {
-      res.write(held.slice(0, i));
-      held = held.slice(i + HANGUP.length);
-      hangingUp = true;
+    for (;;) {
+      if (hiding) {
+        const end = held.indexOf(hiding);
+        if (end < 0) { held = held.slice(-(hiding.length - 1)); return; }
+        held = held.slice(end + hiding.length);
+        hiding = null;
+        continue;
+      }
+      let at = -1, mark = null;
+      for (const m of MARKS) { const i = held.indexOf(m); if (i >= 0 && (at < 0 || i < at)) { at = i; mark = m; } }
+      if (at < 0) break;
+      res.write(held.slice(0, at));
+      held = held.slice(at + mark.length);
+      if (mark === HANGUP) hangingUp = true;
+      else hiding = mark.replace("<", "</");
     }
     let keep = 0;
-    for (let k = Math.min(HANGUP.length - 1, held.length); k > 0; k--) {
-      if (HANGUP.startsWith(held.slice(-k))) { keep = k; break; }
-    }
+    for (const m of MARKS) for (let k = Math.min(m.length - 1, held.length); k > keep; k--) if (m.startsWith(held.slice(-k))) { keep = k; break; }
     res.write(held.slice(0, held.length - keep));
     held = held.slice(held.length - keep);
   };
   try {
-    const c = loadContact(call.contactId);
+    var c = loadContact(call.contactId);
     const model = chatModel(c);
     const tools = c.support ? SUPPORT_TOOLS : knowledge.tools(c);
     for (let round = 0; round < 6; round++) {
@@ -1878,8 +1906,10 @@ async function streamReply(res) {
       call.messages.push({ role: "user", content: results });
       pass(" "); // keep "let me look." and what comes after it as separate sentences
     }
-    res.write(held);
+    if (!hiding) res.write(held);
     if (hangingUp) res.write("\u0000HANGUP");
+    const said = call.messages.slice(startLength + 1).filter((m) => m.role === "assistant").map((m) => textOf(m.content)).join("\n");
+    if (!c.support) textsDuringCall(c, said).catch((err) => console.error("Texting during the call failed:", err?.message ?? err));
   } catch (err) {
     console.error(err);
     call.messages.length = startLength; // drop this unanswered turn (and any lookups) so the history stays valid
@@ -2653,7 +2683,7 @@ const server = http.createServer(async (req, res) => {
       contactId: c.id,
       incoming: !!incoming,
       started: new Date(),
-      system: await systemPrompt(c),
+      system: `${await systemPrompt(c)}${c.support ? "" : `\n\n${TEXTING_DURING_CALL}`}`,
       messages: [{
         role: "user",
         content: incoming
