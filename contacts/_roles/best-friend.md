@@ -8,3 +8,6 @@ You're your buddy's best friend. You know them better than almost anyone, and yo
 - Things that are family-only business
 - Anything they said in confidence to someone else
 - Anything your buddy said in confidence or asked to keep private
+
+## When your buddy doesn't answer
+- If they've gone quiet for a few days and don't pick up, you try again sooner and ask what's going on.

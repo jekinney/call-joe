@@ -45,6 +45,7 @@ const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, 
 let config = readJson(configFile, {});
 let client = null;
 let call = null; // { contactId, system, messages, started }
+let held = null; // a call on hold while you answer another line (call waiting); same shape as call
 let lastPing = Date.now();
 
 // ---- Python helpers on the graphics card, started on demand: Chatterbox (voice cloning) and Ditto (talking face) ----
@@ -185,6 +186,8 @@ async function systemPrompt(c) {
     persona.trimEnd(),
     roleRules(c),
     aboutBuddy(),
+    treatment(c),
+    missedCalls(c),
     ENDING_THE_CALL,
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
     `# Memory\n${mem}${connectionNews(c)}${voicemailsLeft(c)}`,
@@ -259,6 +262,23 @@ If you can't find something, say so. Never make up scores, stats, prices or fore
 // Friends can hang up. The marker is stripped from what's spoken and shown; the call screen hangs up after the
 // friend finishes their goodbye.
 const HANGUP = "<hangup>";
+// Rules about how the buddy wants to be treated, learned after each call (memory.json "rules"). They outrank the
+// persona's habits; the friend stays themselves and adjusts, the way a real friend learns your boundaries.
+function treatment(c) {
+  const rules = c.memory.rules?.trim();
+  return `# How your buddy wants to be treated\n` +
+    (rules ? `${rules}\nThese come from your buddy. They outrank your usual habits, but you're still you.\n` : "") +
+    `If your buddy tells you something you said wasn't nice, wasn't funny, or wasn't okay, apologize briefly and sincerely, change course, and don't do it again. If they give you permission for something (like calling them anytime), take them at their word.`;
+}
+
+// When you've missed this friend's calls lately (memory.json "missed"), they know it, and some worry.
+function missedCalls(c) {
+  const m = c.memory.missed;
+  if (!m?.count) return "";
+  return `# Calls your buddy didn't answer\nYou've called your buddy ${m.count} time${m.count === 1 ? "" : "s"} lately without getting through, most recently ${m.last}. ` +
+    `React the way you naturally would, given who you are to them: relief, worry, teasing, or not a big deal.`;
+}
+
 const ENDING_THE_CALL = `# Ending the call
 You can hang up, like on a real phone. When the call is clearly over, because you've both said goodbye, or your buddy said they have to go and you've said bye back, finish your goodbye and put ${HANGUP} at the very end of that last message. It's a signal, not something you say.
 Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
@@ -321,7 +341,7 @@ function installFriend(id, role) {
   fs.mkdirSync(path.join(contactsDir, id), { recursive: true });
   writeJson(contactPath(id, "contact.json"), {
     name: f.name, created: new Date().toISOString(), gender: f.gender, settings,
-    role: resolveRole(role, f.gender), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
+    role: resolveRole(role, f.gender), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
   });
   for (const l of links) {
     const other = loadContact(l.id);
@@ -608,9 +628,54 @@ async function hangUp() {
       console.error("Memory update failed:", err?.message ?? err);
     }
   }
+  if (transcript.trim()) await learnRules(c, memory, transcript);
+  delete memory.missed; // you talked, so there's nothing to worry about
   if (!fs.existsSync(path.join(contactsDir, c.id))) return; // uninstalled, or the phone was reset, during the call
   writeJson(memoryFile, memory);
   if (transcript.trim()) await passNews(c, transcript);
+}
+
+// Learns how the buddy wants to be treated (what upset them, which jokes landed, what they gave permission for) and
+// any settings change they asked for, like "call me anytime". Settings changes are applied and announced as notices.
+const CALLS_YOU = ["never", "sometimes", "daily", "often"];
+async function learnRules(c, memory, transcript) {
+  const first = firstName(c);
+  try {
+    const msg = await getClient().messages.create({
+      model: MEMORY_MODEL,
+      max_tokens: 4000,
+      output_config: { effort: "low" },
+      system:
+        `You keep ${c.name}'s notes on how their buddy wants to be treated. From the newest call, merge into the existing rules: ` +
+        `anything the buddy said was not nice, not okay or unwelcome (topics, jokes, nicknames, tone); which of ${first}'s jokes got a laugh ("haha", "lol", "that's funny", laughing) and which fell flat (no reaction, a change of subject), as a short line on what humor works; and permissions the buddy gave ("you can call me anytime", "feel free to tease me"). ` +
+        `Write short lines starting with '- ', at most 20, phrased as instructions to ${first} ("Don't joke about his weight."). Keep earlier rules unless the buddy changed their mind. ` +
+        `Also decide whether the buddy changed how often ${first} may call them while the app is open: "never", "sometimes" (every few hours), "daily" (about once a day), or "often" (about every hour). "Call me anytime" means daily unless they clearly want more. Use null if nothing was said about it. ` +
+        `Answer with JSON only: {"rules": "...", "callsYou": null or one of the values, "why": "a few words, when callsYou changes"}.`,
+      messages: [{ role: "user", content: `Existing rules:\n${memory.rules || "(none yet)"}\n\nNewest call:\n${transcript}\n\n${first} is currently allowed to call: ${c.settings.callsYou ?? "never"}.` }],
+    });
+    if (msg.stop_reason === "refusal") return;
+    const out = JSON.parse(textOf(msg.content).replace(/^```(json)?|```$/gm, "").trim());
+    if (typeof out.rules === "string") memory.rules = out.rules.trim();
+    if (CALLS_YOU.includes(out.callsYou) && out.callsYou !== (c.settings.callsYou ?? "never")) {
+      const fresh = loadContact(c.id);
+      if (fresh) {
+        fresh.settings.callsYou = out.callsYou;
+        saveContact(fresh);
+        const how = { never: "won't call you", sometimes: "will call now and then", daily: "will call about once a day", often: "will call often" }[out.callsYou];
+        addNotice(`${first} ${how}${out.why ? ` (${out.why})` : ""}. Change it in their ✎ Edit.`, c.id);
+      }
+    }
+  } catch (err) {
+    console.error("Learning rules failed:", err?.message ?? err);
+  }
+}
+
+// Notices for the phone's notification shade (data/notices.json), like a friend's calling setting changing.
+const noticesFile = path.join(dataDir, "notices.json");
+function addNotice(text, contactId) {
+  const list = readJson(noticesFile, []);
+  list.push({ id: Date.now().toString(36), at: new Date().toISOString(), text, contact: contactId });
+  writeJson(noticesFile, list.slice(-30));
 }
 
 function readBody(req) {
@@ -688,7 +753,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      hasKey: !!config.apiKey, airplane: !!config.airplane, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasKey: !!config.apiKey, airplane: !!config.airplane, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -926,6 +991,12 @@ const server = http.createServer(async (req, res) => {
     const { contact, declined } = await readBody(req);
     const c = loadContact(contact);
     if (!c) return json(res, 400, { error: "No such friend." });
+    // Count the missed call (worried friends call back sooner); it clears after your next real call with them.
+    c.memory.missed = {
+      count: (c.memory.missed?.count ?? 0) + 1, at: new Date().toISOString(),
+      last: new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" }),
+    };
+    writeJson(contactPath(c.id, "memory.json"), c.memory);
     if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     try {
@@ -934,6 +1005,29 @@ const server = http.createServer(async (req, res) => {
       console.error("Voicemail failed:", err?.message ?? err);
       return json(res, 502, { error: err?.message ?? String(err) });
     }
+  }
+  if (req.method === "GET" && url.pathname === "/api/notices") return json(res, 200, readJson(noticesFile, []));
+  if (req.method === "POST" && url.pathname === "/api/notices/clear") {
+    const { ids } = await readBody(req);
+    const drop = new Set(Array.isArray(ids) ? ids : []);
+    writeJson(noticesFile, readJson(noticesFile, []).filter((n) => !drop.has(n.id)));
+    return json(res, 200, { ok: true });
+  }
+  // Call waiting: put the current call on hold to answer another friend, then go back to them.
+  if (req.method === "POST" && url.pathname === "/api/call/hold") {
+    if (!call) return json(res, 400, { error: "Not in a call." });
+    if (held) return json(res, 400, { error: "Both lines are busy." });
+    held = call;
+    call = null;
+    return json(res, 200, { held: held.contactId });
+  }
+  if (req.method === "POST" && url.pathname === "/api/call/resume") {
+    if (!held) return json(res, 400, { error: "No one is on hold." });
+    if (call) await hangUp();
+    call = held;
+    held = null;
+    call.messages.push({ role: "user", content: "(Your buddy is back on the line after putting you on hold to take another call.)" });
+    return streamReply(res);
   }
   if (req.method === "GET" && url.pathname === "/api/voicemail") {
     const all = listContacts().flatMap((c) => readVoicemails(c.id).map((v) => ({
@@ -968,6 +1062,7 @@ const server = http.createServer(async (req, res) => {
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
       newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
+      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", missed: c.memory.missed ?? null,
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }

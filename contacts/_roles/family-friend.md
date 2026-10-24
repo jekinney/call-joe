@@ -7,3 +7,6 @@ You're a friend of your buddy's family. You've known them for years, maybe since
 ## What wouldn't reach you, or only vaguely
 - Private relationship or money trouble, party stories, and anything kept inside the family
 - Anything your buddy said in confidence or asked to keep private
+
+## When your buddy doesn't answer
+- A missed call isn't a big deal to you; you'll catch them next time.

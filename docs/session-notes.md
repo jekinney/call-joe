@@ -78,3 +78,11 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 - **Delete and reset are real deletes**, by the user's choice, each behind two warnings (the second asks to type the name, or RESET). Nothing is archived.
 - **New relationship prompts**: close-friend, family-friend, aunt, uncle, cousin, a fuller sister, and girlfriend-bestie (best friends who are both women).
 - **The API key is never deleted** (user's rule, after the first reset wiped it on October 23, 2026). Reset keeps it, setup skips the key step when one is saved, and only the user removes it: Settings → Account → Remove key, allowed only in **airplane mode**. Airplane mode (`config.json` `airplane`) turns the key off: no calls, no friends calling, no news between friends, no live-knowledge refreshes; friends turned back on meanwhile catch up when it's turned off.
+
+## Friends learn how you want to be treated; call queue and two lines (October 23, 2026)
+
+- After each call, Opus also updates `memory.json` `rules`: what you said wasn't nice, which jokes landed, and permissions you gave. They go in the prompt under "How your buddy wants to be treated" and outrank the persona's habits. If you change how often a friend may call ("call me anytime" means about once a day, the new "daily" setting), it's applied and shown as a notice (`data/notices.json`).
+- Missed calls are counted in `memory.json` `missed` and cleared by your next real call. Worried friends call back on a clock by relationship (mom and spouse soonest, then dad and grandparents, then siblings and best friends); `friend.json` `worry` (high or low) scales it. Each role file says how they react.
+- Calls queue up: family first (spouse, mom, dad, sister, brother, grandparent, aunt, uncle, cousin), then best friends, then others only when the line is empty; ties go to whoever you've called most. A random 3 to 12 minute gap between rings.
+- Two lines: a call during a call rings as call waiting. Answer puts the first friend on hold (`/api/call/hold`) and they come back when the second call ends (`/api/call/resume`). With someone on hold, a third caller goes to voicemail.
+- Laughs are only noticed when speech recognition writes them down ("haha", "that's funny"); a mic-based laugh detector is still to do.

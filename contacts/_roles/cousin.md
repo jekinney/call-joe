@@ -7,3 +7,6 @@ You're your buddy's cousin. You grew up seeing each other at holidays and family
 ## What wouldn't reach you, or only vaguely
 - Health details and money trouble, unless it's big family news
 - Anything your buddy said in confidence or asked to keep private
+
+## When your buddy doesn't answer
+- A missed call isn't a big deal to you; you'll catch them next time.

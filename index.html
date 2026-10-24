@@ -275,6 +275,15 @@
   #vmPlayer .vm-who { font-weight: 600; }
   #vmPlayer .vm-when { font-size: 12px; color: var(--muted); }
   #vmPlayer .vm-words { font-size: 14px; line-height: 1.45; margin-top: 6px; }
+  #waiting {
+    position: fixed; top: calc(var(--bezel) + 40px); left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 32px));
+    display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 22px; z-index: 60;
+    background: #2a211a; border: 1px solid var(--green); box-shadow: 0 12px 30px rgba(0,0,0,.55); animation: drop .2s ease-out;
+  }
+  #waiting .c-avatar { width: 44px; height: 44px; flex: none; }
+  #waiting .txt { flex: 1; min-width: 0; }
+  #waiting .t1 { font-weight: 600; }
+  #waiting .t2 { font-size: 13px; color: var(--muted); }
   /* Android-style snackbar above the tabs */
   #toast {
     position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); background: #efe4d4; color: #241a12; width: max-content;
@@ -703,6 +712,13 @@
   <button class="round mini" id="vmStop" title="Stop" style="background:var(--line)">■</button>
 </div>
 
+<div id="waiting" hidden>
+  <div class="c-avatar" id="waitAvatar"></div>
+  <div class="txt"><div class="t1" id="waitName"></div><div class="t2" id="waitText">Call waiting…</div></div>
+  <button class="round mini" id="waitDecline" title="Send to voicemail" style="background:var(--red)">📞</button>
+  <button class="round mini" id="waitAnswer" title="Put this call on hold and answer" style="background:var(--green)">📞</button>
+</div>
+
 <div id="incoming" hidden>
   <div class="avatar" id="inAvatar"></div>
   <h1 id="inName"></h1>
@@ -736,6 +752,7 @@
     <select id="callsYouSelect">
       <option value="never">Never (you always call)</option>
       <option value="sometimes">Now and then (about every few hours)</option>
+      <option value="daily">About once a day</option>
       <option value="often">Often (about once an hour)</option>
     </select>
     <button class="btn ghost" id="callMeNow" title="Try it: they call you in a few seconds">Try it</button>
@@ -1446,6 +1463,7 @@ async function hangUp(byFriend = false) {
   leaveVideo();
   setState("idle", byFriend ? `${who()} hung up. Talk soon!` : "Call ended. Talk soon!");
   lastCallEnded = Date.now();
+  if (heldContact) resumeHeld();
 }
 $("hangBtn").onclick = () => hangUp();
 
@@ -1761,13 +1779,40 @@ fetch("/api/status").then((r) => r.json()).then((s) => {
   if (!s.hasKey && !s.airplane) $("keyDialog").showModal();
 });
 // ---------- Friends who call you ----------
-// While the app is open and you're not on a call, each friend set to call you rolls the dice once a minute.
-// "sometimes" averages a call every ~3 hours of the app being open, "often" every ~1 hour. Never at night,
-// and never within 45 minutes of your last call with anyone.
-const CALL_ODDS = { sometimes: 1 / 180, often: 1 / 60 };
+// Once a minute (never at night), friends who want to call get in line:
+//   - Worried friends whose calls you missed call back on their own clock (see WORRY_HOURS).
+//   - Family and best friends roll the dice ("sometimes" ~every 3 hours the app is open, "daily" ~every 8, "often"
+//     ~hourly) and queue up even when others are waiting.
+//   - Everyone else only rolls once the line is empty.
+// The line is ordered family first (spouse, mom, dad, sister, brother, grandparent, aunt, uncle, cousin), then best
+// friends, then others; ties go to whoever you've called most. Calls ring one at a time with a random gap between them.
+// Two lines: during a call the next one rings as call waiting; with someone already on hold, it goes to voicemail.
+const CALL_ODDS = { sometimes: 1 / 180, daily: 1 / 480, often: 1 / 60 };
 const QUIET_FROM = 21, QUIET_UNTIL = 8;
+const FAMILY_ORDER = ["spouse", "mom", "dad", "sister", "brother", "grandparent", "aunt", "uncle", "cousin"];
+// Hours before calling back after a missed call: [after the first miss, after two or more]. Roles not listed don't.
+const WORRY_HOURS = {
+  mom: [1.5, 4], spouse: [1.5, 4], dad: [5, 20], grandparent: [5, 20],
+  sister: [8, 24], brother: [8, 24], "best-friend": [8, 24],
+  "close-friend": [24, 48], aunt: [24, 48], uncle: [24, 48], cousin: [24, 48],
+};
+const WORRY_SCALE = { high: 0.6, normal: 1, low: 1.6 }; // a friend's personality (friend.json "worry")
 const missed = {}; // friend id -> time of a missed call, shown on the friends list
-let lastCallEnded = Date.now(), ringingIn = null;
+let lastCallEnded = Date.now(), ringingIn = null, heldContact = null;
+let callQueue = [], nextRingAt = Date.now() + 2 * 60 * 1000;
+const randomGap = () => (3 + Math.random() * 9) * 60 * 1000; // 3 to 12 minutes between queued calls
+
+const callRank = (c) => {
+  const family = FAMILY_ORDER.indexOf(c.role);
+  return family >= 0 ? family : c.role === "best-friend" ? FAMILY_ORDER.length : FAMILY_ORDER.length + 1;
+};
+const priorityCaller = (c) => callRank(c) <= FAMILY_ORDER.length;
+function worriedCallback(c) {
+  const hours = WORRY_HOURS[c.role];
+  if (!c.missed?.count || !hours) return false;
+  const wait = hours[c.missed.count >= 2 ? 1 : 0] * (WORRY_SCALE[c.worry] ?? 1) * 3600 * 1000;
+  return Date.now() - Date.parse(c.missed.at) > wait;
+}
 
 function quietHours() {
   const h = new Date().getHours();
@@ -1775,17 +1820,38 @@ function quietHours() {
 }
 
 setInterval(async () => {
-  if (airplane || state !== "idle" || ringingIn || quietHours() || Date.now() - lastCallEnded < 45 * 60 * 1000) return;
-  const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
-  for (const c of list) {
-    if (c.active && c.hasVoice && Math.random() < (CALL_ODDS[c.callsYou] ?? 0)) return ringYou(c.id);
-  }
+  if (airplane || quietHours()) return;
+  const list = (await fetch("/api/contacts").then((r) => r.json()).catch(() => []))
+    .filter((c) => c.active && c.hasVoice && (c.callsYou ?? "never") !== "never");
+  const queued = new Set(callQueue.map((c) => c.id));
+  const wants = (c) => !queued.has(c.id) && (worriedCallback(c) || Math.random() < (CALL_ODDS[c.callsYou] ?? 0));
+  for (const c of list) if (priorityCaller(c) && wants(c)) callQueue.push(c);
+  if (!callQueue.length) for (const c of list) if (!priorityCaller(c) && wants(c)) { callQueue.push(c); break; }
+  callQueue.sort((a, b) => callRank(a) - callRank(b) || (b.calls ?? 0) - (a.calls ?? 0));
+  dispatchCall();
 }, 60 * 1000);
 
+// Rings the next friend in line when their turn comes: normally when you're free, as call waiting during a call,
+// or straight to voicemail when both lines are busy.
+function dispatchCall() {
+  if (!callQueue.length || ringingIn || Date.now() < nextRingAt) return;
+  if (state === "idle" && Date.now() - lastCallEnded < 10 * 60 * 1000) return; // a breather after a call
+  const c = callQueue.shift();
+  nextRingAt = Date.now() + randomGap();
+  if (heldContact) {
+    missed[c.id] = new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
+    toast(`📞 ${c.name} called, but both lines were busy.`);
+    refreshViews();
+    return receiveVoicemail(c, false);
+  }
+  ringYou(c.id);
+}
+
 async function ringYou(id) {
-  if (state !== "idle" || ringingIn) return;
+  if (ringingIn) return;
   const c = (await fetch("/api/contacts").then((r) => r.json()).catch(() => [])).find((x) => x.id === id);
   if (!c?.hasVoice || !c.active) return;
+  if (state !== "idle") return callWaiting(c);
   ringingIn = { c, stop: false };
   $("inName").textContent = c.name;
   $("inAvatar").innerHTML = c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0]);
@@ -1810,6 +1876,54 @@ async function ringYou(id) {
     refreshViews();
     receiveVoicemail(c, me.declined);
   }
+}
+
+// Call waiting: a second friend rings during a call. Answer puts the current friend on hold; when that call ends,
+// you're back with the first one. Decline (or no answer) sends them to voicemail.
+async function callWaiting(c) {
+  if (heldContact || contact?.id === c.id) return receiveVoicemail(c, false);
+  ringingIn = { c, stop: false, waiting: true };
+  const me = ringingIn;
+  $("waitName").textContent = c.name;
+  $("waitAvatar").innerHTML = c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0]);
+  $("waiting").hidden = false;
+  for (let i = 0; i < 8 && !me.stop; i++) await ring(1).then(() => new Promise((r) => setTimeout(r, 2500)));
+  $("waiting").hidden = true;
+  ringingIn = null;
+  if (me.answered) return;
+  missed[c.id] = new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
+  refreshViews();
+  receiveVoicemail(c, me.declined);
+}
+$("waitDecline").onclick = () => { if (ringingIn?.waiting) { ringingIn.declined = true; ringingIn.stop = true; } };
+$("waitAnswer").onclick = async () => {
+  if (!ringingIn?.waiting) return;
+  const c = ringingIn.c;
+  ringingIn.answered = true;
+  ringingIn.stop = true;
+  const r = await fetch("/api/call/hold", { method: "POST" }).catch(() => null);
+  if (!r?.ok) return receiveVoicemail(c, false);
+  heldContact = contact;
+  turnId += 1;
+  stopListening();
+  stopSpeaking();
+  stopInterruptWatch();
+  clearInterval(timerId);
+  clearInterval(idleTimer);
+  leaveVideo();
+  setState("idle", `${heldContact.firstName} is on hold`);
+  delete missed[c.id];
+  openContact(c.id, "voice", true);
+};
+// After the second call ends, the friend on hold comes back on the line.
+async function resumeHeld() {
+  const back = heldContact;
+  heldContact = null;
+  await openContact(back.id);
+  startInterruptWatch();
+  setState("ringing", `Back to ${back.firstName}…`);
+  startTimer();
+  joeTurn("/api/call/resume", {}, Promise.resolve());
 }
 
 // ---------- Voicemail ----------
@@ -1897,7 +2011,7 @@ $("declineBtn").onclick = () => { if (ringingIn) { ringingIn.declined = true; ri
 const PAGE_IDS = { home: "pageHome", contacts: "home", calls: "pageCalls", messages: "pageMessages", settings: "pageSettings", call: "callScreen", setup: "pageSetup" };
 let page = "home";
 let pagesBack = [], goingBack = false;
-const data = { friends: [], voicemail: [] }; // refreshed by refreshData()
+const data = { friends: [], voicemail: [], notices: [] }; // refreshed by refreshData()
 
 function showPage(name) {
   // Leaving a friend's page between calls puts their video away.
@@ -1995,10 +2109,12 @@ $("removeKeyBtn").onclick = async () => {
 
 async function refreshData() {
   fetch("/api/status").then((r) => r.json()).then((st) => showAirplane(!!st.airplane)).catch(() => {});
-  const [friends, voicemail] = await Promise.all([
+  const [friends, voicemail, notices] = await Promise.all([
     fetch("/api/contacts").then((r) => r.json()).catch(() => data.friends),
     fetch("/api/voicemail").then((r) => r.json()).catch(() => data.voicemail),
+    fetch("/api/notices").then((r) => r.json()).catch(() => data.notices),
   ]);
+  data.notices = notices;
   data.friends = friends;
   data.voicemail = voicemail;
   renderNotifications();
@@ -2027,7 +2143,13 @@ const avatarHtml = (name, face) => `<span class="c-avatar">${face ? `<img src="/
 let dismissed = new Set();
 try { dismissed = new Set(JSON.parse(localStorage.getItem("dismissedNotes") || "[]")); } catch {}
 function dismiss(keys) {
+  const notices = keys.filter((k) => k.startsWith("notice:")).map((k) => k.slice(7));
+  if (notices.length) {
+    fetch("/api/notices/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: notices }) });
+    data.notices = data.notices.filter((n) => !notices.includes(n.id));
+  }
   for (const k of keys) {
+    if (k.startsWith("notice:")) continue;
     if (k.startsWith("missed:")) delete missed[k.slice(7)];
     else dismissed.add(k);
   }
@@ -2040,6 +2162,10 @@ function notifications() {
   return [
     ...data.voicemail.filter((v) => !v.heard).map((v) => ({ key: `vm:${v.id}`, go: "voicemail", name: v.name, face: v.face, title: `${v.name} left you a voicemail`, sub: v.when })),
     ...Object.entries(missed).filter(([id]) => byId[id]).map(([id, when]) => ({ key: `missed:${id}`, go: "recents", name: byId[id].name, face: byId[id].face, title: `Missed call from ${byId[id].name}`, sub: when })),
+    ...data.notices.map((n) => {
+      const f = data.friends.find((c) => c.id === n.contact);
+      return { key: `notice:${n.id}`, go: "contacts", name: f?.name ?? "Call Joe", face: f?.face, title: n.text, sub: new Date(n.at).toLocaleString([], { weekday: "long", hour: "numeric", minute: "2-digit" }) };
+    }),
     ...data.friends.filter((c) => c.active && !c.hasVoice).map((c) => ({ key: `clip:${c.id}`, go: "contacts", name: c.name, face: c.face, title: `${c.name} needs a voice clip`, sub: "They can't be called until they have one." })),
   ].filter((n) => !dismissed.has(n.key));
 }
