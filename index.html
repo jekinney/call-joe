@@ -412,7 +412,8 @@
   dialog::backdrop { background: rgba(0,0,0,.6); }
   dialog h2 { margin-top: 0; font-size: 20px; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
-  input, select {
+  textarea { font: inherit; resize: vertical; }
+  input, select, textarea {
     width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
     background: var(--bg); color: var(--ink); font-size: 14px;
   }
@@ -550,10 +551,13 @@
         <div><label for="youFirst">First name</label><input id="youFirst"></div>
         <div><label for="youLast">Last name</label><input id="youLast"></div>
       </div>
+      <div class="two"><div style="max-width:110px"><label for="youAge">Your age</label><input id="youAge" type="number" min="13" max="120"></div>
+        <div><label for="youBday">Your birthday (optional)</label><input id="youBday" type="date"></div></div>
       <label>I'm a</label>
       <div class="choose" id="youGender"><button data-gender="man">Man</button><button data-gender="woman">Woman</button></div>
       <label for="youHome">Town and state</label>
       <input id="youHome" placeholder="Like Omaha, Nebraska">
+      <div id="youSpouse"></div>
       <div class="row" style="justify-content:space-between; align-items:center"><span class="msg" id="youMsg"></span><button class="btn" id="youSave">Save</button></div>
     </div>
     <p class="hint" style="font-size:13px">Your friends know your name and your town's weather from their next call.</p>
@@ -603,9 +607,12 @@
         <div><label for="suFirst">First name</label><input id="suFirst" autocomplete="given-name"></div>
         <div><label for="suLast">Last name</label><input id="suLast" autocomplete="family-name"></div>
       </div>
+      <div class="two"><div style="max-width:110px"><label for="suAge">Your age</label><input id="suAge" type="number" min="13" max="120"></div>
+        <div><label for="suBday">Your birthday (optional)</label><input id="suBday" type="date"></div></div>
       <label>I'm a</label>
       <div class="choose" id="suGender"><button data-gender="man" aria-pressed="true">Man</button><button data-gender="woman" aria-pressed="false">Woman</button></div>
       <p style="font-size:12px">It changes how some friends treat you. For example, Elena is a sister to a man and a best girlfriend to a woman.</p>
+      <div id="suSpouse"></div>
       <div class="msg err" id="suNameMsg"></div>
       <div class="setup-actions"><button class="btn ghost" data-step="0">Back</button><button class="btn" id="suNameNext">Next</button></div>
     </div>
@@ -2860,17 +2867,79 @@ async function loadYou() {
   $("youLast").value = u.last ?? "";
   $("youHome").value = u.home ?? "";
   pickGender($("youGender"), u.gender ?? "man");
+  fillSpouse("youSpouse", u.spouse);
+  $("youAge").value = u.age ?? "";
+  $("youBday").value = fromMd(u.birthday);
   $("youMsg").textContent = "";
 }
-const saveProfile = (first, last, gender, home) =>
-  fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ first, last, gender, home }) });
+const saveProfile = (first, last, gender, home, spouse, age, birthday) =>
+  fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ first, last, gender, home, spouse, age, birthday: toMd(birthday) }) });
+
+// Married? The same form in setup and in Settings -> You. Family and close friends learn about your spouse and
+// remind you before their birthday and your anniversary.
+function spouseForm(id) {
+  $(id).innerHTML = `
+    <label>Are you married?</label>
+    <div class="choose" data-married><button data-yes="1" aria-pressed="false">Yes</button><button data-yes="0" aria-pressed="true">No</button></div>
+    <div data-spouse hidden>
+      <div class="two">
+        <div><label>Their first name</label><input data-f="name"></div>
+        <div style="max-width:90px"><label>Age</label><input data-f="age" type="number" min="13" max="120"></div>
+        <div><label>They're a</label><div class="choose" data-sgender><button data-gender="woman" aria-pressed="true">Woman</button><button data-gender="man" aria-pressed="false">Man</button></div></div>
+      </div>
+      <div class="two">
+        <div><label>Their birthday</label><input type="date" data-f="birthday"></div>
+        <div><label>Your anniversary</label><input type="date" data-f="anniversary"></div>
+      </div>
+      <label>Tell your friends about them</label>
+      <textarea data-f="about" rows="3" placeholder="Like: Evelyn is a nurse, loves gardening and the Twins, can't stand cilantro."></textarea>
+      <p style="font-size:12px">Family and close friends learn about them, and everything you mention later. Someone will remind you before their birthday and your anniversary.</p>
+    </div>`;
+  const root = $(id);
+  root.querySelector("[data-married]").onclick = (e) => {
+    const b = e.target.closest("[data-yes]");
+    if (!b) return;
+    root.querySelectorAll("[data-yes]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    root.querySelector("[data-spouse]").hidden = b.dataset.yes !== "1";
+  };
+  root.querySelector("[data-sgender]").onclick = (e) => {
+    const b = e.target.closest("[data-gender]");
+    if (b) root.querySelectorAll("[data-sgender] [data-gender]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  };
+}
+// Dates are stored as MM-DD (the year doesn't matter); the date box needs a full date, so it shows this year.
+const toMd = (v) => (v ? v.slice(5) : "");
+const fromMd = (md) => (md ? `${new Date().getFullYear()}-${md}` : "");
+function readSpouse(id) {
+  const root = $(id);
+  if (root.querySelector('[data-yes="1"]').getAttribute("aria-pressed") !== "true") return null;
+  const f = (k) => root.querySelector(`[data-f="${k}"]`).value.trim();
+  if (!f("name")) return null;
+  return {
+    name: f("name"), gender: root.querySelector('[data-sgender] [aria-pressed="true"]')?.dataset.gender ?? "woman",
+    birthday: toMd(f("birthday")), anniversary: toMd(f("anniversary")), about: f("about"), age: f("age"),
+  };
+}
+function fillSpouse(id, sp) {
+  const root = $(id);
+  root.querySelector(`[data-yes="${sp?.name ? 1 : 0}"]`).click();
+  if (!sp?.name) return;
+  root.querySelector('[data-f="name"]').value = sp.name;
+  root.querySelector('[data-f="birthday"]').value = fromMd(sp.birthday);
+  root.querySelector('[data-f="anniversary"]').value = fromMd(sp.anniversary);
+  root.querySelector('[data-f="about"]').value = sp.about ?? "";
+  root.querySelector('[data-f="age"]').value = sp.age ?? "";
+  root.querySelector(`[data-sgender] [data-gender="${sp.gender ?? "woman"}"]`)?.click();
+}
+spouseForm("suSpouse");
+spouseForm("youSpouse");
 $("youSave").onclick = async () => {
   if (!$("youFirst").value.trim()) {
     $("youMsg").className = "msg err";
     $("youMsg").textContent = "Your first name, please.";
     return;
   }
-  await saveProfile($("youFirst").value, $("youLast").value, pickedGender($("youGender")), $("youHome").value);
+  await saveProfile($("youFirst").value, $("youLast").value, pickedGender($("youGender")), $("youHome").value, readSpouse("youSpouse"), $("youAge").value, $("youBday").value);
   $("youMsg").className = "msg ok";
   $("youMsg").textContent = "Saved.";
 };
@@ -2915,6 +2984,9 @@ async function showSetup() {
     $("suLast").value = st.user.last ?? "";
     $("suHome").value = st.user.home ?? "";
     pickGender($("suGender"), st.user.gender ?? "man");
+    fillSpouse("suSpouse", st.user.spouse);
+    $("suAge").value = st.user.age ?? "";
+    $("suBday").value = fromMd(st.user.birthday);
   }
 }
 $("pageSetup").addEventListener("click", (e) => {
@@ -2931,7 +3003,7 @@ $("suNameNext").onclick = () => {
 };
 $("suHomeNext").onclick = async () => {
   // Saved now, so the relationships offered later fit whether you're a man or a woman.
-  await saveProfile($("suFirst").value, $("suLast").value, pickedGender($("suGender")), $("suHome").value);
+  await saveProfile($("suFirst").value, $("suLast").value, pickedGender($("suGender")), $("suHome").value, readSpouse("suSpouse"), $("suAge").value, $("suBday").value);
   const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
   setupStep(st.hasKey ? 4 : 3);
   if (st.hasKey) renderSetupPicks();

@@ -186,7 +186,7 @@ async function systemPrompt(c) {
   return [
     persona.trimEnd(),
     roleRules(c),
-    aboutBuddy(),
+    aboutBuddy(c),
     treatment(c),
     missedCalls(c),
     ENDING_THE_CALL,
@@ -428,13 +428,89 @@ You can hang up, like on a real phone. When the call is clearly over, because yo
 Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
 
 // ---- You: your name, whether you're a man or a woman, and your town (first-time setup, or Settings -> You) ----
-function aboutBuddy() {
+// An age given in setup, a year older for every year since.
+const ageNow = (p) => (p?.age ? p.age + (new Date().getFullYear() - (p.ageYear ?? new Date().getFullYear())) : null);
+function aboutBuddy(c) {
   const u = config.user;
   if (!u?.first) return "";
   const who = `${u.first}${u.last ? ` ${u.last}` : ""}`;
-  return `# Your buddy\nYour buddy is ${who}, ${u.gender === "woman" ? "a woman" : "a man"}${u.home ? ` who lives in ${u.home}` : ""}. ` +
-    `You know them, so use their first name now and then, the way you naturally would.`;
+  return `# Your buddy\nYour buddy is ${who}, ${u.gender === "woman" ? "a woman" : "a man"}${ageNow(u) ? `, ${ageNow(u)} years old` : ""}${u.home ? `, who lives in ${u.home}` : ""}. ` +
+    (u.birthday ? `Their birthday is ${dayName(u.birthday)}. ` : "") +
+    `You know them, so use their first name now and then, the way you naturally would.` + aboutSpouse(c);
 }
+
+// ---- Your spouse (setup, or Settings -> You) ----
+// Family and close friends know them well: what you said about them in setup, what you've mentioned on calls and texts
+// (config.user.spouse.notes, learned after each call), and their important dates. Everyone else just knows the name.
+const KNOWS_SPOUSE_WELL = new Set(["mom", "dad", "sister", "brother", "grandparent", "aunt", "uncle", "cousin",
+  "best-friend", "girlfriend-bestie", "close-friend", "family-friend"]);
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const dayName = (md) => `${MONTHS[Number(md.slice(0, 2)) - 1]} ${Number(md.slice(3))}`;
+function spouseDates(sp) {
+  return [
+    ...(sp.birthday ? [{ what: `${sp.name}'s birthday`, date: sp.birthday }] : []),
+    ...(sp.anniversary ? [{ what: "their wedding anniversary", date: sp.anniversary }] : []),
+    ...(sp.dates ?? []).filter((d) => /^\d{2}-\d{2}$/.test(d.date)),
+  ];
+}
+function aboutSpouse(c) {
+  const sp = config.user?.spouse;
+  if (!sp?.name) return "";
+  const role = sp.gender === "man" ? "husband" : "wife";
+  let text = `\n\nYour buddy is married to ${sp.name}, their ${role}${ageNow(sp) ? ` (${ageNow(sp)})` : ""}.`;
+  if (!KNOWS_SPOUSE_WELL.has(c?.role)) return text;
+  if (sp.about) text += ` What you know about ${sp.name}: ${sp.about}`;
+  if (sp.notes) text += `\nWhat your buddy has mentioned about ${sp.name}:\n${sp.notes}`;
+  const dates = spouseDates(sp);
+  if (dates.length) text += `\nDates you keep track of: ${dates.map((d) => `${d.what}, ${dayName(d.date)}`).join("; ")}.`;
+  return text;
+}
+
+// Reminders: a week before (time to plan a gift), the day before, and the day of, the closest friend who'd do it
+// (a sister first, then mom, best friends...) texts a reminder. Checked hourly while the app is open, 9 AM to 8 PM.
+const REMINDER_ORDER = ["sister", "mom", "girlfriend-bestie", "best-friend", "brother", "dad", "close-friend", "grandparent",
+  "aunt", "cousin", "uncle", "family-friend"];
+setInterval(() => {
+  const u = config.user;
+  const hour = new Date().getHours();
+  if (u?.birthday && hour >= 9 && hour < 20 && Date.now() - lastPing < 90 * 1000 && getClient() && !config.airplane) {
+    const now = new Date();
+    const md = `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (md === u.birthday) {
+      const friend = listContacts().find((c) => c.active !== false && KNOWS_SPOUSE_WELL.has(c.role) && !u.greeted?.[`${c.id}|${now.getFullYear()}`]);
+      if (friend) {
+        u.greeted = { ...(u.greeted ?? {}), [`${friend.id}|${now.getFullYear()}`]: true };
+        writeJson(configFile, config);
+        friendTexts(friend, { opener: true, about: `it's your buddy's birthday today${ageNow(u) ? ` (they're turning ${ageNow(u)})` : ""}. Wish them a happy birthday your way.` })
+          .catch((err) => console.error("Birthday text failed:", err?.message ?? err));
+        return;
+      }
+    }
+  }
+  const sp = config.user?.spouse;
+  if (!sp?.name || hour < 9 || hour >= 20 || Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (const d of spouseDates(sp)) {
+    let next = new Date(today.getFullYear(), Number(d.date.slice(0, 2)) - 1, Number(d.date.slice(3)));
+    if (next < today) next.setFullYear(next.getFullYear() + 1);
+    const days = Math.round((next - today) / 864e5);
+    if (![7, 1, 0].includes(days)) continue;
+    const key = `${d.what}|${next.getFullYear()}|${days}`;
+    if (sp.reminded?.[key]) continue;
+    const friend = listContacts()
+      .filter((c) => c.active !== false && REMINDER_ORDER.includes(c.role) && (c.settings.textsYou ?? "sometimes") !== "never")
+      .sort((a, b) => REMINDER_ORDER.indexOf(a.role) - REMINDER_ORDER.indexOf(b.role))[0];
+    if (!friend) return;
+    sp.reminded = { ...(sp.reminded ?? {}), [key]: true };
+    writeJson(configFile, config);
+    const when = { 7: "is a week from today", 1: "is tomorrow", 0: "is today" }[days];
+    const extra = days === 7 ? ` Suggest a gift or a plan, from what you know about ${sp.name}.` : days === 1 ? " Make sure they're ready." : " Remind them to make it special.";
+    friendTexts(friend, { opener: true, about: `reminding your buddy that ${d.what} ${when}.${extra}` })
+      .catch((err) => console.error("Reminder text failed:", err?.message ?? err));
+    return; // one reminder at a time
+  }
+}, 60 * 60 * 1000);
 
 // ---- Friends you can install (Settings -> Friends, and first-time setup) ----
 // Every friend in contacts/<id>/ with a friend.json (written by `tools/contact.py publish`) can be installed: their
@@ -789,6 +865,7 @@ async function mergeMemory(c, memory, transcript, label) {
 const CALLS_YOU = ["never", "sometimes", "daily", "often"];
 async function learnRules(c, memory, transcript) {
   const first = firstName(c);
+  const sp = config.user?.spouse?.name ? config.user.spouse : null;
   try {
     const msg = await getClient().messages.create({
       model: MEMORY_MODEL,
@@ -799,12 +876,27 @@ async function learnRules(c, memory, transcript) {
         `anything the buddy said was not nice, not okay or unwelcome (topics, jokes, nicknames, tone); which of ${first}'s jokes got a laugh ("haha", "lol", "that's funny", laughing) and which fell flat (no reaction, a change of subject), as a short line on what humor works; and permissions the buddy gave ("you can call me anytime", "feel free to tease me"). ` +
         `Write short lines starting with '- ', at most 20, phrased as instructions to ${first} ("Don't joke about his weight."). Keep earlier rules unless the buddy changed their mind. ` +
         `Also decide whether the buddy changed how often ${first} may call them while the app is open: "never", "sometimes" (every few hours), "daily" (about once a day), or "often" (about every hour). "Call me anytime" means daily unless they clearly want more. Use null if nothing was said about it. ` +
-        `Answer with JSON only: {"rules": "...", "callsYou": null or one of the values, "why": "a few words, when callsYou changes"}.`,
-      messages: [{ role: "user", content: `Existing rules:\n${memory.rules || "(none yet)"}\n\nNewest call:\n${transcript}\n\n${first} is currently allowed to call: ${c.settings.callsYou ?? "never"}.` }],
+        (sp ? `The buddy is married to ${sp.name}. Also merge everything the buddy said about ${sp.name} into the existing notes about them (likes, plans, health, gift ideas, how things are between them), as short '- ' lines, at most 30, and list any dates mentioned for ${sp.name} or the two of them (birthday, anniversary, a big event) as MM-DD. ` : "") +
+        `Answer with JSON only: {"rules": "...", "callsYou": null or one of the values, "why": "a few words, when callsYou changes"${sp ? `, "spouseNotes": "...", "spouseDates": [{"what": "${sp.name}'s birthday", "date": "MM-DD"}]` : ""}, "buddyBirthday": null or "MM-DD" if the buddy said when their own birthday is}.`,
+      messages: [{ role: "user", content: `Existing rules:\n${memory.rules || "(none yet)"}\n\n${sp ? `Existing notes about ${sp.name}:\n${sp.notes || "(none yet)"}\n\n` : ""}Newest call:\n${transcript}\n\n${first} is currently allowed to call: ${c.settings.callsYou ?? "never"}.` }],
     });
     if (msg.stop_reason === "refusal") return;
     const out = JSON.parse(textOf(msg.content).replace(/^```(json)?|```$/gm, "").trim());
     if (typeof out.rules === "string") memory.rules = out.rules.trim();
+    if (/^\d{2}-\d{2}$/.test(out.buddyBirthday ?? "") && config.user && config.user.birthday !== out.buddyBirthday) {
+      config.user.birthday = out.buddyBirthday;
+      writeJson(configFile, config);
+    }
+    if (sp && config.user?.spouse === sp) {
+      if (typeof out.spouseNotes === "string" && out.spouseNotes.trim()) sp.notes = out.spouseNotes.trim();
+      for (const d of Array.isArray(out.spouseDates) ? out.spouseDates : []) {
+        if (!/^\d{2}-\d{2}$/.test(d?.date) || !d.what) continue;
+        if (spouseDates(sp).some((x) => x.date === d.date)) continue; // already known (like the birthday from setup)
+        if (/birthday/i.test(d.what) && !sp.birthday) { sp.birthday = d.date; continue; } // fills the box in Settings -> You
+        sp.dates = [...(sp.dates ?? []), { what: String(d.what).slice(0, 80), date: d.date }];
+      }
+      writeJson(configFile, config);
+    }
     if (CALLS_YOU.includes(out.callsYou) && out.callsYou !== (c.settings.callsYou ?? "never")) {
       const fresh = loadContact(c.id);
       if (fresh) {
@@ -913,7 +1005,21 @@ const server = http.createServer(async (req, res) => {
     const b = await readBody(req);
     const clean = (v) => String(v ?? "").trim().slice(0, 80);
     const before = yourGender();
-    config.user = { first: clean(b.first), last: clean(b.last), gender: b.gender === "woman" ? "woman" : "man", home: clean(b.home) };
+    const age = (v) => { const n = Math.round(Number(v)); return n >= 13 && n <= 120 ? n : null; };
+    const md = (v) => (/^\d{2}-\d{2}$/.test(String(v ?? "")) ? v : "");
+    const old = config.user?.spouse;
+    const spouse = b.spouse?.name ? {
+      // What you tell friends about them in setup; notes and dates learned from your calls and texts are kept.
+      name: clean(b.spouse.name), gender: b.spouse.gender === "man" ? "man" : "woman",
+      birthday: md(b.spouse.birthday), anniversary: md(b.spouse.anniversary), about: String(b.spouse.about ?? "").trim().slice(0, 2000),
+      age: age(b.spouse.age), ageYear: new Date().getFullYear(),
+      notes: old?.notes ?? "", dates: old?.dates ?? [], reminded: old?.reminded ?? {},
+    } : null;
+    config.user = { first: clean(b.first), last: clean(b.last), gender: b.gender === "woman" ? "woman" : "man", home: clean(b.home),
+      // Ages are saved with the year they were given (a year older each year after). A birthday is optional; one you
+      // mention on a call or in a text is saved too.
+      age: age(b.age), ageYear: new Date().getFullYear(), birthday: md(b.birthday) || config.user?.birthday || "",
+      greeted: config.user?.greeted ?? {}, ...(spouse ? { spouse } : {}) };
     // Switching between man and woman moves friends still on their default relationship to the default for the other.
     if (yourGender() !== before) {
       for (const c of listContacts()) {
