@@ -1046,7 +1046,7 @@ function madeLessons(id) {
   const log = readMadeLog(id).slice(-10);
   if (!log.length) return "";
   return `Pictures made for them before (learn from these: repeat what worked, avoid what was rejected):\n` + log.map((e) =>
-    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? "REJECTED: your buddy deleted it" : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n";
+    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? `REJECTED by your buddy${e.feedback ? `: ${e.feedback}` : ""}` : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n";
 }
 const photoMime = (f) => (/\.png$/i.test(f) ? "image/png" : /\.webp$/i.test(f) ? "image/webp" : "image/jpeg");
 const PHOTO_RULES = "Allowed: everyday phone photos. Never nudity or sexual content. Flirty is fine for adults (heels, a pedicure, a dress, legs crossed at dinner), always fully clothed. Children only ever appear in ordinary, wholesome family moments (games, school, birthdays, holidays), fully clothed, never posed or styled like adults.";
@@ -1180,7 +1180,7 @@ async function makePhoto(c, want, album) {
 
 ${c.name} wants to text a photo they just took: "${want}".
 ${looksOf(c) ? `What ${c.name.split(" ")[0]} looks like: ${looksOf(c)}.
-` : ""}Whenever ${c.name.split(" ")[0]} or any part of them (face, legs, feet, hands) is in the picture, the prompt must say so with their looks, always including their skin tone, and you pick camera-roll pictures of them as guides.
+` : ""}Whenever ${c.name.split(" ")[0]} or any part of them (face, legs, feet, hands) is in the picture, the prompt must say so with their looks in full detail (skin tone, and the shape and finish of whatever body part shows, exactly as described above), and you pick camera-roll pictures of them as guides.
 Pictures already in their camera roll:
 ${usable.map((p, i) => `${i + 1}. ${p.desc}`).join("\n") || "(none)"}
 ${madeLessons(c.id)}${PHOTO_RULES}
