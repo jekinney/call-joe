@@ -2693,7 +2693,7 @@ async function renderCalls() {
         <span class="txt"><div class="t1">${v.heard ? "" : `<span class="new-dot"></span>`}${esc(v.name)}</div>
           <div class="t2">${esc(v.when)}${v.declined ? " · you declined" : " · missed call"}</div>
           ${vmOpen.has(v.id) ? `<div class="words">${esc(v.text)}</div>` : `<div class="tap">Tap to read</div>`}</span>
-        <button class="play ${listPlaying === v.id ? "playing" : ""}" data-vm="${esc(v.id)}" data-contact="${esc(v.contact)}" title="${listPlaying === v.id ? "Stop" : "Play"}">${listPlaying === v.id ? "■" : "▶"}</button>
+        ${v.audioGone ? "" : `<button class="play ${listPlaying === v.id ? "playing" : ""}" data-vm="${esc(v.id)}" data-contact="${esc(v.contact)}" title="${listPlaying === v.id ? "Stop" : "Play"}">${listPlaying === v.id ? "■" : "▶"}</button>`}
         <button class="vm-del" data-vm-del="${esc(v.id)}" data-contact="${esc(v.contact)}" data-name="${esc(v.name)}" title="Delete">🗑</button>
       </div>`).join("") || `<div class="empty">No voicemail yet. When a friend calls and you miss it, their message shows up here.</div>`;
   }

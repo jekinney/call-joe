@@ -5,7 +5,8 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
+import zlib from "node:zlib";
 import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createKnowledge } from "./knowledge.mjs";
@@ -672,6 +673,7 @@ const SUPPORT_HELP = `Commands (anything else, just ask me):
 /me new job at Ford, 7 to 3
 /quiet 10pm-7am, /work weekdays 9-5 (or /work off)
 /who: who's free right now
+/storage: what's using space; /tidy: clean up old data (I'll show it first)
 /log, /undo
 /yes, /no: answer a change I showed you
 
@@ -900,6 +902,16 @@ async function supportCommand(text) {
       ? `Quiet hours: ${out.from} to ${out.to}. No calls or texts from friends then.`
       : `Work hours: ${out.days} ${out.from} to ${out.to}. Friends won't call then; texts are fine.`;
   }
+  if (word === "storage") return storageReport();
+  if (word === "tidy") {
+    const actions = planTidy();
+    if (!actions.length) return "Nothing to tidy right now. Everything is still in use.";
+    const total = actions.reduce((n, a) => n + a.bytes, 0);
+    return propose("Tidy up", `I'd tidy up about ${mb(total)}:\n${actions.map((a) => `- ${a.what}`).join("\n")}\nMemories, rules, personas and anything unheard or unsent stay.`, () => {
+      const { freed } = runTidy(actions);
+      return `Done. About ${mb(freed)} freed.`;
+    });
+  }
   if (word === "who") return listContacts().filter((c) => c.active !== false).map((c) => `${firstName(c)}: ${nowLine(c)}`).join("\n") || "No friends installed.";
   const c = listContacts().find((f) => firstName(f).toLowerCase() === word || f.id === word);
   if (c) return friendCommand(c, rest);
@@ -936,6 +948,146 @@ async function aiDirect(c, ask) {
     : `(A direction from your buddy, who set you up, given outside the conversation: "${ask}". Your next texts must be exactly that, in your own voice and within your rules, and nothing else: not a reaction to earlier texts, not a complaint that they haven't answered, not a question about it, and not an offer to call instead.)`;
   const out = await friendTexts(c, { direct, noPhoto: true }); // only the photo you asked for
   return { texts: [...added, ...out.texts], call: false, reaction: null };
+}
+
+// ---- Tidying up (weekly, by itself; or "/tidy" in Support) ----
+// Data that's no longer needed day to day is trimmed. Never touched: memory notes, rules, personas, voices, faces,
+// your profile and keys, and anything unheard or unsent.
+// - Voicemail audio you've heard, over 30 days old: the audio goes; the words stay (audioGone).
+// - Made pictures that were rejected, or never sent and over 60 days old (and not approved): removed from the album.
+//   Their copy in Desktop\Call Joe\<friend>\generated stays.
+// - Your album pictures over 1 MB: shrunk to phone size, after the original is copied to Desktop\Call Joe\<friend>\
+//   album originals (skipped where there's no Desktop folder, like test copies).
+// - Texts over 90 days old that are already in the memory notes: moved to texts-archive-<year>.json.gz.
+// - Persona history and profile history: the newest 20 of each are kept.
+const DAY = 864e5;
+const fileSize = (f) => { try { return fs.statSync(f).size; } catch { return 0; } };
+const mb = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
+function keepNewest(dirPath, n) {
+  if (!fs.existsSync(dirPath)) return [];
+  return fs.readdirSync(dirPath).map((f) => path.join(dirPath, f)).filter((f) => fs.statSync(f).isFile())
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs).slice(n);
+}
+
+// What a tidy-up would do: a list of { what, bytes, run }.
+function planTidy() {
+  const actions = [];
+  const now = Date.now();
+  for (const c of listContacts()) {
+    const first = firstName(c);
+    // Old voicemail audio.
+    const vms = readVoicemails(c.id);
+    const oldAudio = vms.filter((v) => v.heard && !v.audioGone && now - Date.parse(v.at) > 30 * DAY && fs.existsSync(path.join(voicemailDir(c.id), `${v.id}.wav`)));
+    if (oldAudio.length) {
+      actions.push({
+        what: `${first}: audio of ${oldAudio.length} old voicemail${oldAudio.length > 1 ? "s" : ""} (words kept)`,
+        bytes: oldAudio.reduce((n, v) => n + fileSize(path.join(voicemailDir(c.id), `${v.id}.wav`)), 0),
+        run: () => {
+          const list = readVoicemails(c.id);
+          for (const v of list) if (oldAudio.some((o) => o.id === v.id)) { fs.rmSync(path.join(voicemailDir(c.id), `${v.id}.wav`), { force: true }); v.audioGone = true; }
+          writeVoicemails(c.id, list);
+        },
+      });
+    }
+    // Rejected and unused made pictures.
+    const rejectedDir = path.join(photoDir(c.id), MADE, "rejected");
+    const rejected = fs.existsSync(rejectedDir) ? fs.readdirSync(rejectedDir).map((f) => path.join(rejectedDir, f)) : [];
+    const approved = new Set(readMadeLog(c.id).filter((e) => e.approved).map((e) => e.file));
+    const unused = readAlbum(c.id).filter((p) => p.made && !p.sentAt && !approved.has(p.file) && now - Date.parse(p.at) > 60 * DAY);
+    if (rejected.length || unused.length) {
+      actions.push({
+        what: `${first}: ${rejected.length + unused.length} made picture${rejected.length + unused.length > 1 ? "s" : ""} (${rejected.length} rejected, ${unused.length} never sent)`,
+        bytes: rejected.reduce((n, f) => n + fileSize(f), 0) + unused.reduce((n, p) => n + fileSize(path.join(photoDir(c.id), p.file)), 0),
+        run: () => {
+          copyMadeToDesktop(c); // make sure the Desktop has them first
+          for (const f of rejected) fs.rmSync(f, { force: true });
+          for (const p of unused) fs.rmSync(path.join(photoDir(c.id), p.file), { force: true });
+          writeAlbum(c.id, readAlbum(c.id).filter((p) => !unused.some((u) => u.file === p.file)));
+        },
+      });
+    }
+    // Big album pictures you added.
+    const desk = desktopFolder(c);
+    const big = desk ? readAlbum(c.id).filter((p) => !p.made && fileSize(path.join(photoDir(c.id), p.file)) > 1048576) : [];
+    if (big.length) {
+      actions.push({
+        what: `${first}: shrink ${big.length} big album picture${big.length > 1 ? "s" : ""} to phone size (originals to the Desktop)`,
+        bytes: big.reduce((n, p) => n + fileSize(path.join(photoDir(c.id), p.file)) * 0.85, 0),
+        run: () => {
+          const originals = path.join(path.dirname(desk), "album originals");
+          fs.mkdirSync(originals, { recursive: true });
+          for (const p of big) {
+            const f = path.join(photoDir(c.id), p.file);
+            const keep = path.join(originals, path.basename(p.file));
+            if (!fs.existsSync(keep)) fs.copyFileSync(f, keep);
+            execFileSync(path.join(dir, "voice", ".venv", "Scripts", "python.exe"), [path.join(dir, "tools", "shrink-picture.py"), f], { windowsHide: true });
+          }
+        },
+      });
+    }
+    // Old texts already in the memory notes.
+    const texts = readTexts(c.id);
+    const oldTexts = texts.filter((t) => t.remembered && now - Date.parse(t.at) > 90 * DAY);
+    if (oldTexts.length) {
+      actions.push({
+        what: `${first}: archive ${oldTexts.length} texts older than 90 days (already in memory)`,
+        bytes: Buffer.byteLength(JSON.stringify(oldTexts)) * 0.8,
+        run: () => {
+          const byYear = {};
+          for (const t of oldTexts) (byYear[new Date(t.at).getFullYear()] ??= []).push(t);
+          for (const [year, list] of Object.entries(byYear)) {
+            const file = contactPath(c.id, `texts-archive-${year}.json.gz`);
+            const before = fs.existsSync(file) ? JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8")) : [];
+            fs.writeFileSync(file, zlib.gzipSync(JSON.stringify([...before, ...list])));
+          }
+          const ids = new Set(oldTexts.map((t) => t.id));
+          writeTexts(c.id, readTexts(c.id).filter((t) => !ids.has(t.id)));
+        },
+      });
+    }
+    // Old persona versions.
+    const extraPersonas = keepNewest(contactPath(c.id, "persona-history"), 20);
+    if (extraPersonas.length) actions.push({ what: `${first}: ${extraPersonas.length} old persona versions`, bytes: extraPersonas.reduce((n, f) => n + fileSize(f), 0), run: () => extraPersonas.forEach((f) => fs.rmSync(f, { force: true })) });
+  }
+  const extraProfiles = keepNewest(path.join(dataDir, "profile-history"), 20);
+  if (extraProfiles.length) actions.push({ what: `${extraProfiles.length} old profile versions`, bytes: extraProfiles.reduce((n, f) => n + fileSize(f), 0), run: () => extraProfiles.forEach((f) => fs.rmSync(f, { force: true })) });
+  return actions;
+}
+function runTidy(actions) {
+  let freed = 0;
+  const done = [];
+  for (const a of actions) {
+    try { a.run(); freed += a.bytes; done.push(a.what); } catch (err) { console.error(`Tidy-up step failed (${a.what}):`, err?.message ?? err); }
+  }
+  config.lastTidy = new Date().toISOString();
+  writeJson(configFile, config);
+  if (done.length) logChange({ what: `Tidied up: ${done.join("; ")} (about ${mb(freed)})` });
+  return { freed, done };
+}
+// Once a week, while the app is open.
+setInterval(() => {
+  if (Date.now() - lastPing > 90 * 1000 || call) return;
+  if (config.lastTidy && Date.now() - Date.parse(config.lastTidy) < 7 * DAY) return;
+  const { freed, done } = runTidy(planTidy());
+  if (done.length) addNotice(`Tidied up old data: about ${mb(freed)} freed. Memories and anything unheard or unsent are untouched. Text Support /log for details.`);
+}, 60 * 60 * 1000);
+
+// What's using space, for "/storage".
+function dirSize(p) {
+  if (!fs.existsSync(p)) return 0;
+  const st = fs.statSync(p);
+  if (!st.isDirectory()) return st.size;
+  return fs.readdirSync(p).reduce((n, f) => n + dirSize(path.join(p, f)), 0);
+}
+function storageReport() {
+  const rows = listAll().map((c) => {
+    const d = path.join(contactsDir, c.id);
+    return { name: c.support ? `${firstName(c)} (support)` : firstName(c), total: dirSize(d), pics: dirSize(photoDir(c.id)), vm: dirSize(voicemailDir(c.id)) };
+  }).filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
+  const lines = rows.map((r) => `${r.name}: ${mb(r.total)}${r.pics ? ` (pictures ${mb(r.pics)}` : " ("}${r.vm ? `${r.pics ? ", " : ""}voicemail ${mb(r.vm)}` : ""})`.replace(" ()", ""));
+  const voices = dirSize(path.join(dataDir, "voices")), faces = dirSize(facesDir);
+  return [`Everything: ${mb(dirSize(dataDir))}`, ...lines, `Voice clips: ${mb(voices)}`, `Face pictures: ${mb(faces)}`,
+    `Last tidy-up: ${config.lastTidy ? new Date(config.lastTidy).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "not yet"}`].join("\n");
 }
 
 // ---- Text messages ----
