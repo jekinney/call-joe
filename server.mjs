@@ -1852,10 +1852,13 @@ const server = http.createServer(async (req, res) => {
     const { text, interrupted } = await readBody(req);
     if (!call) return json(res, 400, { error: "Not in a call." });
     const said = String(text || "").slice(0, 4000);
+    // Game news that happened since your last words (from the game watcher), so they can react right away.
+    const news = call.gameNews?.length ? `(Just now, you see on your TV: ${call.gameNews.join("; then ")}.) ` : "";
+    call.gameNews = [];
     call.messages.push({
       role: "user",
       // They talked over the friend, who stopped mid-sentence, so the rest of the friend's last reply went unheard.
-      content: interrupted ? `(Your buddy cut in while you were still talking, so they didn't hear the rest of what you were saying.) ${said}` : said,
+      content: news + (interrupted ? `(Your buddy cut in while you were still talking, so they didn't hear the rest of what you were saying.) ${said}` : said),
     });
     return streamReply(res);
   }
@@ -1871,6 +1874,7 @@ const server = http.createServer(async (req, res) => {
 
 // Football fans text about their team's game while the app is open: kickoff, their team scoring (and sometimes the
 // other team), and the final. At most one text per friend every 10 minutes, apart from the final. Never after 11 PM.
+// On a call with that friend, there is no text: the news goes into the call, so they react to it with your next words.
 const games = new Map(); // team -> last seen { id, state, usScore, themScore }
 const lastGameText = new Map(); // friend id -> time
 setInterval(async () => {
@@ -1892,12 +1896,15 @@ setInterval(async () => {
     else if (before.state === "in" && g.state === "post") { about = `the ${g.us} game just ended: ${g.us} ${g.usScore}, ${g.them} ${g.themScore}`; final = true; }
     if (!about) continue;
     for (const c of fans.filter((f) => f.knows.nflTeam === team)) {
+      // On a call with them (or on hold): no text; they hear it live with whatever you say next.
+      const live = [call, held].find((x) => x?.contactId === c.id);
+      if (live) { (live.gameNews ??= []).push(about); continue; }
       if (!final && Date.now() - (lastGameText.get(c.id) ?? 0) < 10 * 60 * 1000) continue;
       lastGameText.set(c.id, Date.now());
       friendTexts(c, { opener: true, about }).catch((err) => console.error("Game text failed:", err?.message ?? err));
     }
   }
-}, 2 * 60 * 1000);
+}, 60 * 1000); // ESPN is free; once a minute keeps reactions close to live
 
 // Time only counts while the app is open: config.openMinutes goes up once a minute while the page is talking to us.
 // Worried friends' call-back clocks run on it, so closing the app pauses them (see the scheduler in index.html).
