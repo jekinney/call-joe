@@ -494,7 +494,7 @@
 <!-- Contacts: your active friends (the friends list), and friends you've turned off -->
 <main id="home" class="page" hidden>
   <div class="page-top"><h1>Contacts</h1></div>
-  <button class="fab" id="addFriendBtn" title="Add a friend">＋</button>
+  <button class="fab" id="addFriendBtn" title="Add contact">＋</button>
   <div id="contactList" class="contacts"></div>
   <details class="off-friends" id="offWrap" hidden><summary id="offSummary"></summary><div class="list" id="offList"></div></details>
 </main>
@@ -624,7 +624,7 @@
     <div class="list" style="width:100%; padding: 2px 16px" id="friendsMine"></div>
     <div class="section-title" style="margin-top:16px">Ready to install</div>
     <div class="list" style="width:100%; padding: 2px 16px" id="friendsAvail"></div>
-    <p class="hint" style="font-size:13px">To take a break from a friend without losing anything, turn them off instead: Contacts → the friend → ✎ Edit. To make a brand-new friend, use Add friend on the home screen.</p>
+    <p class="hint" style="font-size:13px">To take a break from a friend without losing anything, turn them off instead: Contacts → the friend → ✎ Edit. To make a brand-new friend, use ＋ Add contact on the Contacts page.</p>
   </div>
 
   <div id="set-system" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
@@ -765,7 +765,7 @@
 </nav>
 
 <dialog id="addFriendDialog">
-  <h2>Add a friend</h2>
+  <h2>Add contact</h2>
   <p class="hint" style="font-size:14px">For now, Claude builds new friends with you. Open Claude Code in the <b>Call Joe</b> folder and type:</p>
   <code class="cmd">/new-contact</code>
   <p class="hint" style="font-size:14px">Have ready: their name and a few sentences about who they are, a 10 to 20 second voice clip (someone who's okay with it), and a made-up face picture for video calls. Claude writes their personality, shows it to you, and sets everything up.</p>
@@ -2419,7 +2419,6 @@ const APPS = [
   { go: "contacts", ic: "👥", name: "Contacts", bg: "#8a5a2b" },
   { go: "messages", ic: "💬", name: "Messages", bg: "#2f7fd1" },
   { go: "voicemail", ic: "📩", name: "Voicemail", bg: "#b8792f" },
-  { go: "add", ic: "➕", name: "Add friend", bg: "#4c6b3a" },
   { go: "looks", ic: "🎨", name: "Wallpaper", bg: "#7b3f8c" },
   { go: "settings", ic: "⚙", name: "Settings", bg: "#5a5550" },
   { go: "help", ic: "❓", name: "Tips", bg: "#3c5a78" },
@@ -2448,7 +2447,6 @@ $("apps").onclick = (e) => {
   if (!a) return;
   if (a === "contacts") return showHome();
   if (a === "voicemail") { callsTab = "voicemail"; return showPage("calls"); }
-  if (a === "add") return $("addFriendDialog").showModal();
   if (a === "help") return $("helpDialog").showModal();
   if (a === "support") return callSupport();
   if (a === "looks") { showPage("settings"); return showSetting("looks"); }

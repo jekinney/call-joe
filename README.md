@@ -27,10 +27,10 @@ Your API key is never deleted by anything, not even Reset phone. **Airplane mode
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:
 - **Status bar:** the time, and 🔔 notifications (new voicemails, missed calls, friends who need a voice clip). Click it to pull them down; × dismisses one, Clear all dismisses them all.
-- **Home:** a clock, app icons (Phone, Contacts, Messages, Voicemail, Add friend, Wallpaper, Settings, Tips) and your favorite friends in the dock.
+- **Home:** a clock, app icons (Phone, Contacts, Messages, Voicemail, Wallpaper, Settings, Tips, Support) and your favorite friends in the dock.
 - **Tabs, always at the bottom:** Calls, Contacts, Messages and Settings.
   - **Calls:** Recents (the last 30 calls, ↙ incoming or ↗ outgoing, plus missed and declined) and Voicemail, with play buttons. **Clear** asks whether to clear all, incoming or outgoing calls. It only clears the list: friends still remember the calls, and voicemails stay.
-  - **Contacts:** your active friends, the ＋ button to add one, and friends you've turned off (with Turn on).
+  - **Contacts:** your active friends, the ＋ Add contact button, and friends you've turned off (with Turn on).
   - **Messages:** texting your friends is coming later.
   - **Settings:** a list of settings; ☰ jumps between them. You (name, man or woman, town), Friends (install, change relationships, delete), Calls (interrupt by talking), Looks, Account (your API key and airplane mode), System (reset phone) and About.
 - **Navigation buttons:** ◁ back, ○ home, □ recent calls. Esc and a mouse's back button also go back.
