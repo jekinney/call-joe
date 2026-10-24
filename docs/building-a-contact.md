@@ -105,7 +105,12 @@ Off by default: friends keep it clean (`contacts/_language/clean.md`). Allowed, 
 
 Every friend has a photo album, `data/contacts/<id>/photos/` (private, never committed). Open it from the friend's ✎ Edit → 📷 Photo album and drop pictures in, named by who or what is in them ("Mateo soccer.jpg"). Claude looks at each picture once and notes what it shows.
 
-When a friend texts `[photo: …]`, the closest album picture is sent, unless they sent it in the last week. If nothing fits, a new picture is made on the graphics card (`pictures/picture_server.py`: RealVisXL 5.0 with IP-Adapter, run with the voice engine's Python), guided by up to two album pictures and the friend's face picture. Claude checks it before it's sent, and it's added to the album, so the kids and things keep looking the same. Delete any picture you don't like from the folder.
+When a friend texts `[photo: …]`, the closest album picture is sent (a loose match is fine), unless they sent it in the last week. If nothing fits, a new picture is made, guided by album pictures and the friend's face picture:
+
+- With a Google AI key (Settings → Account), by Google's Nano Banana 2.1 (`gemini-nano-banana-2.1`), about 4 cents a picture. The prompt and reference pictures go to Google.
+- Otherwise (or in airplane mode), on the graphics card (`pictures/picture_server.py`: RealVisXL 5.0 with IP-Adapter, run with the voice engine's Python), not during calls.
+
+Claude checks every new picture before it's sent. Made pictures go in `photos/made/`, and `photos/made/prompts.json` logs each request, prompt, guides and result. Delete any you don't like: it's remembered as rejected, and the planner reads the log to write better prompts. `looks` in friend.json (always with skin tone) describes the friend for every picture of them.
 
 Photos stay everyday: never nudity or sexual content, flirty only for adults and always clothed, and children only in ordinary, wholesome family moments. `photoHabits` in friend.json says what a friend tends to photograph.
 

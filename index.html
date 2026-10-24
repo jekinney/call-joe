@@ -605,6 +605,10 @@
         <button class="btn ghost" id="giphyHelpBtn">How to get one</button></div>
       <div class="field"><input id="giphyInput" type="password" placeholder="Paste your GIPHY API key" autocomplete="off"><button class="btn" id="giphySave">Save</button></div>
       <div class="msg" id="giphyMsg"></div>
+      <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">Google AI key</div><div class="t2" id="googleState">For the photos friends text you. Google makes new ones from their album, about 4 cents each.</div></span>
+        <button class="btn ghost" id="googleHelpBtn">How to get one</button></div>
+      <div class="field"><input id="googleInput" type="password" placeholder="Paste your Google AI key" autocomplete="off"><button class="btn" id="googleSave">Save</button></div>
+      <div class="msg" id="googleMsg"></div>
     </div>
     <p class="hint" style="font-size:13px" id="removeKeyHint">To remove your key, turn on airplane mode first. Nothing else ever removes it, not even Reset phone.</p>
     <p class="hint" style="font-size:13px">Your friends think with Claude, using your own key. It's saved only on this computer. Manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
@@ -818,6 +822,17 @@
   <div class="row"><button class="btn ghost" id="clearCancel">Cancel</button><button class="btn" id="clearOk">Clear</button></div>
 </dialog>
 
+<dialog id="googleHelp">
+  <h2>Get a Google AI key</h2>
+  <ol class="hint" style="font-size:14px; line-height:1.7; padding-left:20px">
+    <li>Open Google AI Studio: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--accent)">aistudio.google.com/apikey</a> and sign in with a Google account.</li>
+    <li>Click <b>Create API key</b> and pick (or create) a project.</li>
+    <li>Picture-making needs billing turned on: click <b>Set up billing</b> next to the key and add a card in Google Cloud.</li>
+    <li>Copy the key (it starts with <b>AIza</b>), paste it in <b>Google AI key</b> here, and click <b>Save</b>.</li>
+  </ol>
+  <p class="hint" style="font-size:13px">Only new photos use it, about 4 cents each; pictures already in a friend's album are free. The photo description and reference pictures from the album are sent to Google. The key is saved only on this computer and is never deleted, not even by Reset phone. In airplane mode, or without a key, photos are made on your graphics card instead.</p>
+  <div class="row"><button class="btn ghost" id="googleOpen">Open AI Studio</button><button class="btn" id="googleHelpClose">Got it</button></div>
+</dialog>
 <dialog id="giphyHelp">
   <h2>Get a free GIPHY key</h2>
   <ol class="hint" style="font-size:14px; line-height:1.7; padding-left:20px">
@@ -2654,7 +2669,7 @@ function showSetting(id) {
   if (id === "looks") renderLooks();
   if (id === "account") {
     loadKeyState();
-    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; }).catch(() => {});
+    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; if (st.hasGoogle) $("googleState").textContent = "A Google AI key is saved. Friends' new photos are made by Google."; }).catch(() => {});
   }
   if (id === "you") loadYou();
   if (id === "friends") renderFriends();
@@ -2982,6 +2997,18 @@ async function sendText() {
 }
 $("textSend").onclick = () => sendText();
 
+$("googleHelpBtn").onclick = () => $("googleHelp").showModal();
+$("googleHelpClose").onclick = () => $("googleHelp").close();
+$("googleOpen").onclick = () => window.open("https://aistudio.google.com/apikey", "_blank");
+$("googleSave").onclick = async () => {
+  $("googleMsg").className = "msg";
+  $("googleMsg").textContent = "Checking…";
+  const r = await fetch("/api/google-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: $("googleInput").value }) });
+  const out = await r.json().catch(() => ({}));
+  $("googleMsg").className = r.ok ? "msg ok" : "msg err";
+  $("googleMsg").textContent = r.ok ? "Saved. Friends' new photos are made by Google." : out.error;
+  if (r.ok) { $("googleInput").value = ""; $("googleState").textContent = "A Google AI key is saved. Friends' new photos are made by Google."; }
+};
 $("giphyHelpBtn").onclick = () => $("giphyHelp").showModal();
 $("giphyHelpClose").onclick = () => $("giphyHelp").close();
 $("giphyOpen").onclick = () => window.open("https://developers.giphy.com/dashboard/", "_blank");

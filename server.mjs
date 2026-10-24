@@ -578,7 +578,9 @@ const gifWords = (gif) => gif.desc ?? gif.title;
 
 // ---- Photos friends text you ----
 // Each friend has an album: data/contacts/<id>/photos/ (private, never committed). Drop pictures in it, named by what
-// they show if you like ("Mateo soccer.jpg"); Claude looks at each one once and writes it into index.json. When a
+// they show if you like ("Mateo soccer.jpg"); Claude looks at each one once and writes it into index.json. Pictures
+// made for them go in photos/made/, with made/prompts.json logging each request, prompt, guides and result; ones
+// you delete are marked rejected, and the planner reads that log to write better prompts next time. When a
 // friend texts [photo: what it shows], the best album match is sent. If none fits, a new picture is made on the
 // graphics card (pictures/picture_server.py), guided by album pictures and the friend's face, checked by Claude, and
 // added to the album, so the same kids and things keep looking the same.
@@ -586,6 +588,16 @@ const PHOTO_EXT = /\.(jpe?g|png|webp)$/i;
 const photoDir = (id) => path.join(contactsDir, id, "photos");
 const readAlbum = (id) => readJson(path.join(photoDir(id), "index.json"), []);
 const writeAlbum = (id, list) => writeJson(path.join(photoDir(id), "index.json"), list);
+const MADE = "made"; // subfolder for pictures made for the friend (auto-generated), "made/<name>" in the album
+const madeLogFile = (id) => path.join(photoDir(id), MADE, "prompts.json");
+const readMadeLog = (id) => readJson(madeLogFile(id), []);
+// What earlier pictures taught: the request, the prompt, and how it came out (kept, failed the check, or deleted by you).
+function madeLessons(id) {
+  const log = readMadeLog(id).slice(-10);
+  if (!log.length) return "";
+  return `Pictures made for them before (learn from these: repeat what worked, avoid what was rejected):\n` + log.map((e) =>
+    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? "REJECTED: your buddy deleted it" : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n";
+}
 const photoMime = (f) => (/\.png$/i.test(f) ? "image/png" : /\.webp$/i.test(f) ? "image/webp" : "image/jpeg");
 const PHOTO_RULES = "Allowed: everyday phone photos. Never nudity or sexual content. Flirty is fine for adults (heels, a pedicure, a dress, legs crossed at dinner), always fully clothed. Children only ever appear in ordinary, wholesome family moments (games, school, birthdays, holidays), fully clothed, never posed or styled like adults.";
 const PHOTO_NEGATIVE = "nude, naked, nsfw, topless, nipples, lingerie, underwear, bikini, sexual, explicit, cartoon, illustration, painting, anime, 3d render, text, words, letters, caption, banner, sign, watermark, logo, deformed, extra fingers, extra limbs, bad anatomy, blurry";
@@ -615,7 +627,7 @@ async function askJson(content) {
 async function describePhoto(c, file) {
   const full = path.join(photoDir(c.id), file);
   if (fs.statSync(full).size > 4.5 * 1024 * 1024) return { desc: "", ok: false, note: "too big to look at (over 4.5 MB)" };
-  const hint = /^made-/.test(file) ? "" : ` Its file name is "${file.replace(PHOTO_EXT, "")}", which may name who or what is in it.`;
+  const hint = file.startsWith(`${MADE}/`) ? "" : ` Its file name is "${file.replace(PHOTO_EXT, "")}", which may name who or what is in it.`;
   const about = catalogEntry(c.id)?.about ?? c.name;
   const out = await askJson([
     { type: "image", source: { type: "base64", media_type: photoMime(file), data: fs.readFileSync(full).toString("base64") } },
@@ -626,9 +638,17 @@ async function describePhoto(c, file) {
 
 // Brings the album's index up to date with the pictures in the folder.
 async function syncAlbum(c) {
-  fs.mkdirSync(photoDir(c.id), { recursive: true });
-  const files = fs.readdirSync(photoDir(c.id)).filter((f) => PHOTO_EXT.test(f));
+  fs.mkdirSync(path.join(photoDir(c.id), MADE), { recursive: true });
+  const files = [
+    ...fs.readdirSync(photoDir(c.id)).filter((f) => PHOTO_EXT.test(f)),
+    ...fs.readdirSync(path.join(photoDir(c.id), MADE)).filter((f) => PHOTO_EXT.test(f)).map((f) => `${MADE}/${f}`),
+  ];
   let album = readAlbum(c.id).filter((p) => files.includes(p.file));
+  // A made picture you deleted from the folder is remembered as rejected.
+  const log = readMadeLog(c.id);
+  let changed = false;
+  for (const e of log) if (e.kept && !e.removed && !files.includes(e.file)) { e.removed = new Date().toISOString(); changed = true; }
+  if (changed) writeJson(madeLogFile(c.id), log);
   for (const file of files.filter((f) => !album.some((p) => p.file === f))) {
     if (!getClient()) break;
     const seen = await describePhoto(c, file);
@@ -638,10 +658,59 @@ async function syncAlbum(c) {
   return album;
 }
 
+// ---- Gemini pictures (Google's Nano Banana): needs a Google AI key, saved in Settings -> Account ----
+// With a key, new pictures are made by Google from the friend's album pictures and face, which keeps people looking
+// the same far better than the local model. The prompt and reference pictures go to Google; the result is still
+// checked by Claude before it's sent. Without a key (or in airplane mode) the local picture server is used.
+const GEMINI_IMAGE_MODEL = "gemini-nano-banana-2.1";
+const geminiReady = () => !!config.googleKey && !config.airplane;
+async function geminiCheckKey(key) {
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(r.status === 400 || r.status === 401 || r.status === 403 ? "Google didn't accept the key." : `Google answered ${r.status}.`);
+}
+// The first base64 image anywhere in Google's answer (the Interactions API's shape is still settling).
+function findImage(v) {
+  if (!v || typeof v !== "object") return null;
+  const d = v.inlineData ?? v.inline_data;
+  if (d?.data) return { data: d.data, mime: d.mimeType ?? d.mime_type ?? "image/png" };
+  if (v.data && typeof v.data === "string" && v.data.length > 1000 && (v.type === "image" || v.mime_type || v.mimeType)) return { data: v.data, mime: v.mime_type ?? v.mimeType ?? "image/png" };
+  for (const x of Array.isArray(v) ? v : Object.values(v)) {
+    const found = findImage(x);
+    if (found) return found;
+  }
+  return null;
+}
+async function geminiPicture(prompt, refs) {
+  let budget = 12 * 1024 * 1024; // keep the request under Google's size limit
+  const images = [];
+  for (const f of refs) {
+    const size = fs.statSync(f).size;
+    if (size > budget) continue;
+    budget -= size;
+    images.push({ type: "image", mime_type: photoMime(f), data: fs.readFileSync(f).toString("base64") });
+  }
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": config.googleKey },
+    signal: AbortSignal.timeout(3 * 60 * 1000),
+    body: JSON.stringify({
+      model: GEMINI_IMAGE_MODEL,
+      input: [{ type: "text", text: prompt }, ...images],
+      response_format: { type: "image", aspect_ratio: "3:4", image_size: "1K" },
+    }),
+  });
+  const out = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`Google answered ${r.status}: ${JSON.stringify(out?.error ?? out).slice(0, 300)}`);
+  const img = findImage(out);
+  if (!img) throw new Error(`Google sent no picture: ${JSON.stringify(out).slice(0, 300)}`);
+  return img;
+}
+
 // A new picture for the album, made from a description. Returns the album entry, or null.
 async function makePhoto(c, want, album) {
-  // Not during a call: the voice and face need the graphics card then. The album still works.
-  if (!pictureModelReady() || call) return null;
+  const gemini = geminiReady();
+  // The local model doesn't run during a call: the voice and face need the graphics card then. The album still works.
+  if (!gemini && (!pictureModelReady() || call)) return null;
   const usable = album.filter((p) => p.ok);
   const face = faceFile(c.settings.face);
   let persona = "";
@@ -653,14 +722,29 @@ ${looksOf(c) ? `What ${c.name.split(" ")[0]} looks like: ${looksOf(c)}.
 ` : ""}Whenever ${c.name.split(" ")[0]} or any part of them (face, legs, feet, hands) is in the picture, the prompt must say so with their looks, always including their skin tone, and you pick camera-roll pictures of them as guides.
 Pictures already in their camera roll:
 ${usable.map((p, i) => `${i + 1}. ${p.desc}`).join("\n") || "(none)"}
-${PHOTO_RULES}
-Write a prompt for a photo-style image model, under 60 words with the main subject first: a candid smartphone photo, natural light, realistic, describing exactly what was asked for and everyone in it concretely (age, skin tone, hair, clothes), so they look like the same people as in the camera roll and the description above. If anyone in the photo also appears in a camera-roll picture (like the family, or the same shoes), pick that picture (up to 2) to guide their look; otherwise pick none. Say whether ${c.name.split(" ")[0]}'s face is in the picture (their face picture is used then). If the photo can't be made within the rules, give an empty prompt.
+${madeLessons(c.id)}${PHOTO_RULES}
+Write a prompt for a photo-style image model${gemini ? " that is also given the camera-roll pictures you pick (and their face picture, if their face shows) as references: a few plain sentences saying to keep each person looking exactly like in the references (face, skin tone, hair, body) in a brand-new scene, then describe it: a candid, unposed smartphone photo," : ", under 60 words with the main subject first: a candid smartphone photo,"} natural light, realistic, describing exactly what was asked for and everyone in it concretely (age, skin tone, hair, clothes), so they look like the same people as in the camera roll and the description above. If anyone in the photo also appears in a camera-roll picture (like the family, or the same shoes), pick that picture (up to ${gemini ? 3 : 2}) to guide their look; otherwise pick none. Say whether ${c.name.split(" ")[0]}'s face is in the picture (their face picture is used then). If the photo can't be made within the rules, give an empty prompt.
 Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their face shows, otherwise false, "people": true if anyone is in the picture, otherwise false}` }]);
   if (!plan?.prompt) return null;
   console.log(`Making a photo for ${c.name}: ${plan.prompt} (guides: ${(plan.refs ?? []).join(", ") || "none"}${plan.self ? ", their face" : ""})`);
   const refs = (plan.refs ?? []).map((n) => usable[n - 1]).filter(Boolean).map((p) => path.join(photoDir(c.id), p.file));
   if (plan.self && face) refs.unshift(face);
-  const file = `made-${Date.now()}.jpg`;
+  let file = `${MADE}/${Date.now()}.jpg`;
+  const logIt = (extra) => writeJson(madeLogFile(c.id), [...readMadeLog(c.id), {
+    file, want, prompt: plan.prompt, guides: refs.map((f) => path.basename(f)), maker: gemini ? GEMINI_IMAGE_MODEL : "local RealVisXL", at: new Date().toISOString(), ...extra,
+  }]);
+  if (gemini) {
+    try {
+      const img = await geminiPicture(plan.prompt, refs.slice(0, 4));
+      if (img.mime === "image/png") file = file.replace(/\.jpg$/, ".png");
+      fs.writeFileSync(path.join(photoDir(c.id), file), Buffer.from(img.data, "base64"));
+    } catch (err) {
+      console.error("Gemini picture failed:", err?.message ?? err);
+      logIt({ kept: false, why: String(err?.message ?? err).slice(0, 200) });
+      return null;
+    }
+    return keepMadePhoto(c, file, logIt);
+  }
   // Make room: the voice engine lets go of its multilingual model (it reloads when a friend next speaks Spanish).
   await fetch(`${chatterbox.url}/rest`, { method: "POST" }).catch(() => null);
   await pictureEngine.start();
@@ -674,11 +758,18 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their
     if (!r) await new Promise((res) => setTimeout(res, 1000));
   }
   if (!r?.ok) return null;
+  return keepMadePhoto(c, file, logIt);
+}
+
+// Checks a new picture and adds it to the album; one that doesn't pass is deleted, never sent or kept.
+async function keepMadePhoto(c, file, logIt) {
   const seen = await describePhoto(c, file);
   if (!seen?.ok) {
     fs.rmSync(path.join(photoDir(c.id), file), { force: true }); // didn't pass the check: never sent or kept
+    logIt({ kept: false, why: seen ? `failed the check: ${seen.desc}` : "couldn't be checked" });
     return null;
   }
+  logIt({ kept: true, desc: seen.desc });
   const entry = { file, ...seen, made: true, at: new Date().toISOString() };
   writeAlbum(c.id, [...readAlbum(c.id), entry]);
   return entry;
@@ -691,7 +782,7 @@ async function friendPhoto(c, want) {
   const fresh = album.filter((p) => !(p.sentAt && Date.parse(p.sentAt) > week)); // not one they sent this week
   let pick = null;
   if (fresh.length) {
-    const out = await askJson([{ type: "text", text: `Someone wants to text a photo of: "${want}". Their camera roll:\n${fresh.map((p, i) => `${i + 1}. ${p.desc}`).join("\n")}\nWhich picture shows that (close enough that they'd send it)? Reply with only JSON: {"pick": its number, or 0 if none does}` }]);
+    const out = await askJson([{ type: "text", text: `Someone wants to text a photo of: "${want}". Their camera roll:\n${fresh.map((p, i) => `${i + 1}. ${p.desc}`).join("\n")}\nWhich picture would they send for that? It doesn't have to match exactly: the same kind of picture (same person, same sort of outfit or shoes, same setting) is good. Reply with only JSON: {"pick": its number, or 0 only if none comes close}` }]);
     pick = fresh[(out?.pick ?? 0) - 1] ?? null;
   }
   pick ??= await makePhoto(c, want, album);
@@ -1126,7 +1217,7 @@ function uninstallFriend(c) {
 // Factory reset: everything in data/ goes (friends, memory, voices, faces, looks), except your API key (and whether
 // it's in airplane mode), logs and the knowledge cache. The phone then opens to first-time setup.
 function factoryReset() {
-  const { apiKey, airplane, giphyKey } = config; // keys survive a reset
+  const { apiKey, airplane, giphyKey, googleKey } = config; // keys survive a reset
   call = null;
   client = null;
   for (const name of fs.readdirSync(dataDir)) {
@@ -1135,7 +1226,7 @@ function factoryReset() {
   }
   fs.mkdirSync(contactsDir, { recursive: true });
   setTimeout(installSupport, 0);
-  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(giphyKey ? { giphyKey } : {}), ...(airplane ? { airplane } : {}) };
+  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(giphyKey ? { giphyKey } : {}), ...(googleKey ? { googleKey } : {}), ...(airplane ? { airplane } : {}) };
   writeJson(configFile, config);
 }
 
@@ -1527,7 +1618,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasKey: !!config.apiKey, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, hasKey: !!config.apiKey, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -1799,7 +1890,8 @@ const server = http.createServer(async (req, res) => {
   const photoReq = url.pathname.match(/^\/api\/photos\/([a-z0-9-]+)\/([^/]+)$/);
   if (req.method === "GET" && photoReq) {
     const file = decodeURIComponent(photoReq[2]);
-    if (!validId(photoReq[1]) || path.basename(file) !== file || !PHOTO_EXT.test(file)) return json(res, 400, { error: "Bad photo." });
+    const name = file.startsWith(`${MADE}/`) ? file.slice(MADE.length + 1) : file;
+    if (!validId(photoReq[1]) || !name || path.basename(name) !== name || !PHOTO_EXT.test(name)) return json(res, 400, { error: "Bad photo." });
     const full = path.join(photoDir(photoReq[1]), file);
     if (!fs.existsSync(full)) return json(res, 404, { error: "That photo is gone." });
     res.writeHead(200, { "Content-Type": photoMime(file), "Cache-Control": "max-age=86400" });
@@ -1884,6 +1976,15 @@ const server = http.createServer(async (req, res) => {
     try { await searchGifs("hello", 1); } catch (err) { config.giphyKey = before; return json(res, 400, { error: err.message }); }
     writeJson(configFile, config);
     return json(res, 200, { ok: true, hasKey: !!config.giphyKey });
+  }
+  if (req.method === "POST" && url.pathname === "/api/google-key") {
+    // Like the GIPHY key: never deleted, not even by Reset phone; a new working key can only replace it.
+    const key = String((await readBody(req)).key ?? "").trim();
+    if (!key) return json(res, 400, { error: "Paste a Google AI key first." });
+    try { await geminiCheckKey(key); } catch (err) { return json(res, 400, { error: err.message }); }
+    config.googleKey = key;
+    writeJson(configFile, config);
+    return json(res, 200, { ok: true });
   }
   if (req.method === "GET" && url.pathname === "/api/support") {
     return json(res, 200, listSupport().filter((c) => voiceFile(c.settings.cbVoice)).map((c) => ({ id: c.id, name: c.name })));
