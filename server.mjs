@@ -701,7 +701,7 @@ async function proposeLifeUpdate(c, update) {
     model: MEMORY_MODEL,
     max_tokens: 8000,
     output_config: { effort: "low" },
-    system: `You update an AI friend's character description after a change in their life. Change only what the update affects (and what follows from it: names, living situation, daily life), keep everything else word for word, same Markdown layout. Then summarize what you changed in 1 to 3 short lines. Answer with JSON only: {"persona": "...", "summary": "..."}`,
+    system: `You update an AI friend's character description after a change in their life. Change only what the update affects (and what follows from it: names, living situation, daily life), keep everything else word for word, same Markdown layout. Then summarize what you changed in 1 to 3 short lines. If the update is something that happened in their life (a divorce, a move, a new job), also write it as one short line to them in the second person ("You and Marco divorced last month."), so they know it's recent; if it's only about how they talk or act, use null. Answer with JSON only: {"persona": "...", "summary": "...", "news": "..." or null}`,
     messages: [{ role: "user", content: `Character description of ${c.name}:\n${character}\n\nThe update: ${update}` }],
   });
   const out = JSON.parse(textOf(msg.content).replace(/^```(json)?|```$/gm, "").trim());
@@ -713,9 +713,11 @@ async function proposeLifeUpdate(c, update) {
     fs.mkdirSync(contactPath(c.id, "persona-history"), { recursive: true });
     fs.writeFileSync(path.join(contactPath(c.id, "persona-history"), `${new Date().toISOString().replace(/[:.]/g, "-")}.md`), persona);
     fs.writeFileSync(file, `${out.persona.trim()}\n\n${i >= 0 ? persona.slice(i) : ""}`.trimEnd() + "\n");
-    const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    fresh.memory.notes = `${notesBefore}\n- Recent news in your own life (${today}): ${update}.`.trim();
-    writeJson(contactPath(c.id, "memory.json"), fresh.memory);
+    if (typeof out.news === "string" && out.news.trim()) {
+      const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      fresh.memory.notes = `${notesBefore}\n- Recent news in your own life (${today}): ${out.news.trim()}`.trim();
+      writeJson(contactPath(c.id, "memory.json"), fresh.memory);
+    }
     logChange({ what: `${first}: ${update}`, undo: { type: "persona", id: c.id, before: persona, notesBefore } });
     // A private friend's Desktop kit (with the persona that "Recreate" uses) gets the update too.
     const kit = desktopFolder(fresh) && path.join(path.dirname(desktopFolder(fresh)), "persona.md");
