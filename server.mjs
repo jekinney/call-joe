@@ -797,7 +797,7 @@ async function friendPhoto(c, want) {
   const fresh = album.filter((p) => !(p.sentAt && Date.parse(p.sentAt) > week)); // not one they sent this week
   let pick = null;
   if (fresh.length) {
-    const out = await askJson([{ type: "text", text: `Someone wants to text a photo of: "${want}". Their camera roll:\n${fresh.map((p, i) => `${i + 1}. ${p.desc}`).join("\n")}\nWhich picture would they send for that? It doesn't have to match exactly: the same kind of picture (same person, same sort of outfit or shoes, same setting) is good. Reply with only JSON: {"pick": its number, or 0 only if none comes close}` }]);
+    const out = await askJson([{ type: "text", text: `Someone wants to text a photo of: "${want}". Their camera roll:\n${fresh.map((p, i) => `${i + 1}. ${p.desc}`).join("\n")}\nWhich picture would they send for that? It must show what was asked for (the same place or activity, and the same people or things); small differences, like a different outfit or angle, are fine. Reply with only JSON: {"pick": its number, or 0 if none shows that}` }]);
     pick = fresh[(out?.pick ?? 0) - 1] ?? null;
   }
   pick ??= await makePhoto(c, want, album);
