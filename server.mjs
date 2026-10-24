@@ -673,7 +673,9 @@ const SUPPORT_HELP = `Commands (anything else, just ask me):
 /quiet 10pm-7am, /work weekdays 9-5 (or /work off)
 /who: who's free right now
 /log, /undo
-/yes, /no: answer a change I showed you`;
+/yes, /no: answer a change I showed you
+
+In a friend's own thread, start a text with /ai to tell them what to do, like: /ai send a pic of you at lunch`;
 
 const changesFile = path.join(dataDir, "changes.json");
 function logChange(entry) {

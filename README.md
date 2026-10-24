@@ -37,6 +37,8 @@ Your own hours (text Support `/quiet 10pm-7am`, `/work weekdays 9-5`; quiet defa
 
 **Support** sits at the top of Messages. Ask it anything, or use commands (`/help` lists them): `/Elena got divorced` (a life update: shown first, applied on `/yes`, the old persona archived and a dated note added so she knows it's recent), `/Elena show`, `/Elena schedule …`, `/Elena rule …`, `/Elena forget …`, `/Elena pause 3d` and `/Elena resume`, `/Elena calls daily`, `/Elena texts often`, `/Elena photo …`, `/rule …` for everyone (`data/rules.md`), `/rules`, `/me …`, `/quiet`, `/work`, `/who`, `/log` and `/undo` (`data/changes.json`).
 
+In a friend's own conversation, a text starting with `/ai` tells them what to do, outside the conversation: `/ai send a pic of you at lunch`, `/ai text me a goodnight message`. They do it right away, in character and within their rules, without arguing or calling instead. The `/ai` text isn't shown or remembered; what they send is.
+
 **Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. And if there's no Anthropic key, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as an Anthropic key is saved.
 
 ## The phone
