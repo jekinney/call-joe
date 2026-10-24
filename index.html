@@ -581,7 +581,8 @@
     <div class="row" style="justify-content:flex-start"><button class="btn warn" id="removeKeyBtn">Remove key…</button></div>
     <div class="section-title" style="margin-top:16px">GIFs</div>
     <div class="list" style="width:100%">
-      <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">GIPHY key</div><div class="t2" id="giphyState">For sending GIFs in texts. Free: sign up at developers.giphy.com, click Create an API Key, pick "API", and paste the key here.</div></span></div>
+      <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">GIPHY key</div><div class="t2" id="giphyState">For sending GIFs in texts. It's free and takes about two minutes.</div></span>
+        <button class="btn ghost" id="giphyHelpBtn">How to get one</button></div>
       <div class="field"><input id="giphyInput" type="password" placeholder="Paste your GIPHY API key" autocomplete="off"><button class="btn" id="giphySave">Save</button></div>
       <div class="msg" id="giphyMsg"></div>
     </div>
@@ -795,6 +796,21 @@
     <label><input type="radio" name="clearWhich" value="outgoing"> Outgoing (you called)</label>
   </div>
   <div class="row"><button class="btn ghost" id="clearCancel">Cancel</button><button class="btn" id="clearOk">Clear</button></div>
+</dialog>
+
+<dialog id="giphyHelp">
+  <h2>Get a free GIPHY key</h2>
+  <ol class="hint" style="font-size:14px; line-height:1.7; padding-left:20px">
+    <li>Open the GIPHY developer site: <a href="https://developers.giphy.com/dashboard/" target="_blank" style="color:var(--accent)">developers.giphy.com/dashboard</a></li>
+    <li>Click <b>Sign Up</b> (or <b>Log In</b> if you have a GIPHY account) and confirm your email.</li>
+    <li>On the dashboard, click <b>Create an API Key</b>.</li>
+    <li>Choose <b>API</b> (not SDK), then <b>Next Step</b>.</li>
+    <li>Name the app <b>Call Joe</b>, add a short description like "Personal texting app", agree to the terms, and click <b>Create App</b>.</li>
+    <li>Your key appears under the app name. It's a long string of letters and numbers. Click it to copy.</li>
+    <li>Come back here, paste it in <b>GIPHY key</b>, and click <b>Save</b>.</li>
+  </ol>
+  <p class="hint" style="font-size:13px">The free key is a "beta" key with a limit of about 100 searches an hour, plenty for personal texting. The key is saved only on this computer and is never deleted, not even by Reset phone.</p>
+  <div class="row"><button class="btn ghost" id="giphyOpen">Open GIPHY</button><button class="btn" id="giphyHelpClose">Got it</button></div>
 </dialog>
 
 <dialog id="pickDialog">
@@ -2808,6 +2824,14 @@ async function sendText(gif = null) {
 }
 $("textSend").onclick = () => sendText();
 
+$("giphyHelpBtn").onclick = () => $("giphyHelp").showModal();
+$("giphyHelpClose").onclick = () => $("giphyHelp").close();
+$("giphyOpen").onclick = () => window.open("https://developers.giphy.com/dashboard/", "_blank");
+// The GIF picker without a key links straight to the steps.
+$("gifGrid").addEventListener("click", (e) => {
+  if (!e.target.closest("[data-giphy-help]")) return;
+  $("giphyHelp").showModal();
+});
 $("giphySave").onclick = async () => {
   $("giphyMsg").className = "msg";
   $("giphyMsg").textContent = "Checking…";
@@ -2838,7 +2862,7 @@ async function loadGifs(q = "") {
   const out = await r.json().catch(() => []);
   $("gifGrid").innerHTML = r.ok
     ? out.map((g) => `<img src="${esc(g.small)}" data-url="${esc(g.url)}" alt="${esc(g.title)}" title="${esc(g.title)}" loading="lazy">`).join("") || `<div class="empty">No GIFs found.</div>`
-    : `<div class="empty">${esc(out.error ?? "GIFs aren't available.")}</div>`;
+    : `<div class="empty">${esc(out.error ?? "GIFs aren't available.")} <a href="#" data-giphy-help style="color:var(--accent)">How to get a free GIPHY key</a></div>`;
 }
 $("gifBtn").onclick = () => {
   $("emojiPanel").hidden = true;
