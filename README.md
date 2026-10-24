@@ -26,6 +26,7 @@ Your API key is never deleted by anything, not even Reset phone. **Airplane mode
 ## The phone
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:
+- **Silent mode** (🔕 tile in the pulled-down status bar, or Settings → Calls): calls and texts still come in and show on screen, without the ring or the ding. Incoming calls ring 7 times, then go to voicemail.
 - **Status bar:** the time, and 🔔 notifications (new voicemails, missed calls, friends who need a voice clip). Click it to pull them down; × dismisses one, Clear all dismisses them all.
 - **Home:** a clock, app icons (Phone, Contacts, Messages, Voicemail, Wallpaper, Settings, Tips, Support) and your favorite friends in the dock.
 - **Tabs, always at the bottom:** Calls, Contacts, Messages and Settings.
@@ -41,7 +42,9 @@ Call Joe looks and works like an Android phone, inside a thin phone outline:
 - **Show on your contacts:** turn a friend off to hide them and stop their calls. Their memory is kept.
 - **Cussing:** let them swear the way they naturally would, or keep it clean (the default). It's also a checkbox when you install a friend; it starts checked for friends who swear by nature, like George.
 
-- **Calls you:** how often this friend rings you while the app is open: never, now and then, or often. The "Try it" button makes them call in a few seconds.
+- **Calls you:** how often this friend rings you while the app is open: never, rarely (every few days), about once a day, now and then (every few hours), often (about hourly) or constantly (a few times an hour). The "Try it" button makes them call in a few seconds.
+- **Texts you:** how often they text you first: never, rarely, less than usual, their usual (depends on who they are to you), more, often or constantly.
+- Both settings also go into the friend's instructions, so what they say about calling and texting matches.
 - **Brain:** Haiku (fastest, cheapest), Sonnet (default), or Opus (deepest). Their notes about you are always written by Opus.
 - **Voice:** each friend's voice is cloned by Chatterbox, for free on your PC, from a 10–20 second clip. Pick a saved voice, or record or upload a new clip. Only use voices you have permission to copy. A friend can't be called until they have a voice.
 - **Video calls (🎥):**

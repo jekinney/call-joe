@@ -473,13 +473,15 @@
   <span class="cam"></span>
   <span class="clock" id="clock"></span>
   <span class="icons">
+    <span id="silentIcon" title="Silent mode is on" hidden>🔕</span>
     <span id="airIcon" title="Airplane mode is on" hidden>✈</span>
     <button class="bell" id="bell" title="Notifications" aria-expanded="false">🔔<span class="badge" id="bellBadge" hidden></span></button>
     <span class="battery"></span>
   </span>
 </div>
 <div class="shade" id="shade" hidden>
-  <div class="tiles"><button class="tile" id="airTile" aria-pressed="false"><span class="ti">✈</span><span>Airplane mode</span></button></div>
+  <div class="tiles"><button class="tile" id="airTile" aria-pressed="false"><span class="ti">✈</span><span>Airplane mode</span></button>
+    <button class="tile" id="silentTile" aria-pressed="false"><span class="ti">🔕</span><span>Silent</span></button></div>
   <div class="shade-top"><h3>Notifications</h3><button class="text-btn" id="clearNotesBtn">Clear all</button></div>
   <div id="notes"></div>
 </div>
@@ -547,6 +549,10 @@
       <label class="row-item" style="cursor:pointer">
         <span class="txt"><div class="t1">Interrupt by talking</div><div class="t2">Talk over a friend and they stop to listen. Works best with headphones. The spacebar and ✋ Hush always work.</div></span>
         <input type="checkbox" class="switch" id="interruptToggle" aria-label="Interrupt by talking">
+      </label>
+      <label class="row-item" style="cursor:pointer">
+        <span class="txt"><div class="t1">🔕 Silent mode</div><div class="t2">Calls and texts still come in and show on screen, without the ring or the ding. Calls go to voicemail after 7 rings.</div></span>
+        <input type="checkbox" class="switch" id="silentToggle" aria-label="Silent mode">
       </label>
     </div>
     <p class="hint" style="font-size:13px">How often each friend calls you is set on their page: Contacts → a friend → Edit.</p>
@@ -885,21 +891,12 @@
   <details id="learnedWrap" style="margin-top:12px"><summary style="cursor:pointer">What <span class="fn">Joe</span> has learned about you</summary><div id="learnedBox"></div></details>
   <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
   <div class="face-row">
-    <select id="callsYouSelect">
-      <option value="never">Never (you always call)</option>
-      <option value="sometimes">Now and then (about every few hours)</option>
-      <option value="daily">About once a day</option>
-      <option value="often">Often (about once an hour)</option>
-    </select>
+    <select id="callsYouSelect"></select>
     <button class="btn ghost" id="callMeNow" title="Try it: they call you in a few seconds">Try it</button>
   </div>
   <label for="textsYouSelect"><span class="fn">Joe</span> texts you</label>
   <div class="face-row">
-    <select id="textsYouSelect">
-      <option value="never">Never (only texts back)</option>
-      <option value="sometimes">Their usual (depends on who they are to you)</option>
-      <option value="often">Often (about twice as much)</option>
-    </select>
+    <select id="textsYouSelect"></select>
     <button class="btn ghost" id="textMeNow" title="Try it: they text you in a few seconds">Try it</button>
   </div>
   <div class="hint">Only while Call Joe is open, and never between 9 PM and 8 AM.</div>
@@ -1046,6 +1043,11 @@ function startTimer() {
 
 // ---------- Ring tone ----------
 let audioCtx;
+// Rings for incoming calls and the ding for texts: quiet in Silent mode (the screen still shows them).
+let silent = false;
+const alertRing = (seconds) => (silent ? new Promise((r) => setTimeout(r, seconds * 1000)) : ring(seconds));
+const RINGS_BEFORE_VOICEMAIL = 7;
+
 function ring(seconds = 2) {
   audioCtx ??= new AudioContext();
   const t0 = audioCtx.currentTime;
@@ -1643,7 +1645,17 @@ $("keySave").onclick = async () => {
   $("status").textContent = contact ? `All set. Give ${who()} a call!` : "All set.";
 };
 
+// The "calls you" and "texts you" choices come from the server, which also uses them for the friend's prompt.
+let frequencies = null;
+async function fillFrequencies() {
+  frequencies ??= await fetch("/api/frequencies").then((r) => r.json()).catch(() => null);
+  if (!frequencies) return;
+  const opts = (list) => list.map((f) => `<option value="${f.id}">${esc(f.label)}</option>`).join("");
+  $("callsYouSelect").innerHTML = opts(frequencies.calls);
+  $("textsYouSelect").innerHTML = opts(frequencies.texts);
+}
 $("settingsBtn").onclick = async () => {
+  await fillFrequencies();
   $("modelSelect").value = store.get("model", "sonnet");
   $("activeToggle").checked = contact.active !== false;
   $("cussToggle").checked = !!contact.cussing;
@@ -1659,10 +1671,16 @@ $("settingsClose").onclick = () => { recorder?.stop(); $("settingsDialog").close
 $("modelSelect").onchange = (e) => store.set("model", e.target.value);
 $("callsYouSelect").onchange = (e) => {
   store.set("callsYou", e.target.value);
+  // The schedule follows right away: a friend set to never call leaves the line of waiting callers.
+  if (e.target.value === "never") callQueue = callQueue.filter((c) => c.id !== contact?.id);
+  setTimeout(refreshData, 500);
   // So an incoming call can show up even when the window is behind others.
   if (e.target.value !== "never" && window.Notification?.permission === "default") Notification.requestPermission();
 };
-$("textsYouSelect").onchange = (e) => store.set("textsYou", e.target.value);
+$("textsYouSelect").onchange = (e) => {
+  store.set("textsYou", e.target.value);
+  setTimeout(refreshData, 500); // the text schedule reads the new rate from the friends list
+};
 $("textMeNow").onclick = () => {
   const c = data.friends.find((f) => f.id === contact?.id);
   $("settingsDialog").close();
@@ -1938,13 +1956,13 @@ fetch("/api/status").then((r) => r.json()).then((s) => {
 // ---------- Friends who call you ----------
 // Once a minute (never at night), friends who want to call get in line:
 //   - Worried friends whose calls you missed call back on their own clock (see WORRY_HOURS).
-//   - Family and best friends roll the dice ("sometimes" ~every 3 hours the app is open, "daily" ~every 8, "often"
-//     ~hourly) and queue up even when others are waiting.
+//   - Family and best friends roll the dice (their "calls you" setting: odds per minute the app is open, from the
+//     server's CALL_FREQ, from "rarely" every ~24 open hours to "constantly" a few times an hour) and queue up even
+//     when others are waiting.
 //   - Everyone else only rolls once the line is empty.
 // The line is ordered family first (spouse, mom, dad, sister, brother, grandparent, aunt, uncle, cousin), then best
 // friends, then others; ties go to whoever you've called most. Calls ring one at a time with a random gap between them.
 // Two lines: during a call the next one rings as call waiting; with someone already on hold, it goes to voicemail.
-const CALL_ODDS = { sometimes: 1 / 180, daily: 1 / 480, often: 1 / 60 };
 const QUIET_FROM = 21, QUIET_UNTIL = 8;
 const FAMILY_ORDER = ["spouse", "mom", "dad", "sister", "brother", "grandparent", "aunt", "uncle", "cousin"];
 // Hours the app is open before calling back after a missed call: [after the first miss, after two or more]. Time with
@@ -1980,9 +1998,9 @@ function quietHours() {
 setInterval(async () => {
   if (airplane || quietHours()) return;
   const list = (await fetch("/api/contacts").then((r) => r.json()).catch(() => []))
-    .filter((c) => c.active && c.hasVoice && (c.callsYou ?? "never") !== "never");
+    .filter((c) => c.active && c.hasVoice && c.callOdds > 0);
   const queued = new Set(callQueue.map((c) => c.id));
-  const wants = (c) => !queued.has(c.id) && (worriedCallback(c) || Math.random() < (CALL_ODDS[c.callsYou] ?? 0));
+  const wants = (c) => !queued.has(c.id) && (worriedCallback(c) || Math.random() < c.callOdds);
   for (const c of list) if (priorityCaller(c) && wants(c)) callQueue.push(c);
   if (!callQueue.length) for (const c of list) if (!priorityCaller(c) && wants(c)) { callQueue.push(c); break; }
   callQueue.sort((a, b) => callRank(a) - callRank(b) || (b.calls ?? 0) - (a.calls ?? 0));
@@ -1992,14 +2010,13 @@ setInterval(async () => {
 // Friends text on their own, separately from calls: each minute the app is open (not at night), a friend's chance is
 // their usual texts per day (relationship and personality, from the server) spread over about 8 open hours. One text
 // at a time across all friends, at least 10 minutes apart, and at least 45 minutes between texts from the same friend.
-const TEXT_SCALE = { sometimes: 1, often: 2 };
 const lastTextFrom = {};
 let lastAnyText = 0;
 setInterval(() => {
   if (airplane || quietHours() || Date.now() - lastAnyText < 10 * 60 * 1000) return;
   for (const c of data.friends) {
-    if (!c.active || !TEXT_SCALE[c.textsYou] || Date.now() - (lastTextFrom[c.id] ?? 0) < 45 * 60 * 1000) continue;
-    if (Math.random() < (c.textsPerDay * TEXT_SCALE[c.textsYou]) / 480) {
+    if (!c.active || !c.textScale || Date.now() - (lastTextFrom[c.id] ?? 0) < (c.textScale >= 3 ? 15 : 45) * 60 * 1000) continue;
+    if (Math.random() < (c.textsPerDay * c.textScale) / 480) {
       lastTextFrom[c.id] = lastAnyText = Date.now();
       return friendTextsYou(c);
     }
@@ -2040,9 +2057,9 @@ async function ringYou(id) {
     const n = new Notification(`${c.name} is calling`, { body: "Open Call Joe to answer.", silent: true });
     n.onclick = () => { window.focus(); n.close(); };
   }
-  // Ring for about 30 seconds, then it's a missed call.
+  // Seven rings (about 20 seconds), then it goes to voicemail.
   const me = ringingIn;
-  for (let i = 0; i < 10 && !me.stop; i++) await ring(2).then(() => new Promise((r) => setTimeout(r, 1000)));
+  for (let i = 0; i < RINGS_BEFORE_VOICEMAIL && !me.stop; i++) await alertRing(2).then(() => new Promise((r) => setTimeout(r, 1000)));
   document.title = title;
   $("incoming").hidden = true;
   ringingIn = null;
@@ -2063,7 +2080,7 @@ async function callWaiting(c) {
   $("waitName").textContent = c.name;
   $("waitAvatar").innerHTML = c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0]);
   $("waiting").hidden = false;
-  for (let i = 0; i < 8 && !me.stop; i++) await ring(1).then(() => new Promise((r) => setTimeout(r, 2500)));
+  for (let i = 0; i < RINGS_BEFORE_VOICEMAIL && !me.stop; i++) await alertRing(1).then(() => new Promise((r) => setTimeout(r, 2500)));
   $("waiting").hidden = true;
   ringingIn = null;
   if (me.answered) return;
@@ -2256,6 +2273,22 @@ document.addEventListener("mouseup", (e) => { if (e.button === 3) goBack(); }); 
 
 // ---------- Airplane mode: your key turned off, friends paused, nothing updating ----------
 let airplane = false;
+function showSilent(on) {
+  silent = on;
+  $("silentIcon").hidden = !on;
+  $("silentTile").setAttribute("aria-pressed", String(on));
+  $("silentToggle").checked = on;
+}
+async function setSilent(on) {
+  const out = await fetch("/api/silent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) })
+    .then((r) => r.json()).catch(() => null);
+  if (!out) return toast("That didn't work.");
+  showSilent(out.silent);
+  toast(out.silent ? "Silent mode on. Calls and texts still show up, without a sound." : "Silent mode off.");
+}
+$("silentTile").onclick = (e) => { e.stopPropagation(); setSilent(!silent); };
+$("silentToggle").onchange = (e) => setSilent(e.target.checked);
+
 function showAirplane(on) {
   airplane = on;
   $("airIcon").hidden = !on;
@@ -2295,7 +2328,7 @@ $("removeKeyBtn").onclick = async () => {
 };
 
 async function refreshData() {
-  fetch("/api/status").then((r) => r.json()).then((st) => showAirplane(!!st.airplane)).catch(() => {});
+  fetch("/api/status").then((r) => r.json()).then((st) => { showAirplane(!!st.airplane); showSilent(!!st.silent); }).catch(() => {});
   const [friends, voicemail, notices] = await Promise.all([
     fetch("/api/contacts").then((r) => r.json()).catch(() => data.friends),
     fetch("/api/voicemail").then((r) => r.json()).catch(() => data.voicemail),
@@ -2306,7 +2339,7 @@ async function refreshData() {
   const newest = data.threads.find((t) => t.unread && t.lastFrom === "them");
   if (seenTextAt !== null && newest && newest.at > seenTextAt && newest.contact !== threadId) {
     toast(`💬 ${newest.name}: ${newest.last}`);
-    ring(0.4).catch(() => {});
+    alertRing(0.4).catch(() => {});
   }
   seenTextAt = data.threads.reduce((m, t) => (t.at > m ? t.at : m), seenTextAt ?? "");
   data.notices = notices;
@@ -2914,7 +2947,7 @@ async function friendTextsYou(c) {
   const first = out.texts[0]?.text ?? "";
   seenTextAt = out.texts.at(-1)?.at ?? seenTextAt;
   toast(`💬 ${c.name}: ${first}`);
-  ring(0.4).catch(() => {});
+  alertRing(0.4).catch(() => {});
   if (document.hidden && window.Notification?.permission === "granted") {
     const n = new Notification(c.name, { body: first, silent: true });
     n.onclick = () => { window.focus(); openThread(c.id); n.close(); };

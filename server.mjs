@@ -105,8 +105,32 @@ const personasDir = path.join(dir, "contacts");
 const contactsDir = path.join(dataDir, "contacts");
 fs.mkdirSync(contactsDir, { recursive: true });
 // Every friend talks with a Chatterbox voice cloned from their clip (cbVoice); face is optional (video calls).
-// callsYou: how often this friend rings you while the app is open ("never", "sometimes", "often").
-// textsYou: how often this friend texts you on their own ("never", "sometimes" (their usual), "often").
+// callsYou: how often this friend rings you while the app is open; textsYou: how often they text you first. One list
+// each, used by the Edit menus, the call and text schedules in the page (odds per minute the app is open, and a scale
+// on their usual texts per day), the friend's own prompt (reachingOut), Support, and learning from calls.
+const CALL_FREQ = {
+  never: { label: "Never (you always call)", odds: 0, says: "You don't usually call your buddy on your own; you've been leaving the calling to them. If they ask you to call them, that's fine: just agree, the way a friend would." },
+  rarely: { label: "Rarely (every few days)", odds: 1 / 1440, says: "You call your buddy only once in a while, every few days." },
+  daily: { label: "About once a day", odds: 1 / 480, says: "You call your buddy about once a day." },
+  sometimes: { label: "Now and then (every few hours)", odds: 1 / 180, says: "You call your buddy now and then, every few hours." },
+  often: { label: "Often (about once an hour)", odds: 1 / 60, says: "You call your buddy often, about once an hour." },
+  constantly: { label: "Constantly (a few times an hour)", odds: 1 / 20, says: "You call your buddy constantly, a few times an hour. You can't help yourself." },
+};
+const TEXT_FREQ = {
+  never: { label: "Never (only texts back)", scale: 0, says: "You don't text your buddy first; you text back when they text you." },
+  rarely: { label: "Rarely", scale: 0.3, says: "You rarely text your buddy first." },
+  less: { label: "Less than usual", scale: 0.6, says: "You text your buddy first a little less than you naturally would." },
+  sometimes: { label: "Their usual (depends on who they are to you)", scale: 1, says: "" },
+  more: { label: "More than usual", scale: 1.5, says: "You text your buddy first a bit more than you naturally would." },
+  often: { label: "Often (about twice as much)", scale: 2, says: "You text your buddy first a lot, about twice as much as you naturally would." },
+  constantly: { label: "Constantly (about three times as much)", scale: 3, says: "You text your buddy all the time, about three times as much as you naturally would." },
+};
+const CALLS_YOU = Object.keys(CALL_FREQ);
+const TEXTS_YOU = Object.keys(TEXT_FREQ);
+const callsYouOf = (c) => (CALL_FREQ[c.settings.callsYou] ? c.settings.callsYou : "never");
+const textsYouOf = (c) => (TEXT_FREQ[c.settings.textsYou] ? c.settings.textsYou : "sometimes");
+// How often they reach out, in their own prompt, so what they say matches (no "I'll call you tomorrow" when they never call).
+const reachingOut = (c) => `# How often you reach out\n${CALL_FREQ[callsYouOf(c)].says} ${TEXT_FREQ[textsYouOf(c)].says} Keep what you say about calling and texting consistent with this, in character.`.trim();
 const SETTING_KEYS = ["model", "cbVoice", "face", "callsYou", "textsYou"];
 
 const validId = (id) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(String(id || ""));
@@ -321,12 +345,12 @@ function supportPrompt(c) {
 // Settings support agents can change by voice.
 const SUPPORT_TOOLS = [{
   name: "change_setting",
-  description: "Change a setting for the caller, after they agree. friend settings: callsYou (never, sometimes, daily, often), textsYou (never, sometimes, often), active (true or false), role (a relationship like best-friend, close-friend, friend, distant-friend). Phone settings: airplane (true or false).",
+  description: `Change a setting for the caller, after they agree. friend settings: callsYou (${CALLS_YOU.join(", ")}), textsYou (${TEXTS_YOU.join(", ")}), active (true or false), role (a relationship like best-friend, close-friend, friend, distant-friend). Phone settings: airplane (true or false), silent (true or false: calls and texts come in without a sound).`,
   input_schema: {
     type: "object",
     properties: {
       friend: { type: "string", description: "The friend's first name, or empty for a phone setting." },
-      setting: { type: "string", enum: ["callsYou", "textsYou", "active", "role", "airplane"] },
+      setting: { type: "string", enum: ["callsYou", "textsYou", "active", "role", "airplane", "silent"] },
       value: { type: "string" },
     },
     required: ["setting", "value"],
@@ -340,10 +364,16 @@ async function runSupportTool(name, input) {
     writeJson(configFile, config);
     return `Airplane mode is now ${config.airplane ? "on" : "off"}.`;
   }
+  if (setting === "silent") {
+    if (value === "true") config.silent = true;
+    else delete config.silent;
+    writeJson(configFile, config);
+    return `Silent mode is now ${config.silent ? "on" : "off"}.`;
+  }
   const c = listContacts().find((f) => firstName(f).toLowerCase() === String(friend ?? "").trim().toLowerCase().split(" ")[0]);
   if (!c) return `There's no friend called ${friend}.`;
   if (setting === "callsYou" && CALLS_YOU.includes(value)) c.settings.callsYou = value;
-  else if (setting === "textsYou" && ["never", "sometimes", "often"].includes(value)) c.settings.textsYou = value;
+  else if (setting === "textsYou" && TEXTS_YOU.includes(value)) c.settings.textsYou = value;
   else if (setting === "active") c.active = value === "true";
   else if (setting === "role") {
     if (!roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)).includes(value)) return `${c.name} can't become their ${value}: family is locked after the first call, and friends can only move between kinds of friends.`;
@@ -418,6 +448,7 @@ async function systemPrompt(c) {
     aboutBuddy(c),
     treatment(c),
     languageRules(c),
+    reachingOut(c),
     missedCalls(c),
     ENDING_THE_CALL,
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
@@ -840,7 +871,7 @@ function installFriend(id, role, cussing = false) {
   role = ROLE_CHOICES.some(([r]) => r === role) ? role : f.roles?.[yourGender()] ?? "friend";
   const folder = path.join(personasDir, id);
   const settings = { model: MODELS[f.model] ? f.model : DEFAULT_MODEL, cbVoice: `${f.name} voice` };
-  if (["sometimes", "often"].includes(f.callsYou)) settings.callsYou = f.callsYou; // like Coop, who's clingy
+  if (CALLS_YOU.includes(f.callsYou) && f.callsYou !== "never") settings.callsYou = f.callsYou; // like Coop, who's clingy
   fs.mkdirSync(voicesDir, { recursive: true });
   fs.copyFileSync(path.join(folder, "voice.wav"), path.join(voicesDir, `${settings.cbVoice}.wav`));
   if (fs.existsSync(path.join(folder, "face.png"))) {
@@ -1161,7 +1192,6 @@ async function mergeMemory(c, memory, transcript, label) {
 
 // Learns how the buddy wants to be treated (what upset them, which jokes landed, what they gave permission for) and
 // any settings change they asked for, like "call me anytime". Settings changes are applied and announced as notices.
-const CALLS_YOU = ["never", "sometimes", "daily", "often"];
 async function learnRules(c, memory, transcript) {
   const first = firstName(c);
   const sp = config.user?.spouse?.name && config.user.spouse.married !== false ? config.user.spouse : null;
@@ -1174,7 +1204,7 @@ async function learnRules(c, memory, transcript) {
         `You keep ${c.name}'s notes on how their buddy wants to be treated. From the newest call, merge into the existing rules: ` +
         `anything the buddy said was not nice, not okay or unwelcome (topics, jokes, nicknames, tone); which of ${first}'s jokes got a laugh ("haha", "lol", "that's funny", laughing) and which fell flat (no reaction, a change of subject), as a short line on what humor works; and permissions the buddy gave ("you can call me anytime", "feel free to tease me"). ` +
         `Write short lines starting with '- ', at most 20, phrased as instructions to ${first} ("Don't joke about his weight."). Keep earlier rules unless the buddy changed their mind. ` +
-        `Also decide whether the buddy changed how often ${first} may call them while the app is open: "never", "sometimes" (every few hours), "daily" (about once a day), or "often" (about every hour). "Call me anytime" means daily unless they clearly want more. Use null if nothing was said about it. ` +
+        `Also decide whether the buddy changed how often ${first} may call them while the app is open: ${CALLS_YOU.map((k) => `"${k}" (${CALL_FREQ[k].label.toLowerCase()})`).join(", ")}. "Call me anytime" means daily unless they clearly want more; "stop calling so much" means a step or two less. Use null if nothing was said about it. ` +
         (sp ? `The buddy is married to ${sp.name}. Also merge everything the buddy said about ${sp.name} into the existing notes about them (likes, plans, health, gift ideas, how things are between them), as short '- ' lines, at most 30, and list any dates mentioned for ${sp.name} or the two of them (birthday, anniversary, a big event) as MM-DD. ` : "") +
         `Answer with JSON only: {"rules": "...", "callsYou": null or one of the values, "why": "a few words, when callsYou changes"${sp ? `, "spouseNotes": "...", "spouseDates": [{"what": "${sp.name}'s birthday", "date": "MM-DD"}]` : ""}, "buddyBirthday": null or "MM-DD" if the buddy said when their own birthday is}.`,
       messages: [{ role: "user", content: `Existing rules:\n${memory.rules || "(none yet)"}\n\n${sp ? `Existing notes about ${sp.name}:\n${sp.notes || "(none yet)"}\n\n` : ""}Newest call:\n${transcript}\n\n${first} is currently allowed to call: ${c.settings.callsYou ?? "never"}.` }],
@@ -1201,8 +1231,7 @@ async function learnRules(c, memory, transcript) {
       if (fresh) {
         fresh.settings.callsYou = out.callsYou;
         saveContact(fresh);
-        const how = { never: "won't call you", sometimes: "will call now and then", daily: "will call about once a day", often: "will call often" }[out.callsYou];
-        addNotice(`${first} ${how}${out.why ? ` (${out.why})` : ""}. Change it in their ✎ Edit.`, c.id);
+        addNotice(`${first} now calls you: ${CALL_FREQ[out.callsYou].label.toLowerCase()}${out.why ? ` (${out.why})` : ""}. Change it in their ✎ Edit.`, c.id);
       }
     }
   } catch (err) {
@@ -1293,7 +1322,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasKey: !!config.apiKey, airplane: !!config.airplane, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasKey: !!config.apiKey, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -1305,6 +1334,18 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, config.user);
   }
 
+  if (req.method === "GET" && url.pathname === "/api/frequencies") {
+    const list = (o) => Object.entries(o).map(([id, f]) => ({ id, label: f.label }));
+    return json(res, 200, { calls: list(CALL_FREQ), texts: list(TEXT_FREQ) });
+  }
+  // Silent mode: calls and texts still come in, without the ring or the ding.
+  if (req.method === "POST" && url.pathname === "/api/silent") {
+    const { on } = await readBody(req);
+    if (on) config.silent = true;
+    else delete config.silent;
+    writeJson(configFile, config);
+    return json(res, 200, { silent: !!config.silent });
+  }
   if (req.method === "POST" && url.pathname === "/api/airplane") {
     const { on } = await readBody(req);
     if (on && call) return json(res, 400, { error: "Hang up first." });
@@ -1653,10 +1694,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/contacts") {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
-      hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
+      hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: callsYouOf(c), callOdds: CALL_FREQ[callsYouOf(c)].odds,
       newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
       roleChoices: roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)), ready: identityReady(c),
-      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: c.settings.textsYou ?? "sometimes", textsPerDay: textsPerDay(c),
+      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: textsYouOf(c), textScale: TEXT_FREQ[textsYouOf(c)].scale, textsPerDay: textsPerDay(c),
       // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).
       missed: c.memory.missed ? { ...c.memory.missed, openMinutes: (config.openMinutes ?? 0) - (c.memory.missed.atOpenMinute ?? config.openMinutes ?? 0) } : null,
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
@@ -1699,7 +1740,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "PUT") {
       const { settings = {}, active, role, cussing } = await readBody(req);
-      for (const k of SETTING_KEYS) if (k in settings) c.settings[k] = settings[k];
+      const bad = (k) => (k === "callsYou" && !CALL_FREQ[settings[k]]) || (k === "textsYou" && !TEXT_FREQ[settings[k]]);
+      for (const k of SETTING_KEYS) if (k in settings && !bad(k)) c.settings[k] = settings[k];
       if (cussing === true) c.cussing = true;
       if (cussing === false) delete c.cussing;
       if (role !== undefined && role !== shownRole(c.role ?? "friend")) {
