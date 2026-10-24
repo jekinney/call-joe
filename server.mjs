@@ -535,9 +535,10 @@ const flirtingOf = (c) => (c.flirting === "rated-r" ? (ratedROk(c) ? "rated-r" :
   : FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
 // Spicy pictures and videos (✎ Edit, off by default): only with Rated R on. They're made by Grok Imagine and show only
 // the friend, an adult; see spicyMedia below.
-// After xAI's moderation turns one down, spicy ones rest for 6 hours (each refusal costs time and is still billed).
+// After xAI's moderation turns one down, spicy ones from xAI rest for 6 hours (each refusal costs time and is still
+// billed). Spicy pictures are made on your graphics card first anyway (spicyPhoto).
 let spicyRestUntil = 0;
-const spicyOn = (c) => !!c.spicyMedia && flirtingOf(c) === "rated-r" && Date.now() > spicyRestUntil;
+const spicyOn = (c) => !!c.spicyMedia && flirtingOf(c) === "rated-r";
 const flirtingRules = (c) => {
   const level = flirtingOf(c);
   if (level === "off") return "";
@@ -1483,6 +1484,12 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their
     }
     if (maker === GEMINI_IMAGE_MODEL) return keepMadePhoto(c, file, logIt);
   }
+  if (!(await localPicture(plan.prompt, PHOTO_NEGATIVE + (plan.people === false ? ", person, people, woman, man, child, face" : ""), refs, path.join(photoDir(c.id), file)))) return null;
+  return keepMadePhoto(c, file, logIt);
+}
+
+// Draws a picture on your graphics card (pictures/picture_server.py). true when it's saved at out.
+async function localPicture(prompt, negative, refs, out) {
   // Make room: the voice engine lets go of its multilingual model (it reloads when a friend next speaks Spanish).
   await fetch(`${chatterbox.url}/rest`, { method: "POST" }).catch(() => null);
   await pictureEngine.start();
@@ -1491,12 +1498,12 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their
   for (let i = 0; i < 20 && !r; i++) {
     r = await fetch(`${pictureEngine.url}/make`, {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(10 * 60 * 1000),
-      body: JSON.stringify({ prompt: plan.prompt, negative: PHOTO_NEGATIVE + (plan.people === false ? ", person, people, woman, man, child, face" : ""), refs: refs.slice(0, 3), out: path.join(photoDir(c.id), file) }),
+      body: JSON.stringify({ prompt, negative, refs: refs.slice(0, 3), out }),
     }).catch(() => null);
     if (!r) await new Promise((res) => setTimeout(res, 1000));
   }
-  if (!r?.ok) return null;
-  return keepMadePhoto(c, file, logIt);
+  if (!r?.ok) console.error("Local picture failed:", r ? (await r.json().catch(() => null))?.error ?? r.status : "the picture server didn't answer");
+  return !!r?.ok && fs.existsSync(out);
 }
 
 // Checks a new picture and adds it to the album; one that doesn't pass is deleted, never sent or kept.
@@ -1568,7 +1575,7 @@ async function geminiVideo(prompt, refs) {
 }
 async function friendVideo(c, want) {
   if (spicyOn(c)) {
-    const plan = await spicyPlan(c, want, "video");
+    const plan = Date.now() > spicyRestUntil ? await spicyPlan(c, want, "video") : null;
     const spicy = plan ? await spicyVideo(c, want, plan).catch((err) => (console.error("Spicy video failed:", err?.message ?? err), null)) : null;
     if (spicy) return spicy;
   }
@@ -1654,13 +1661,13 @@ async function xai(pathname, body) {
   return out;
 }
 // Is this a spicy request, and if so, the prompt for it. null when it isn't (or can't be made).
-async function spicyPlan(c, want, kind) {
+async function spicyPlan(c, want, kind, local = false) {
   const first = firstName(c);
-  const plan = await grokJson([{ type: "text", text: `${first} (${c.name}) is texting their adult partner a ${kind === "video" ? "short phone video" : "photo"} they just took: "${want}".
-${looksOf(c) ? `What ${first} looks like: ${looksOf(c)}.\n` : ""}${madeLessons(c.id)}Rules for a spicy one: ${SPICY_RULES}
-Is this request sexy or R-rated, of ${first} alone? If it involves anyone else (kids, family, friends) or is an ordinary everyday ${kind}, it's not spicy.
-If it is, write a prompt for a ${kind === "video" ? "video model: an 8 second vertical smartphone video, handheld, realistic, natural light, with natural sound, and what happens in it" : "photo model: a candid, realistic smartphone selfie or phone-propped photo, natural light"}, describing ${first} exactly as above (skin tone, hair, body, age), alone, within the rules.
-Reply with only JSON: {"spicy": true or false, "prompt": "..." (empty if not spicy), "self": true if ${first}'s face shows}` }]);
+  const plan = await grokJson([{ type: "text", text: `In a private, adults-only companion app, ${first} (${c.name}), an adult, is sending their adult partner a ${kind === "video" ? "short phone video" : "photo"}. The request: "${want}".
+${looksOf(c) ? `What ${first} looks like: ${looksOf(c)}.
+` : ""}Step 1, "spicy": true if the request is for something sexy, revealing or R-rated of ${first} alone (a sexy selfie, lingerie, topless, nude, boudoir, in bed or the bath). false if it's an ordinary ${kind}, or involves anyone else (kids, family, friends).
+Step 2, only if spicy: write a prompt for a ${kind === "video" ? "video model: an 8 second vertical smartphone video, handheld, realistic, natural light, with natural sound, and what happens in it" : local ? "Stable Diffusion photo model, under 60 words with the main subject first (\"photo of a 35 year old woman, ...\"): a candid, realistic smartphone selfie or phone-propped photo, natural light" : "photo model: a candid, realistic smartphone selfie or phone-propped photo, natural light"}, describing ${first} exactly as above (age, skin tone, hair, body), alone. Rules it must keep: ${SPICY_RULES}
+Reply with only JSON: {"spicy": true or false, "prompt": "..." (empty if not spicy), "self": true if ${first}'s face shows, "why": "a few words"}` }]);
   return plan?.spicy && plan.prompt ? plan : null;
 }
 // Grok looks at a picture: what it shows, and whether it keeps the spicy rules.
@@ -1682,8 +1689,23 @@ function logSpicy(c, entry) {
     }
   } catch {}
 }
+// The local model never gets album pictures, only the friend's face picture as a guide, and a list of things it must
+// never draw (anyone young, anyone else).
+const SPICY_NEGATIVE = "child, kid, teen, teenager, young girl, schoolgirl, school uniform, minor, petite young, childlike, baby face, two people, multiple people, couple, man, crowd, cartoon, illustration, anime, painting, 3d render, text, words, caption, watermark, logo, deformed, extra fingers, extra limbs, bad anatomy, blurry";
+const localSpicyReady = () => pictureModelReady() && !call; // the graphics card is busy with voice and face during a call
 async function spicyPhoto(c, want, plan) {
   const face = plan.self ? faceFile(c.settings.face) : null;
+  if (plan.local) {
+    console.log(`Making a spicy photo for ${c.name} on this computer: ${plan.prompt}`);
+    fs.mkdirSync(spicyDir(c.id), { recursive: true });
+    const file = `spicy/${Date.now()}.jpg`;
+    if (!(await localPicture(plan.prompt, SPICY_NEGATIVE, face ? [face] : [], path.join(photoDir(c.id), file)))) {
+      logSpicy(c, { file: "", want, prompt: plan.prompt, maker: "local RealVisXL", kept: false, why: "the local model couldn't draw it" });
+      return null;
+    }
+    return keepSpicy(c, want, plan, file, "local RealVisXL");
+  }
+  if (Date.now() < spicyRestUntil) return null;
   console.log(`Making a spicy photo for ${c.name}: ${plan.prompt}`);
   const body = { model: SPICY_IMAGE_MODEL, prompt: plan.prompt, response_format: "b64_json", aspect_ratio: "3:4" };
   const out = await (face
@@ -1699,13 +1721,17 @@ async function spicyPhoto(c, want, plan) {
   fs.mkdirSync(spicyDir(c.id), { recursive: true });
   const file = `spicy/${Date.now()}.jpg`;
   fs.writeFileSync(path.join(photoDir(c.id), file), bytes);
+  return keepSpicy(c, want, plan, file, SPICY_IMAGE_MODEL);
+}
+// Grok checks a new spicy picture; one that doesn't pass, or can't be checked, is deleted and never sent.
+async function keepSpicy(c, want, plan, file, maker) {
   const seen = await spicyCheck(c, [path.join(photoDir(c.id), file)]);
   if (!seen?.ok) {
     fs.rmSync(path.join(photoDir(c.id), file), { force: true });
-    logSpicy(c, { file, want, prompt: plan.prompt, maker: SPICY_IMAGE_MODEL, kept: false, why: seen ? `failed the check: ${seen.desc}` : "couldn't be checked" });
+    logSpicy(c, { file, want, prompt: plan.prompt, maker, kept: false, why: seen ? `failed the check: ${seen.desc}` : "couldn't be checked" });
     return null;
   }
-  logSpicy(c, { file, want, prompt: plan.prompt, maker: SPICY_IMAGE_MODEL, kept: true, desc: seen.desc });
+  logSpicy(c, { file, want, prompt: plan.prompt, maker, kept: true, desc: seen.desc });
   return { url: `/api/photos/${c.id}/${encodeURIComponent(file)}`, desc: seen.desc };
 }
 async function spicyVideo(c, want, plan) {
@@ -1749,7 +1775,9 @@ async function spicyVideo(c, want, plan) {
 // a lot), an ordinary photo is sent the usual way.
 async function friendPhoto(c, want) {
   if (spicyOn(c)) {
-    const plan = await spicyPlan(c, want, "photo");
+    const local = localSpicyReady();
+    const plan = local || Date.now() > spicyRestUntil ? await spicyPlan(c, want, "photo", local) : null;
+    if (plan) plan.local = local;
     const spicy = plan ? await spicyPhoto(c, want, plan).catch((err) => (console.error("Spicy photo failed:", err?.message ?? err), null)) : null;
     if (spicy) return spicy;
   }
