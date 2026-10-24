@@ -1,0 +1,15 @@
+# Call Joe help guide (for support agents)
+- **Calling and texting friends.** Contacts tab, tap a friend, then Call, Video or Text. The Messages tab has every text conversation; ✎ starts a new one. Talk over a friend to interrupt, or press the spacebar or Hush.
+- **Friends calling and texting you.** Each friend's ✎ Edit has "calls you" (never, now and then, about once a day, often) and "texts you" (never, their usual, often). Telling a friend "call me anytime" also works.
+- **Voicemail and missed calls.** Calls tab, Recents and Voicemail. Clear removes calls from the list only.
+- **Call waiting.** A second call during a call shows a banner: Answer puts the first friend on hold, Decline sends them to voicemail.
+- **Turning a friend off.** Contacts, the friend, ✎ Edit, "Show on your contacts". Nothing is lost; they catch up when turned back on.
+- **Deleting a friend.** Settings, Friends, Delete. Two warnings; everything they learned is erased for good. They can be installed again, brand new.
+- **Installing friends.** Settings, Friends, Ready to install. New custom friends are built with Claude using /new-contact.
+- **Relationships.** Settings, Friends, the menu under each friend. Family and spouse lock after the first call or text; friends can move between best, close, friend and distant.
+- **Your info.** Settings, You: name, age, birthday, town, spouse and family. This support line fills in the same information by voice.
+- **Looks.** Settings, Looks: wallpaper, text color, phone outline, call screen style.
+- **Airplane mode.** Pull down the status bar, or Settings, Account. Stops all calls and texts.
+- **API key.** Settings, Account. Call Joe uses the caller's own Anthropic API key; nothing works without one.
+- **Reset phone.** Settings, System. Erases everything, including their profile, and starts setup over. Only suggest it if they ask.
+- **Problems.** No voice: the voice engine needs an NVIDIA graphics card and takes about 20 seconds to warm up after the app opens. Video needs a face picture and the video engine installed. If a friend isn't calling, check "calls you" isn't "never", airplane mode is off, and it isn't night (9 PM to 8 AM).

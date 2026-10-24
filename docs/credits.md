@@ -11,6 +11,10 @@ Voice clips, pictures and other material used for friends, with their sources an
 | George Walker | "Pine Meadows-Speech Version 2025", a baritone mock-news narration recorded by the uploader (the first 20 seconds, cleaned up) | balloonhead (Richard Wroblewski) | https://freesound.org/s/785958/ | [Creative Commons 0](https://creativecommons.org/publicdomain/zero/1.0/) (no credit required, given anyway) |
 | Elena Rodriguez | "Voice", the uploader recording her own voice in different voice-over styles (the first 20 seconds) | irenecantur | https://freesound.org/s/822337/ | [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) |
 | Rusty "Coop" Cooper | "Casual Voice Lines", friendly general voice lines (the first 20 seconds) | Alba MacKenna (Alba_Mac) | https://freesound.org/s/640267/ | [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| Marcus (Support) | "VoiceActingReel.mp3", the uploader's own voice acting reel (the first 20 seconds) | FrazierWing | https://freesound.org/s/632339/ | [Creative Commons 0](https://creativecommons.org/publicdomain/zero/1.0/) |
+| Nick (Support) | "Voice_Reel_NG_News_Reader.wav", a newsreader voice reel | NicholasGla | https://freesound.org/s/668696/ | [Creative Commons Attribution-NonCommercial 4.0](https://creativecommons.org/licenses/by-nc/4.0/): fine for personal use; replace before any commercial release |
+| Nico (Support) | "Voicelines", the uploader reading a list of voice lines (the first 20 seconds) | NicolasLikesThisWebsite496 | https://freesound.org/s/819278/ | [Creative Commons 0](https://creativecommons.org/publicdomain/zero/1.0/) |
+| Jordan (Support) | "Voice acting Demo Male voice" (7.6 seconds) | JMProductionsFX | https://freesound.org/s/852810/ | [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) |
 
 ## Faces
 

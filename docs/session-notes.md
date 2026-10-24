@@ -110,3 +110,11 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 - A friend becomes official at your first call or text. A "Creating…" screen covers the few seconds while Opus merges their persona and their relationship to you into one identity (`data/contacts/<id>/identity.md`), about a quarter shorter, reused on every call and text so it caches well. The phone and safety rules are kept word for word. It's rebuilt (with the Creating screen again) only when the persona, the relationship or your gender changes; that's also when relationships lock (see above).
 - What they learn about you (memory notes, how you like to be treated, news from linked friends, texts not yet remembered) stays separate and is added fresh to every call. You can read it in their ✎ Edit, under "What … has learned about you".
 - Friends who reach out before your first contact use the persona and relationship as written.
+
+## The support line and your profile (October 23, 2026)
+
+- 🎧 Support on the home screen calls the support line: one of four male agents answers at random (Marcus, Nick, Nico, Jordan in `contacts/support-*/`, with call-center personas). They're hidden contacts (`support: true`), never listed with friends, reinstalled automatically, even after a reset. Voices and licenses are in `docs/credits.md`; Nick's clip is non-commercial, so replace it before any release.
+- Agents keep no memory of callers. They share your profile (`config.user`: you, spouse, family, pets, other notes, never-bring-up), the help guide (`contacts/_support/help.md`), the playbook (`support-rules.md`) and notes from earlier support calls about the app (`data/support-notes.md`). They interview you to fill gaps, confirm details, and can change settings by voice (`change_setting`: how often a friend calls or texts, on/off, relationship within the rules, airplane mode).
+- After a support call, Opus updates the profile from what you confirmed; the old profile is kept in `data/profile-history/`. Support calls are logged in `data/support-calls.txt`.
+- Settings → You has the same information as forms: Family cards, Pets, Other things friends should know, and Never bring up. Friends learn your family by relationship (family and close friends in detail, others just names), and every family birthday gets reminders.
+- All of it carries over until Reset phone.

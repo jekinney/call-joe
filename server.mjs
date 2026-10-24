@@ -126,8 +126,11 @@ function saveContact(c) {
   writeJson(contactPath(id, "contact.json"), info);
 }
 
+// Friends only; the support agents (contact.json "support": true) live alongside them but stay out of every list.
+const listAll = () => fs.readdirSync(contactsDir).map(loadContact).filter(Boolean);
+const listSupport = () => listAll().filter((c) => c.support);
 const listContacts = () =>
-  fs.readdirSync(contactsDir).map(loadContact).filter(Boolean)
+  listAll().filter((c) => !c.support)
     .sort((a, b) => (a.id === "joe" ? -1 : b.id === "joe" ? 1 : a.name.localeCompare(b.name)));
 
 // One-time move from the single-friend layout (data/memory.json, data/call-log.txt) into data/contacts/joe/.
@@ -149,6 +152,16 @@ function moveJoeIntoContacts() {
   console.log("Moved Joe into data/contacts/joe (backup in data/backup-before-contacts)");
 }
 moveJoeIntoContacts();
+// The support line is part of the phone: any support agent in contacts/support-*/ that isn't installed gets installed.
+function installSupport() {
+  for (const id of fs.readdirSync(personasDir)) {
+    if (catalogEntry(id)?.support && !loadContact(id)) {
+      try { installFriend(id, "friend"); } catch (err) { console.error(`Installing ${id} failed:`, err.message); }
+    }
+  }
+}
+setTimeout(installSupport, 0);
+
 // A phone that was in use before first-time setup existed counts as set up (fill in "You" in Settings later).
 if (config.setupDone === undefined) {
   config.setupDone = !!config.apiKey || fs.readdirSync(contactsDir).length > 0;
@@ -172,6 +185,59 @@ const chatModel = (c) => MODELS[c?.settings.model] ?? MODELS[DEFAULT_MODEL];
 
 // Built once per call and left unchanged during it, so the prompt cache keeps hitting. A friend with no role,
 // connections or knowledge settings (like Joe) gets exactly the persona, ending-the-call, memory and time sections.
+// Saves your profile from the Settings -> You form or a support call (see the comments inside on what's kept).
+function saveProfileFrom(b) {
+  const clean = (v) => String(v ?? "").trim().slice(0, 80);
+  const before = yourGender();
+  const age = (v) => { const n = Math.round(Number(v)); return n >= 13 && n <= 120 ? n : null; };
+  const md = (v) => (/^\d{2}-\d{2}$/.test(String(v ?? "")) ? v : "");
+  // What you and your spouse told the phone, and what friends learned, only ever goes away with a factory reset.
+  // Saving merges: a blank field keeps what was there. "Not married" just stops friends bringing them up; their
+  // notes and dates are kept in case you switch it back.
+  const prev = config.user ?? {};
+  const keep = (v, was) => (clean(v) || was || "");
+  // Ages are saved with the year they were given (a year older each year after). An unchanged age keeps its year.
+  const ageOf = (v, p) => { const n = age(v); return n === null ? { age: p?.age ?? null, ageYear: p?.ageYear } : n === ageNow(p) ? { age: p.age, ageYear: p.ageYear } : { age: n, ageYear: new Date().getFullYear() }; };
+  const old = prev.spouse;
+  let spouse = old;
+  if (b.spouse?.married === false && old) spouse = { ...old, married: false };
+  else if (b.spouse?.name) {
+    spouse = {
+      ...(old ?? {}), married: true,
+      name: clean(b.spouse.name), gender: b.spouse.gender === "man" ? "man" : "woman",
+      birthday: md(b.spouse.birthday) || old?.birthday || "", anniversary: md(b.spouse.anniversary) || old?.anniversary || "",
+      about: String(b.spouse.about ?? "").trim().slice(0, 2000) || old?.about || "", ...ageOf(b.spouse.age, old),
+      notes: old?.notes ?? "", dates: old?.dates ?? [], reminded: old?.reminded ?? {},
+    };
+  }
+  // Family, pets and notes come whole from the Settings -> You form (or a support call).
+  const person = (f) => ({
+    name: clean(f?.name), relation: clean(f?.relation), gender: f?.gender === "man" ? "man" : f?.gender === "woman" ? "woman" : "",
+    age: age(f?.age), birthday: md(f?.birthday), lives: clean(f?.lives), notes: String(f?.notes ?? "").trim().slice(0, 1000),
+  });
+  const lists = {
+    ...(Array.isArray(b.family) ? { family: b.family.map(person).filter((f) => f.name) } : {}),
+    ...(Array.isArray(b.pets) ? { pets: b.pets.map((x) => ({ name: clean(x?.name), kind: clean(x?.kind), notes: String(x?.notes ?? "").trim().slice(0, 500) })).filter((x) => x.name) } : {}),
+    ...(typeof b.notes === "string" ? { notes: b.notes.trim().slice(0, 3000) } : {}),
+    ...(typeof b.avoid === "string" ? { avoid: b.avoid.trim().slice(0, 2000) } : {}),
+  };
+  config.user = { ...prev, ...lists, first: keep(b.first, prev.first), last: keep(b.last, prev.last),
+    gender: b.gender === "woman" ? "woman" : b.gender === "man" ? "man" : prev.gender ?? "man", home: keep(b.home, prev.home),
+    ...ageOf(b.age, prev), birthday: md(b.birthday) || prev.birthday || "", greeted: prev.greeted ?? {},
+    ...(spouse ? { spouse } : {}) };
+  // Switching between man and woman moves friends still on their default relationship to the default for the other.
+  if (yourGender() !== before) {
+    for (const c of listContacts()) {
+      const f = catalogEntry(c.id);
+      // Only friends you haven't talked to yet switch defaults; after that, family stays family.
+      if (f?.roles && !hasTalked(c) && c.role === resolveRole(f.roles[before], f.gender)) c.role = f.roles[yourGender()];
+      c.role = resolveRole(shownRole(c.role), friendGender(c));
+      saveContact(c);
+    }
+  }
+  writeJson(configFile, config);
+}
+
 // ---- Becoming official: one merged identity per friend ----
 // A friend becomes official at your first call or text. Then their persona and their relationship to you are merged
 // once (by Opus) into one tight identity, saved in data/contacts/<id>/identity.md and reused on every call and text: a
@@ -212,7 +278,123 @@ async function buildIdentity(c) {
   saveContact(fresh);
 }
 
+// ---- The support line ----
+// A few agents answer at random (contacts/support-*/). They keep no memory of callers. What they share: your profile
+// (config.user: you, spouse, family, pets, dates, notes), the help guide (contacts/_support/help.md), and notes from
+// earlier support calls about the app (data/support-notes.md). After a call, what you confirmed updates your profile,
+// with a dated copy of the old one in data/profile-history/. They can change some settings for you by voice.
+const supportFile = (name) => path.join(personasDir, "_support", name);
+const supportNotesFile = path.join(dataDir, "support-notes.md");
+function profileText() {
+  const u = config.user ?? {};
+  const lines = [];
+  const add = (k, v) => v && lines.push(`- ${k}: ${v}`);
+  add("Name", [u.first, u.last].filter(Boolean).join(" "));
+  add("Gender", u.gender);
+  add("Age", ageNow(u));
+  add("Birthday", u.birthday && dayName(u.birthday));
+  add("Lives in", u.home);
+  const sp = u.spouse;
+  if (sp?.name) add(sp.married === false ? "Former spouse (not married now)" : "Spouse", `${sp.name} (${sp.gender}${ageNow(sp) ? `, ${ageNow(sp)}` : ""}${sp.birthday ? `, birthday ${dayName(sp.birthday)}` : ""}${sp.anniversary ? `, anniversary ${dayName(sp.anniversary)}` : ""})${sp.about ? `: ${sp.about}` : ""}`);
+  for (const f of u.family ?? []) add(f.relation || "Family", `${f.name}${f.age ? `, ${f.age}` : ""}${f.birthday ? `, birthday ${dayName(f.birthday)}` : ""}${f.lives ? `, lives in ${f.lives}` : ""}${f.notes ? `: ${f.notes}` : ""}`);
+  for (const pet of u.pets ?? []) add("Pet", `${pet.name}${pet.kind ? ` (${pet.kind})` : ""}${pet.notes ? `: ${pet.notes}` : ""}`);
+  add("Other things friends should know", u.notes);
+  add("Never bring up", u.avoid);
+  return lines.join("\n") || "(Empty. This may be a brand-new caller: start with their name.)";
+}
+function supportPrompt(c) {
+  const read = (f) => { try { return fs.readFileSync(f, "utf8").trim(); } catch { return ""; } };
+  const now = new Date().toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const friends = listContacts().map((f) => `- ${f.name}: your caller's ${shownRole(f.role ?? "friend").replace("-", " ")}, calls them ${f.settings.callsYou ?? "never"}, texts them ${f.settings.textsYou ?? "sometimes"}${f.active === false ? ", turned off" : ""}`).join("\n");
+  return [
+    fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8").trim(),
+    read(supportFile("support-rules.md")),
+    `# The caller's profile (shared by every agent)\n${profileText()}`,
+    `# Their friends in the app\n${friends || "(None installed.)"}`,
+    read(supportFile("help.md")),
+    read(supportNotesFile) && `# Notes from earlier support calls\n${read(supportNotesFile)}`,
+    ENDING_THE_CALL,
+    `# Right now\nIt's ${now}. Airplane mode is ${config.airplane ? "on" : "off"}.`,
+  ].filter(Boolean).join("\n\n");
+}
+
+// Settings support agents can change by voice.
+const SUPPORT_TOOLS = [{
+  name: "change_setting",
+  description: "Change a setting for the caller, after they agree. friend settings: callsYou (never, sometimes, daily, often), textsYou (never, sometimes, often), active (true or false), role (a relationship like best-friend, close-friend, friend, distant-friend). Phone settings: airplane (true or false).",
+  input_schema: {
+    type: "object",
+    properties: {
+      friend: { type: "string", description: "The friend's first name, or empty for a phone setting." },
+      setting: { type: "string", enum: ["callsYou", "textsYou", "active", "role", "airplane"] },
+      value: { type: "string" },
+    },
+    required: ["setting", "value"],
+  },
+}];
+async function runSupportTool(name, input) {
+  if (name !== "change_setting") throw new Error("Unknown tool.");
+  const { friend, setting, value } = input ?? {};
+  if (setting === "airplane") {
+    config.airplane = value === "true";
+    writeJson(configFile, config);
+    return `Airplane mode is now ${config.airplane ? "on" : "off"}.`;
+  }
+  const c = listContacts().find((f) => firstName(f).toLowerCase() === String(friend ?? "").trim().toLowerCase().split(" ")[0]);
+  if (!c) return `There's no friend called ${friend}.`;
+  if (setting === "callsYou" && CALLS_YOU.includes(value)) c.settings.callsYou = value;
+  else if (setting === "textsYou" && ["never", "sometimes", "often"].includes(value)) c.settings.textsYou = value;
+  else if (setting === "active") c.active = value === "true";
+  else if (setting === "role") {
+    if (!roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)).includes(value)) return `${c.name} can't become their ${value}: family is locked after the first call, and friends can only move between kinds of friends.`;
+    c.role = resolveRole(value, friendGender(c));
+  } else return "That value doesn't work for that setting.";
+  saveContact(c);
+  addNotice(`Support changed ${firstName(c)}'s ${{ callsYou: "calling", textsYou: "texting", active: "on/off", role: "relationship" }[setting]} setting to ${value}.`, c.id);
+  return `Done: ${c.name}'s ${setting} is now ${value}.`;
+}
+
+// After a support call: update the profile from what was confirmed, and keep any app tips for the other agents.
+async function afterSupportCall(transcript) {
+  const u = config.user ?? {};
+  const current = JSON.stringify({
+    first: u.first, last: u.last, gender: u.gender, age: ageNow(u), birthday: u.birthday, home: u.home,
+    spouse: u.spouse ? { name: u.spouse.name, gender: u.spouse.gender, married: u.spouse.married !== false, age: ageNow(u.spouse), birthday: u.spouse.birthday, anniversary: u.spouse.anniversary, about: u.spouse.about } : null,
+    family: u.family ?? [], pets: u.pets ?? [], notes: u.notes ?? "", avoid: u.avoid ?? "",
+  });
+  try {
+    const msg = await getClient().messages.create({
+      model: MEMORY_MODEL,
+      max_tokens: 8000,
+      output_config: { effort: "low" },
+      system:
+        "You update a person's profile from a call they made to a support line. Apply only what the caller stated or confirmed; keep everything else as it is. " +
+        "Dates are MM-DD. family entries: {name, relation (like daughter, son, mother, brother, grandson), gender (man or woman), age (number or null), birthday (MM-DD or empty), lives (town), notes}. pets: {name, kind, notes}. " +
+        "notes: other things their friends should know. avoid: things friends should never bring up. supportNotes: a line or two about any app problem or how-to that came up and how it was solved, useful to other agents, or empty. " +
+        'Answer with JSON only: {"profile": {same shape as the input}, "supportNotes": "..."}.',
+      messages: [{ role: "user", content: `Current profile:\n${current}\n\nThe support call:\n${transcript}` }],
+    });
+    if (msg.stop_reason === "refusal") return;
+    const out = JSON.parse(textOf(msg.content).replace(/^```(json)?|```$/gm, "").trim());
+    const pr = out.profile;
+    if (pr && typeof pr === "object") {
+      fs.mkdirSync(path.join(dataDir, "profile-history"), { recursive: true });
+      writeJson(path.join(dataDir, "profile-history", `${new Date().toISOString().replace(/[:.]/g, "-")}.json`), config.user ?? {});
+      saveProfileFrom(pr);
+    }
+    if (typeof out.supportNotes === "string" && out.supportNotes.trim()) {
+      let notes = "";
+      try { notes = fs.readFileSync(supportNotesFile, "utf8"); } catch {}
+      const lines = `${notes}- ${new Date().toLocaleDateString()}: ${out.supportNotes.trim()}\n`.trim().split("\n").slice(-40);
+      fs.writeFileSync(supportNotesFile, lines.join("\n") + "\n");
+    }
+  } catch (err) {
+    console.error("Profile update failed:", err?.message ?? err);
+  }
+}
+
 async function systemPrompt(c) {
+  if (c.support) return supportPrompt(c);
   // Official friends use their merged identity; until then, the persona and relationship as written.
   const src = identitySource(c);
   const persona = identityReady(c) ? `${fs.readFileSync(identityFile(c.id), "utf8").trim()}\n\n${src.rules}` : null;
@@ -478,7 +660,8 @@ function aboutBuddy(c) {
   const who = `${u.first}${u.last ? ` ${u.last}` : ""}`;
   return `# Your buddy\nYour buddy is ${who}, ${u.gender === "woman" ? "a woman" : "a man"}${ageNow(u) ? `, ${ageNow(u)} years old` : ""}${u.home ? `, who lives in ${u.home}` : ""}. ` +
     (u.birthday ? `Their birthday is ${dayName(u.birthday)}. ` : "") +
-    `You know them, so use their first name now and then, the way you naturally would.` + aboutSpouse(c);
+    `You know them, so use their first name now and then, the way you naturally would.` + aboutSpouse(c) + aboutFamily(c) +
+    (u.avoid ? `\nNever bring up: ${u.avoid}` : "");
 }
 
 // ---- Your spouse (setup, or Settings -> You) ----
@@ -494,6 +677,14 @@ function spouseDates(sp) {
     ...(sp.anniversary ? [{ what: "their wedding anniversary", date: sp.anniversary }] : []),
     ...(sp.dates ?? []).filter((d) => /^\d{2}-\d{2}$/.test(d.date)),
   ];
+}
+function aboutFamily(c) {
+  const fam = config.user?.family ?? [];
+  if (!fam.length) return "";
+  if (!KNOWS_SPOUSE_WELL.has(c?.role)) return `\nTheir family includes ${fam.map((f) => `${f.name} (${f.relation || "family"})`).join(", ")}.`;
+  return `\nTheir family:\n` + fam.map((f) => `- ${f.name}, ${f.relation || "family"}${f.age ? `, ${f.age}` : ""}${f.birthday ? `, birthday ${dayName(f.birthday)}` : ""}${f.lives ? `, lives in ${f.lives}` : ""}${f.notes ? `: ${f.notes}` : ""}`).join("\n") +
+    ((config.user?.pets ?? []).length ? `\nPets: ${config.user.pets.map((x) => `${x.name}${x.kind ? ` (${x.kind})` : ""}`).join(", ")}.` : "") +
+    (config.user?.notes ? `\nAlso: ${config.user.notes}` : "");
 }
 function aboutSpouse(c) {
   const sp = config.user?.spouse;
@@ -529,25 +720,26 @@ setInterval(() => {
       }
     }
   }
-  const sp = config.user?.spouse;
-  if (!sp?.name || sp.married === false || hour < 9 || hour >= 20 || Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
+  const sp = config.user?.spouse?.married === false ? null : config.user?.spouse;
+  const familyDates = (config.user?.family ?? []).filter((f) => f.birthday).map((f) => ({ what: `${f.name}'s birthday (their ${f.relation || "family"})`, date: f.birthday }));
+  if ((!sp?.name && !familyDates.length) || hour < 9 || hour >= 20 || Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  for (const d of spouseDates(sp)) {
+  for (const d of [...(sp?.name ? spouseDates(sp) : []), ...familyDates]) {
     let next = new Date(today.getFullYear(), Number(d.date.slice(0, 2)) - 1, Number(d.date.slice(3)));
     if (next < today) next.setFullYear(next.getFullYear() + 1);
     const days = Math.round((next - today) / 864e5);
     if (![7, 1, 0].includes(days)) continue;
     const key = `${d.what}|${next.getFullYear()}|${days}`;
-    if (sp.reminded?.[key]) continue;
+    if (config.user.reminded?.[key] || sp?.reminded?.[key]) continue;
     const friend = listContacts()
       .filter((c) => c.active !== false && REMINDER_ORDER.includes(c.role) && (c.settings.textsYou ?? "sometimes") !== "never")
       .sort((a, b) => REMINDER_ORDER.indexOf(a.role) - REMINDER_ORDER.indexOf(b.role))[0];
     if (!friend) return;
-    sp.reminded = { ...(sp.reminded ?? {}), [key]: true };
+    config.user.reminded = { ...(config.user.reminded ?? {}), [key]: true };
     writeJson(configFile, config);
     const when = { 7: "is a week from today", 1: "is tomorrow", 0: "is today" }[days];
-    const extra = days === 7 ? ` Suggest a gift or a plan, from what you know about ${sp.name}.` : days === 1 ? " Make sure they're ready." : " Remind them to make it special.";
+    const extra = days === 7 ? " Suggest a gift or a plan, from what you know about them." : days === 1 ? " Make sure they're ready." : " Remind them to make it special.";
     friendTexts(friend, { opener: true, about: `reminding your buddy that ${d.what} ${when}.${extra}` })
       .catch((err) => console.error("Reminder text failed:", err?.message ?? err));
     return; // one reminder at a time
@@ -589,7 +781,7 @@ const shownRole = (role) => (role === "girlfriend-bestie" ? "best-friend" : role
 const yourGender = () => (config.user?.gender === "woman" ? "woman" : "man");
 
 function catalog() {
-  return fs.readdirSync(personasDir).filter((id) => !id.startsWith("_") && catalogEntry(id)).map((id) => {
+  return fs.readdirSync(personasDir).filter((id) => !id.startsWith("_") && catalogEntry(id) && !catalogEntry(id).support).map((id) => {
     const f = catalogEntry(id);
     return {
       id, name: f.name, about: f.about ?? "", gender: f.gender, installed: !!loadContact(id),
@@ -619,7 +811,7 @@ function installFriend(id, role) {
   fs.mkdirSync(path.join(contactsDir, id), { recursive: true });
   writeJson(contactPath(id, "contact.json"), {
     name: f.name, created: new Date().toISOString(), gender: f.gender, settings,
-    role: resolveRole(role, f.gender), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
+    role: resolveRole(role, f.gender), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
   });
   for (const l of links) {
     const other = loadContact(l.id);
@@ -664,6 +856,7 @@ function factoryReset() {
     fs.rmSync(path.join(dataDir, name), { recursive: true, force: true });
   }
   fs.mkdirSync(contactsDir, { recursive: true });
+  setTimeout(installSupport, 0);
   config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(airplane ? { airplane } : {}) };
   writeJson(configFile, config);
 }
@@ -823,7 +1016,7 @@ async function streamReply(res) {
   try {
     const c = loadContact(call.contactId);
     const model = chatModel(c);
-    const tools = knowledge.tools(c);
+    const tools = c.support ? SUPPORT_TOOLS : knowledge.tools(c);
     for (let round = 0; round < 6; round++) {
       const stream = getClient().beta.messages.stream({
         model: model.id,
@@ -852,7 +1045,7 @@ async function streamReply(res) {
       const uses = final.content.filter((b) => b.type === "tool_use");
       if (final.stop_reason !== "tool_use" || !uses.length) break;
       const results = await Promise.all(uses.map((u) =>
-        knowledge.runTool(u.name, u.input).then(
+        (c.support ? runSupportTool(u.name, u.input) : knowledge.runTool(u.name, u.input)).then(
           (content) => ({ type: "tool_result", tool_use_id: u.id, content }),
           (err) => ({ type: "tool_result", tool_use_id: u.id, content: `Couldn't get that right now: ${err.message}`, is_error: true }),
         )));
@@ -875,6 +1068,12 @@ async function hangUp() {
   call = null;
   const c = loadContact(ended.contactId);
   if (!c) return;
+  if (c.support) {
+    const said = ended.messages.slice(1).map((m) => `${m.role === "user" ? "Caller" : firstName(c)}: ${textOf(m.content).replaceAll(HANGUP, "").trim()}`).join("\n");
+    fs.appendFileSync(path.join(dataDir, "support-calls.txt"), `\n===== Support call with ${firstName(c)}, ${ended.started.toLocaleString("en-US")} =====\n${said}\n`);
+    if (said.trim()) await afterSupportCall(said);
+    return;
+  }
   const first = firstName(c);
   const memory = c.memory;
   const memoryFile = contactPath(c.id, "memory.json");
@@ -1060,47 +1259,10 @@ const server = http.createServer(async (req, res) => {
 
   // ---- You (first-time setup, or Settings -> You) ----
   if (req.method === "PUT" && url.pathname === "/api/profile") {
-    const b = await readBody(req);
-    const clean = (v) => String(v ?? "").trim().slice(0, 80);
-    const before = yourGender();
-    const age = (v) => { const n = Math.round(Number(v)); return n >= 13 && n <= 120 ? n : null; };
-    const md = (v) => (/^\d{2}-\d{2}$/.test(String(v ?? "")) ? v : "");
-    // What you and your spouse told the phone, and what friends learned, only ever goes away with a factory reset.
-    // Saving merges: a blank field keeps what was there. "Not married" just stops friends bringing them up; their
-    // notes and dates are kept in case you switch it back.
-    const prev = config.user ?? {};
-    const keep = (v, was) => (clean(v) || was || "");
-    // Ages are saved with the year they were given (a year older each year after). An unchanged age keeps its year.
-    const ageOf = (v, p) => { const n = age(v); return n === null ? { age: p?.age ?? null, ageYear: p?.ageYear } : n === ageNow(p) ? { age: p.age, ageYear: p.ageYear } : { age: n, ageYear: new Date().getFullYear() }; };
-    const old = prev.spouse;
-    let spouse = old;
-    if (b.spouse?.married === false && old) spouse = { ...old, married: false };
-    else if (b.spouse?.name) {
-      spouse = {
-        ...(old ?? {}), married: true,
-        name: clean(b.spouse.name), gender: b.spouse.gender === "man" ? "man" : "woman",
-        birthday: md(b.spouse.birthday) || old?.birthday || "", anniversary: md(b.spouse.anniversary) || old?.anniversary || "",
-        about: String(b.spouse.about ?? "").trim().slice(0, 2000) || old?.about || "", ...ageOf(b.spouse.age, old),
-        notes: old?.notes ?? "", dates: old?.dates ?? [], reminded: old?.reminded ?? {},
-      };
-    }
-    config.user = { ...prev, first: keep(b.first, prev.first), last: keep(b.last, prev.last),
-      gender: b.gender === "woman" ? "woman" : b.gender === "man" ? "man" : prev.gender ?? "man", home: keep(b.home, prev.home),
-      ...ageOf(b.age, prev), birthday: md(b.birthday) || prev.birthday || "", greeted: prev.greeted ?? {},
-      ...(spouse ? { spouse } : {}) };
-    // Switching between man and woman moves friends still on their default relationship to the default for the other.
-    if (yourGender() !== before) {
-      for (const c of listContacts()) {
-        const f = catalogEntry(c.id);
-        // Only friends you haven't talked to yet switch defaults; after that, family stays family.
-        if (f?.roles && !hasTalked(c) && c.role === resolveRole(f.roles[before], f.gender)) c.role = f.roles[yourGender()];
-        c.role = resolveRole(shownRole(c.role), friendGender(c));
-        saveContact(c);
-      }
-    }
-    writeJson(configFile, config);
+    saveProfileFrom(await readBody(req));
     return json(res, 200, config.user);
   }
+
   if (req.method === "POST" && url.pathname === "/api/airplane") {
     const { on } = await readBody(req);
     if (on && call) return json(res, 400, { error: "Hang up first." });
@@ -1373,6 +1535,9 @@ const server = http.createServer(async (req, res) => {
       console.error("Texting failed:", err?.message ?? err);
       return json(res, 502, { error: err?.message ?? String(err) });
     }
+  }
+  if (req.method === "GET" && url.pathname === "/api/support") {
+    return json(res, 200, listSupport().filter((c) => voiceFile(c.settings.cbVoice)).map((c) => ({ id: c.id, name: c.name })));
   }
   if (req.method === "GET" && url.pathname === "/api/notices") return json(res, 200, readJson(noticesFile, []));
   if (req.method === "POST" && url.pathname === "/api/notices/clear") {
