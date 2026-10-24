@@ -535,7 +535,9 @@ const flirtingOf = (c) => (c.flirting === "rated-r" ? (ratedROk(c) ? "rated-r" :
   : FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
 // Spicy pictures and videos (✎ Edit, off by default): only with Rated R on. They're made by Grok Imagine and show only
 // the friend, an adult; see spicyMedia below.
-const spicyOn = (c) => !!c.spicyMedia && flirtingOf(c) === "rated-r";
+// After xAI's moderation turns one down, spicy ones rest for 6 hours (each refusal costs time and is still billed).
+let spicyRestUntil = 0;
+const spicyOn = (c) => !!c.spicyMedia && flirtingOf(c) === "rated-r" && Date.now() > spicyRestUntil;
 const flirtingRules = (c) => {
   const level = flirtingOf(c);
   if (level === "off") return "";
@@ -1632,7 +1634,7 @@ const spicyDir = (id) => path.join(photoDir(id), "spicy");
 // Grok, briefly, answering in JSON (null if it can't).
 async function grokJson(content) {
   try {
-    const msg = await getGrok().messages.create({ model: grokModels().main, max_tokens: 2000, messages: [{ role: "user", content }] });
+    const msg = await getGrok().messages.create({ model: grokModels().fast, max_tokens: 2000, messages: [{ role: "user", content }] });
     const answer = textOf(msg.content);
     return answer.includes("{") ? JSON.parse(answer.replace(/^[^{]*/, "").replace(/[^}]*$/, "")) : null;
   } catch (err) {
@@ -1687,6 +1689,7 @@ async function spicyPhoto(c, want, plan) {
   const out = await (face
     ? xai("/images/edits", { ...body, prompt: `Keep this person's face and features exactly. ${plan.prompt}`, image: { type: "image_url", url: `data:${photoMime(face)};base64,${fs.readFileSync(face).toString("base64")}` } })
     : xai("/images/generations", body)).catch((err) => {
+    if (/moderat/i.test(err.message)) spicyRestUntil = Date.now() + 6 * 3600 * 1000;
     logSpicy(c, { file: "", want, prompt: plan.prompt, maker: SPICY_IMAGE_MODEL, kept: false, why: /moderat/i.test(err.message) ? "turned down by xAI's moderation" : String(err.message).slice(0, 200) });
     throw err;
   });
@@ -1713,7 +1716,10 @@ async function spicyVideo(c, want, plan) {
     await new Promise((res) => setTimeout(res, 5000));
     const st = await xai(`/videos/${request_id}`);
     if (st.status === "done") done = st;
-    else if (st.status === "failed" || st.status === "expired") throw new Error(`Grok's video failed: ${st.error?.message ?? st.status}`);
+    else if (st.status === "failed" || st.status === "expired") {
+      if (/moderat|invalid_argument/i.test(`${st.error?.code} ${st.error?.message}`)) spicyRestUntil = Date.now() + 6 * 3600 * 1000;
+      throw new Error(`Grok's video failed: ${st.error?.message ?? st.status}`);
+    }
   }
   if (!done?.video?.url) throw new Error("Grok's video never finished.");
   fs.mkdirSync(spicyDir(c.id), { recursive: true });
