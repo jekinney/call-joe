@@ -3032,7 +3032,7 @@ async function renderFriends() {
       <span class="txt"><div class="t1">${esc(f.name)}</div><div class="t2">${esc(f.about)}</div>
         <div class="friend-ctl"><select data-install-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select>
           <button class="btn" data-install="${esc(f.id)}">Install</button></div>
-        <label class="cuss" style="margin-top:6px"><input type="checkbox" data-install-cuss="${esc(f.id)}"> Cussing allowed</label></span></div>`).join("")
+        <label class="cuss" style="margin-top:6px"><input type="checkbox" data-install-cuss="${esc(f.id)}" ${f.cussing ? "checked" : ""}> Cussing allowed</label></span></div>`).join("")
     || `<div class="empty">Every friend is already on your phone.</div>`;
 }
 const friendsChanged = () => {
@@ -3287,7 +3287,7 @@ $("suPickNext").onclick = () => {
   $("suRoles").innerHTML = setupCatalog.filter((f) => picked.includes(f.id)).map((f) => `
     <div class="pick" style="cursor:default">${catalogAvatar(f)}
       <span class="txt"><div class="t1">${esc(f.name)}</div>
-        <label class="cuss"><input type="checkbox" data-setup-cuss="${esc(f.id)}"> Cussing allowed</label></span>
+        <label class="cuss"><input type="checkbox" data-setup-cuss="${esc(f.id)}" ${f.cussing ? "checked" : ""}> Cussing allowed</label></span>
       <select data-setup-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select></div>`).join("");
   setupStep(5);
 };

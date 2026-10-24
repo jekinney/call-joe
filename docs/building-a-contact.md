@@ -93,6 +93,10 @@ Contacts → the friend → ✎ Edit → **Show on your contacts**.
 - Turn them back on any time. They catch up on the news they missed from linked friends' calls.
 - From the command line: `tools\contact.py deactivate <id>` and `activate <id>`. In `list`, friends who are off show `[off]`.
 
+## Cussing
+
+Off by default: friends keep it clean (`contacts/_language/clean.md`). Allowed, they swear the way they naturally would (`contacts/_language/cussing.md`). Set it with the checkbox when installing, the Cussing switch in the friend's ✎ Edit, or `tools\contact.py cussing <id> on|off`. `publish` saves it as the friend's default, so the install checkbox starts checked.
+
 ## Installing, deleting and resetting
 
 - Friends with a `contacts/<id>/friend.json` (made by `tools\contact.py publish`) can be installed in first-time setup or in Settings → Friends, with a relationship you pick.

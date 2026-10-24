@@ -68,6 +68,8 @@ Show the user the draft and revise it until they approve. Keep it to about 250â€
 - **Role:** ask who this friend is to the user (friend, best-friend, spouse, mom, dad, sister, brother, grandparent, coworker, neighbor; see `contacts/_roles/`). Set it with `create --role <role>` or `role <id> <role>`. It decides what news reaches them from connected friends.
 - **Live knowledge:** if they'd follow a team, talk about their weather, or need to look things up (recipes, prices), set it with `knows <id> --nfl-team <ABBR> --home "<Town, State>" --web`. Make sure their persona says where they live, to match `--home`.
 
+- **Cussing:** ask whether this friend may swear. Off is the default (clean). To allow it: `cussing <id> on`. The user can change it later in the friend's âœŽ Edit.
+
 ## 5b. Link family (if any)
 
 If the new friend belongs with an existing friend, like a spouse, and the user wants them to know what was said on each other's calls, link them:

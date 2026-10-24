@@ -827,7 +827,7 @@ function catalog() {
     const f = catalogEntry(id);
     return {
       id, name: f.name, about: f.about ?? "", gender: f.gender, installed: !!loadContact(id),
-      hasFace: fs.existsSync(path.join(personasDir, id, "face.png")),
+      hasFace: fs.existsSync(path.join(personasDir, id, "face.png")), cussing: !!f.cussing, // swearing is part of who they are
       role: shownRole(resolveRole(f.roles?.[yourGender()] ?? "friend", f.gender)), roleChoices: roleChoicesFor(f.gender, null, false),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));

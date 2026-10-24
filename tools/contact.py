@@ -36,6 +36,8 @@ Commands:
     activate <id> / deactivate <id>       show or hide a friend on the friends list (hidden friends never
                                           call you; nothing else about them changes)
     remove <id>                           archive a friend to data/removed/ (never deletes memory)
+    cussing <id> on|off                   let the friend swear the way they naturally would, or keep it clean
+                                          (the default); contacts/_language/ holds the instructions for each
     publish <id> --gender man|woman --about "One line" [--role-man ROLE] [--role-woman ROLE]
                                           make a friend installable from the app (Settings -> Friends, and
                                           first-time setup): copies their voice sample and face into
@@ -399,6 +401,16 @@ def cmd_remove(args):
     print(f'{info["name"]} archived to data/removed/{args.id}-{stamp} (memory and call logs kept there).')
 
 
+def cmd_cussing(args):
+    info = load(args.id)
+    if args.state == "on":
+        info["cussing"] = True
+    else:
+        info.pop("cussing", None)
+    save(args.id, info)
+    print(f'{info["name"]} {"can cuss" if args.state == "on" else "keeps it clean"} from their next call or text.')
+
+
 def cmd_publish(args):
     info = load(args.id)
     for role in (args.role_man, args.role_woman):
@@ -419,6 +431,7 @@ def cmd_publish(args):
         "about": args.about.strip(),
         "model": s.get("model", "sonnet"),
         **({"callsYou": s["callsYou"]} if s.get("callsYou") and s["callsYou"] != "never" else {}),
+        **({"cussing": True} if info.get("cussing") else {}),
         "roles": {"man": args.role_man, "woman": args.role_woman},
         **({"knows": info["knows"]} if info.get("knows") else {}),
         **({"links": info["links"]} if info.get("links") else {}),
@@ -455,6 +468,7 @@ def main():
     s = sub.add_parser("activate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=True)
     s = sub.add_parser("deactivate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=False)
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
+    s = sub.add_parser("cussing"); s.add_argument("id"); s.add_argument("state", choices=["on", "off"]); s.set_defaults(fn=cmd_cussing)
     s = sub.add_parser("publish"); s.add_argument("id"); s.add_argument("--gender", choices=["man", "woman"], required=True)
     s.add_argument("--about", required=True); s.add_argument("--role-man", default="friend")
     s.add_argument("--role-woman", default="friend"); s.set_defaults(fn=cmd_publish)
