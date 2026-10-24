@@ -286,6 +286,7 @@
   #waiting .t2 { font-size: 13px; color: var(--muted); }
   /* Texts, like Android's Messages app */
   #pageThread { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; }
+  #pageThread > .thread-top, #pageThread > .composer, #pageThread > .picker { align-self: stretch; }
   .thread-top { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: rgba(24, 19, 15, .94); }
   .thread-top .c-avatar { width: 38px; height: 38px; font-size: 16px; }
   .thread-name { flex: 1; font-weight: 600; font-size: 17px; }
@@ -302,6 +303,23 @@
   .typing span:nth-child(2) { animation-delay: .2s; }
   .typing span:nth-child(3) { animation-delay: .4s; }
   @keyframes blink { 0%, 80%, 100% { opacity: .3; } 40% { opacity: 1; } }
+  .comp-btn { width: 40px; height: 44px; border: 0; background: none; color: var(--ink); font-size: 22px; cursor: pointer; flex: none; border-radius: 50%; }
+  .comp-btn:hover { background: rgba(255,255,255,.08); }
+  .gif-btn { font-size: 12px; font-weight: 800; letter-spacing: .02em; }
+  .gif-btn::before { content: ""; }
+  .picker { background: rgba(24, 19, 15, .97); padding: 10px 12px; max-height: 260px; overflow-y: auto; }
+  #emojiPanel { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 2px; }
+  #emojiPanel[hidden], #gifPanel[hidden] { display: none; }
+  #emojiPanel button { font-size: 24px; background: none; border: 0; cursor: pointer; border-radius: 10px; padding: 4px; }
+  #emojiPanel button:hover { background: rgba(255,255,255,.08); }
+  #gifSearch { margin: 0 0 8px; border-radius: 20px; }
+  .gif-grid { columns: 3; column-gap: 6px; }
+  .gif-grid img { width: 100%; border-radius: 8px; margin-bottom: 6px; cursor: pointer; display: block; }
+  .gif-credit { font-size: 10px; color: var(--muted); text-align: right; }
+  .bubble.gif { padding: 4px; background: none !important; }
+  .bubble.gif img { display: block; max-width: 220px; border-radius: 16px; }
+  .bubble { position: relative; }
+  .bubble .tap { position: absolute; top: -10px; left: -10px; background: #3a2f26; border: 2px solid var(--bg); border-radius: 12px; font-size: 13px; padding: 1px 5px; }
   .composer { display: flex; gap: 8px; padding: 8px 12px 10px; background: rgba(24, 19, 15, .94); }
   .composer input { flex: 1; margin: 0; border-radius: 24px; padding: 11px 16px; }
   .send { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent); color: #241a12; font-size: 18px; cursor: pointer; flex: none; }
@@ -502,7 +520,15 @@
     <button class="top-btn" id="threadCall" title="Call">📞</button>
   </div>
   <div class="bubbles" id="bubbles"></div>
+  <div class="picker" id="emojiPanel" hidden></div>
+  <div class="picker" id="gifPanel" hidden>
+    <input id="gifSearch" placeholder="Search GIFs" autocomplete="off">
+    <div class="gif-grid" id="gifGrid"></div>
+    <div class="gif-credit">Powered by GIPHY</div>
+  </div>
   <div class="composer">
+    <button class="comp-btn" id="emojiBtn" title="Emoji">😊</button>
+    <button class="comp-btn gif-btn" id="gifBtn" title="GIF">GIF</button>
     <input id="textInput" placeholder="Text message" autocomplete="off" maxlength="2000">
     <button class="send" id="textSend" title="Send">➤</button>
   </div>
@@ -551,6 +577,12 @@
       <div class="msg" id="newKeyMsg"></div>
     </div>
     <div class="row" style="justify-content:flex-start"><button class="btn warn" id="removeKeyBtn">Remove key…</button></div>
+    <div class="section-title" style="margin-top:16px">GIFs</div>
+    <div class="list" style="width:100%">
+      <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">GIPHY key</div><div class="t2" id="giphyState">For sending GIFs in texts. Free: sign up at developers.giphy.com, click Create an API Key, pick "API", and paste the key here.</div></span></div>
+      <div class="field"><input id="giphyInput" type="password" placeholder="Paste your GIPHY API key" autocomplete="off"><button class="btn" id="giphySave">Save</button></div>
+      <div class="msg" id="giphyMsg"></div>
+    </div>
     <p class="hint" style="font-size:13px" id="removeKeyHint">To remove your key, turn on airplane mode first. Nothing else ever removes it, not even Reset phone.</p>
     <p class="hint" style="font-size:13px">Your friends think with Claude, using your own key. It's saved only on this computer. Manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
   </div>
@@ -2496,7 +2528,10 @@ function showSetting(id) {
   $("setDrawer").hidden = true;
   if (id === "calls") $("interruptToggle").checked = voiceInterruptOn();
   if (id === "looks") renderLooks();
-  if (id === "account") loadKeyState();
+  if (id === "account") {
+    loadKeyState();
+    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; }).catch(() => {});
+  }
   if (id === "you") loadYou();
   if (id === "friends") renderFriends();
 }
@@ -2681,9 +2716,9 @@ let lastBubbleAt = 0;
 function drawBubbles(list) {
   $("bubbles").innerHTML = "";
   lastBubbleAt = 0;
-  for (const t of list) addBubble(t.from, t.text, t.at);
+  for (const t of list) addBubble(t.from, t.text, t.at, t);
 }
-function addBubble(from, text, at = new Date().toISOString()) {
+function addBubble(from, text, at = new Date().toISOString(), extra = {}) {
   const time = Date.parse(at);
   if (time - lastBubbleAt > 30 * 60 * 1000) {
     const stamp = document.createElement("div");
@@ -2693,11 +2728,26 @@ function addBubble(from, text, at = new Date().toISOString()) {
   }
   lastBubbleAt = time;
   const b = document.createElement("div");
-  b.className = `bubble ${from}`;
-  b.textContent = text;
+  b.className = `bubble ${from}${extra.gif ? " gif" : ""}`;
+  if (extra.gif) {
+    const img = document.createElement("img");
+    img.src = extra.gif.url;
+    img.alt = extra.gif.title;
+    img.onload = () => ($("bubbles").scrollTop = $("bubbles").scrollHeight);
+    b.append(img);
+  } else b.textContent = text;
+  if (extra.reaction) setReaction(b, extra.reaction);
   $("bubbles").append(b);
   $("bubbles").scrollTop = $("bubbles").scrollHeight;
   return b;
+}
+// A friend's tapback on one of your texts.
+function setReaction(bubble, emoji) {
+  bubble.querySelector(".tap")?.remove();
+  const tap = document.createElement("span");
+  tap.className = "tap";
+  tap.textContent = emoji;
+  bubble.append(tap);
 }
 function showTyping(on) {
   $("bubbles").querySelector(".typing")?.remove();
@@ -2713,23 +2763,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function showTheirTexts(id, texts) {
   for (const t of texts) {
     if (threadId === id) showTyping(true);
-    await sleep(Math.min(4000, 700 + t.text.length * 35));
-    if (threadId === id) { showTyping(false); addBubble("them", t.text, t.at); }
+    await sleep(Math.min(4000, 700 + (t.text?.length ?? 20) * 35));
+    if (threadId === id) { showTyping(false); addBubble("them", t.text, t.at, t); }
   }
   if (threadId === id) markRead(id); else refreshViews();
 }
-async function sendText() {
-  const text = $("textInput").value.trim();
+async function sendText(gif = null) {
+  const text = gif ? "" : $("textInput").value.trim();
   const id = threadId;
-  if (!text || !id || textBusy) return;
-  $("textInput").value = "";
+  if ((!text && !gif) || !id || textBusy) return;
+  if (!gif) $("textInput").value = "";
+  $("emojiPanel").hidden = $("gifPanel").hidden = true;
   await ensureReady(id);
-  addBubble("me", text);
+  const mine = addBubble("me", text, undefined, gif ? { gif } : {});
   textBusy = true;
   $("textSend").disabled = true;
   await sleep(900);
   if (threadId === id) showTyping(true);
-  const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text }) }).catch(() => null);
+  const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text, gif }) }).catch(() => null);
   const out = await res?.json().catch(() => ({}));
   if (threadId === id) showTyping(false);
   textBusy = false;
@@ -2738,10 +2789,54 @@ async function sendText() {
     if (threadId === id) addBubble("err", `Not delivered: ${out?.error ?? "no connection"}`);
     return;
   }
+  if (out.reaction && threadId === id) setReaction(mine, out.reaction);
   await showTheirTexts(id, out.texts);
   if (out.call) setTimeout(() => ringYou(id), 4000); // "calling u" means the phone rings
 }
-$("textSend").onclick = sendText;
+$("textSend").onclick = () => sendText();
+
+$("giphySave").onclick = async () => {
+  $("giphyMsg").className = "msg";
+  $("giphyMsg").textContent = "Checking…";
+  const r = await fetch("/api/giphy-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: $("giphyInput").value }) });
+  const out = await r.json().catch(() => ({}));
+  $("giphyMsg").className = r.ok ? "msg ok" : "msg err";
+  $("giphyMsg").textContent = r.ok ? (out.hasKey ? "Saved. GIFs are on." : "Removed.") : out.error;
+  if (r.ok) $("giphyInput").value = "";
+};
+
+// Emoji: the ones people text most, by group.
+const EMOJI = "😂🤣😊😍🥰😘😉😎🤔😅😭😢😡🙄😬😴🤗🤷🙏👍👎👏🙌💪👀🔥💯❤️🧡💛💚💙💜🖤💔✨🎉🎂🎁🥳🍕🍺☕🌮🍝🏈🏀⚾⛳🎣🚗✈️🏡🐶🐱🌞🌧️❄️🌹🌻📞💬😇😜🤪😤😱🥺😏🤦👋🤞✌️👌";
+$("emojiPanel").innerHTML = [...new Intl.Segmenter().segment(EMOJI)].map((x) => `<button>${x.segment}</button>`).join("");
+$("emojiBtn").onclick = () => { $("gifPanel").hidden = true; $("emojiPanel").hidden = !$("emojiPanel").hidden; };
+$("emojiPanel").onclick = (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const input = $("textInput");
+  const at = input.selectionStart ?? input.value.length;
+  input.value = input.value.slice(0, at) + b.textContent + input.value.slice(input.selectionEnd ?? at);
+  input.focus();
+  input.selectionStart = input.selectionEnd = at + b.textContent.length;
+};
+// GIFs from GIPHY (trending until you search). Tap one to send it.
+let gifTimer = null;
+async function loadGifs(q = "") {
+  const r = await fetch(`/api/gifs?q=${encodeURIComponent(q)}`);
+  const out = await r.json().catch(() => []);
+  $("gifGrid").innerHTML = r.ok
+    ? out.map((g) => `<img src="${esc(g.small)}" data-url="${esc(g.url)}" alt="${esc(g.title)}" title="${esc(g.title)}" loading="lazy">`).join("") || `<div class="empty">No GIFs found.</div>`
+    : `<div class="empty">${esc(out.error ?? "GIFs aren't available.")}</div>`;
+}
+$("gifBtn").onclick = () => {
+  $("emojiPanel").hidden = true;
+  $("gifPanel").hidden = !$("gifPanel").hidden;
+  if (!$("gifPanel").hidden) { $("gifSearch").value = ""; loadGifs(); $("gifSearch").focus(); }
+};
+$("gifSearch").oninput = () => { clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs($("gifSearch").value.trim()), 400); };
+$("gifGrid").onclick = (e) => {
+  const img = e.target.closest("img[data-url]");
+  if (img) sendText({ url: img.dataset.url, title: img.alt });
+};
 $("textInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } };
 $("threadBack").onclick = () => goBack();
 $("threadCall").onclick = () => { const id = threadId; if (id) openContact(id, "voice"); };

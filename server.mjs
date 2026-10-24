@@ -451,14 +451,30 @@ const textWhen = (iso) => new Date(iso).toLocaleString("en-US", { weekday: "shor
 
 const TEXTING = `# Right now you're texting, not on the phone
 Your buddy and you are texting. Text back like a real person on their phone: short and casual, the way you'd really text. Younger or easygoing people use lowercase, abbreviations and an emoji now and then; older people text in fuller sentences, maybe with an odd emoji. Each text is a sentence or two at most, usually under 20 words. Usually one text, sometimes two or three quick ones in a row. Put a line with only --- between separate texts. Never write paragraphs, never put times or dates in brackets, and never use the hang-up marker.
-If something is serious, upsetting, or easier said out loud, you can say you'll call instead, and end with ${CALL_MARK}.`;
+If something is serious, upsetting, or easier said out loud, you can say you'll call instead, and end with ${CALL_MARK}.
+You can react to your buddy's last text like a tapback by starting your reply with [react: one emoji], like [react: 😂], when that's what you'd do; you can still text after it, or not. Now and then, when it really fits, you can send a GIF instead of words: a line with only [gif: a few search words]. When your buddy sends a GIF, react to what it shows.`;
+
+// ---- GIFs (GIPHY): needs a free GIPHY API key, saved in Settings -> Account ----
+async function searchGifs(q, limit = 18) {
+  if (!config.giphyKey) throw new Error("Add a GIPHY key in Settings → Account to send GIFs.");
+  const kind = q ? "search" : "trending";
+  const u = new URL(`https://api.giphy.com/v1/gifs/${kind}`);
+  u.search = new URLSearchParams({ api_key: config.giphyKey, limit: String(limit), rating: "pg-13", ...(q ? { q } : {}) });
+  const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(r.status === 401 || r.status === 403 ? "GIPHY didn't accept the key." : `GIPHY answered ${r.status}.`);
+  const j = await r.json();
+  return (j.data ?? []).map((g) => ({
+    id: g.id, title: (g.title || q || "GIF").replace(/\s*GIF.*$/i, "").trim() || "GIF",
+    url: g.images?.fixed_height?.url, small: g.images?.fixed_height_small?.url ?? g.images?.fixed_height?.url,
+  })).filter((g) => g.url);
+}
 
 // Builds the conversation for the model from recent texts (alternating turns, starting and ending with the buddy).
 function textTurns(list, extra) {
   const turns = [];
   for (const t of list.slice(-40)) {
     const role = t.from === "me" ? "user" : "assistant";
-    const line = t.text;
+    const line = t.gif ? (t.from === "me" ? `(sends a GIF: "${t.gif.title}")` : `[gif: ${t.gif.title}]`) : t.text;
     if (turns.at(-1)?.role === role) turns.at(-1).content += `\n${line}`;
     else turns.push({ role, content: line });
   }
@@ -527,12 +543,32 @@ async function friendTexts(c, { opener = false, about = null } = {}) {
   let raw = textOf(msg.content).replaceAll(HANGUP, "");
   const call = raw.includes(CALL_MARK);
   raw = raw.replaceAll(CALL_MARK, "");
-  const texts = raw.replace(/\[(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\]]*\]\s*/g, "").split(/^\s*---\s*$/m).map((t) => t.trim()).filter(Boolean).slice(0, 3);
+  // A tapback on your last text: [react: 😂]
+  let reaction = null;
+  raw = raw.replace(/\[react:\s*([^\]]{1,16})\]\s*/i, (_, e) => { reaction = e.trim(); return ""; });
+  const parts = raw.replace(/\[(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\]]*\]\s*/g, "").split(/^\s*---\s*$/m).map((t) => t.trim()).filter(Boolean).slice(0, 3);
   const now = Date.now();
-  const added = texts.map((text, i) => ({ id: `${now + i}`, from: "them", text, at: new Date(now + i).toISOString(), read: false }));
-  writeTexts(c.id, [...readTexts(c.id), ...added]);
+  const added = [];
+  for (const [i, part] of parts.entries()) {
+    const entry = { id: `${now + i}`, from: "them", text: part, at: new Date(now + i).toISOString(), read: false };
+    // A GIF they send: [gif: search words] on its own line, looked up on GIPHY (dropped without a key).
+    const g = part.match(/^\[gif:\s*([^\]]+)\]$/i);
+    if (g) {
+      const found = await searchGifs(g[1].trim(), 5).catch(() => []);
+      if (!found.length) continue;
+      const pick = found[Math.floor(Math.random() * found.length)];
+      Object.assign(entry, { text: "", gif: { url: pick.url, title: pick.title } });
+    }
+    added.push(entry);
+  }
+  const all = readTexts(c.id);
+  if (reaction) {
+    const mine = all.findLast((t) => t.from === "me");
+    if (mine) mine.reaction = reaction;
+  }
+  writeTexts(c.id, [...all, ...added]);
   if (readTexts(c.id).filter((t) => !t.remembered).length >= 20) rememberTexts(c).catch(() => {});
-  return { texts: added, call };
+  return { texts: added, call, reaction };
 }
 
 // Texts not yet in the memory notes, as transcript lines; marks them remembered.
@@ -543,7 +579,7 @@ function takeUnrememberedTexts(c) {
   for (const t of fresh) t.remembered = true;
   writeTexts(c.id, list);
   const first = firstName(c);
-  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.text}`).join("\n");
+  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.gif ? `(GIF: ${t.gif.title})` : t.text}`).join("\n");
 }
 async function rememberTexts(c) {
   const transcript = takeUnrememberedTexts(c);
@@ -1251,7 +1287,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasKey: !!config.apiKey, airplane: !!config.airplane, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasKey: !!config.apiKey, airplane: !!config.airplane, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -1499,7 +1535,7 @@ const server = http.createServer(async (req, res) => {
       const last = list.at(-1);
       return last && {
         contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
-        last: last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
+        last: last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
       };
     }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at)));
   }
@@ -1518,16 +1554,17 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
   if (req.method === "POST" && (url.pathname === "/api/texts/send" || url.pathname === "/api/texts/start")) {
-    const { contact, text } = await readBody(req);
+    const { contact, text, gif } = await readBody(req);
     const c = loadContact(contact);
     if (!c) return json(res, 400, { error: "No such friend." });
     if (config.airplane) return json(res, 400, { error: "Airplane mode is on." });
+    const sentGif = gif?.url && /^https:\/\/media\d*\.giphy\.com\//.test(gif.url) ? { url: gif.url, title: String(gif.title ?? "GIF").slice(0, 100) } : null;
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const opener = url.pathname.endsWith("/start");
     if (!opener) {
       const said = String(text ?? "").trim().slice(0, 2000);
-      if (!said) return json(res, 400, { error: "Nothing to send." });
-      writeTexts(c.id, [...readTexts(c.id), { id: `${Date.now()}`, from: "me", text: said, at: new Date().toISOString(), read: true }]);
+      if (!said && !sentGif) return json(res, 400, { error: "Nothing to send." });
+      writeTexts(c.id, [...readTexts(c.id), { id: `${Date.now()}`, from: "me", text: said, ...(sentGif ? { gif: sentGif } : {}), at: new Date().toISOString(), read: true }]);
     }
     try {
       return json(res, 200, await friendTexts(c, { opener }));
@@ -1535,6 +1572,22 @@ const server = http.createServer(async (req, res) => {
       console.error("Texting failed:", err?.message ?? err);
       return json(res, 502, { error: err?.message ?? String(err) });
     }
+  }
+  if (req.method === "GET" && url.pathname === "/api/gifs") {
+    try {
+      return json(res, 200, await searchGifs(String(url.searchParams.get("q") ?? "").trim().slice(0, 60)));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+  if (req.method === "POST" && url.pathname === "/api/giphy-key") {
+    const { key } = await readBody(req);
+    config.giphyKey = String(key ?? "").trim() || undefined;
+    if (config.giphyKey) {
+      try { await searchGifs("hello", 1); } catch (err) { delete config.giphyKey; return json(res, 400, { error: err.message }); }
+    }
+    writeJson(configFile, config);
+    return json(res, 200, { ok: true, hasKey: !!config.giphyKey });
   }
   if (req.method === "GET" && url.pathname === "/api/support") {
     return json(res, 200, listSupport().filter((c) => voiceFile(c.settings.cbVoice)).map((c) => ({ id: c.id, name: c.name })));
