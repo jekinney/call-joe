@@ -40,6 +40,11 @@ Commands:
                                           romantic); PG-13 at most, from contacts/_flirting/
     cussing <id> on|off                   let the friend swear the way they naturally would, or keep it clean
                                           (the default); contacts/_language/ holds the instructions for each
+    import <folder>                       build a friend from a friend kit: a folder holding friend-kit.json
+                                          (id, name, persona file, voice clip, face picture, role, knows,
+                                          cussing, flirting, gender, about, callsYou, private) and those
+                                          files. "private": true keeps the friend out of git on this computer
+                                          only (.git/info/exclude). Kits can live anywhere, like the Desktop.
     publish <id> --gender man|woman --about "One line" [--role-man ROLE] [--role-woman ROLE]
                                           make a friend installable from the app (Settings -> Friends, and
                                           first-time setup): copies their voice sample and face into
@@ -420,6 +425,56 @@ def cmd_flirting(args):
     print(f'{info["name"]}\'s flirting is {args.level} from their next call or text (PG-13 at most, see contacts/_flirting/).')
 
 
+def cmd_import(args):
+    folder = os.path.abspath(args.folder)
+    try:
+        with open(os.path.join(folder, "friend-kit.json"), encoding="utf-8-sig") as f:  # Notepad may add a BOM
+            kit = json.load(f)
+    except FileNotFoundError:
+        fail(f"No friend-kit.json in {folder}.")
+    except ValueError as err:
+        fail(f"friend-kit.json isn't valid JSON: {err}")
+    cid = check_id(kit.get("id"))
+    if os.path.exists(os.path.join(CONTACTS, cid, "contact.json")):
+        fail(f'{kit.get("name", cid)} is already on your phone. Delete them in the app first to build them fresh.')
+    here = lambda name: os.path.join(folder, name) if name else None
+    for key in ("persona", "voice"):
+        if not kit.get(key) or not os.path.isfile(here(kit[key])):
+            fail(f'friend-kit.json "{key}" must name a file in {folder}.')
+    if kit.get("private"):
+        exclude = os.path.join(ROOT, ".git", "info", "exclude")
+        if os.path.isdir(os.path.dirname(exclude)):
+            line = f"contacts/{cid}/"
+            current = open(exclude, encoding="utf8").read() if os.path.isfile(exclude) else ""
+            if line not in current.split():
+                with open(exclude, "a", encoding="utf8") as f:
+                    f.write(f"\n# Personal friend kept on this computer only (never committed)\n{line}\n")
+    # A friend uninstalled in the app leaves their persona folder behind; the kit is the source now.
+    old = os.path.join(PERSONAS, cid)
+    if os.path.isdir(old):
+        shutil.rmtree(old)
+    ns = argparse.Namespace
+    cmd_create(ns(id=cid, name=kit["name"], persona=here(kit["persona"]), voice=here(kit["voice"]),
+                  voice_start=float(kit.get("voiceStart", 0)), model=kit.get("model", "sonnet"), role=kit.get("role")))
+    if kit.get("face") and os.path.isfile(here(kit["face"])):
+        cmd_face(ns(id=cid, picture=here(kit["face"]), name=None))
+    k = kit.get("knows") or {}
+    if k:
+        cmd_knows(ns(id=cid, nfl_team=k.get("nflTeam"), home=k.get("home"), web=k.get("web"), clear=False))
+    if kit.get("cussing"):
+        cmd_cussing(ns(id=cid, state="on"))
+    if kit.get("flirting") in ("playful", "romantic"):
+        cmd_flirting(ns(id=cid, level=kit["flirting"]))
+    if kit.get("callsYou"):
+        info = load(cid)
+        info["settings"]["callsYou"] = kit["callsYou"]
+        save(cid, info)
+    roles = kit.get("roles") or {}
+    cmd_publish(ns(id=cid, gender=kit.get("gender", "man"), about=kit.get("about", kit["name"]),
+                   role_man=roles.get("man", kit.get("role") or "friend"), role_woman=roles.get("woman", kit.get("role") or "friend")))
+    print(f'{kit["name"]} is ready. Open Call Joe (or go back to Contacts) to see them.')
+
+
 def cmd_publish(args):
     info = load(args.id)
     for role in (args.role_man, args.role_woman):
@@ -480,6 +535,7 @@ def main():
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
     s = sub.add_parser("cussing"); s.add_argument("id"); s.add_argument("state", choices=["on", "off"]); s.set_defaults(fn=cmd_cussing)
     s = sub.add_parser("flirting"); s.add_argument("id"); s.add_argument("level", choices=["off", "playful", "romantic"]); s.set_defaults(fn=cmd_flirting)
+    s = sub.add_parser("import"); s.add_argument("folder"); s.set_defaults(fn=cmd_import)
     s = sub.add_parser("publish"); s.add_argument("id"); s.add_argument("--gender", choices=["man", "woman"], required=True)
     s.add_argument("--about", required=True); s.add_argument("--role-man", default="friend")
     s.add_argument("--role-woman", default="friend"); s.set_defaults(fn=cmd_publish)

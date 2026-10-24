@@ -97,6 +97,18 @@ Contacts → the friend → ✎ Edit → **Show on your contacts**.
 
 Off by default: friends keep it clean (`contacts/_language/clean.md`). Allowed, they swear the way they naturally would (`contacts/_language/cussing.md`). Set it with the checkbox when installing, the Cussing switch in the friend's ✎ Edit, or `tools\contact.py cussing <id> on|off`. `publish` saves it as the friend's default, so the install checkbox starts checked.
 
+## Friend kits (rebuild a friend from a folder)
+
+A friend kit is a folder anywhere (like the Desktop) with a `friend-kit.json` and the files it names:
+
+```json
+{ "id": "earl", "name": "Earl Hollis", "persona": "persona.md", "voice": "clip.mp3", "face": "face.jpg",
+  "gender": "man", "about": "One line about them", "role": "friend", "roles": { "man": "friend", "woman": "friend" },
+  "knows": { "home": "Town, State", "web": true }, "cussing": false, "flirting": "off", "callsYou": "never", "private": false }
+```
+
+`tools\contact.py import <folder>` builds the friend from it (voice, face, settings, and installable afterwards). `"private": true` keeps the friend out of git with a rule in `.git/info/exclude`, which lives on this computer only, so the repo never mentions them. A `.cmd` file in the kit folder that runs the import makes it a double-click.
+
 ## Installing, deleting and resetting
 
 - Friends with a `contacts/<id>/friend.json` (made by `tools\contact.py publish`) can be installed in first-time setup or in Settings → Friends, with a relationship you pick.
