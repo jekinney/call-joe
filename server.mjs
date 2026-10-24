@@ -937,14 +937,20 @@ async function supportText(sup, said) {
 async function aiDirect(c, ask) {
   const added = [];
   let photo = null;
-  if (/\b(pics?|pictures?|photos?|selfies?|images?|snap(shot)?)\b/i.test(ask)) {
+  let video = null;
+  if (/\b(videos?|clips?|tiktoks?|reels?|vids?)\b/i.test(ask)) {
+    video = await friendVideo(c, ask);
+    added.push({ id: `${Date.now()}-v`, from: "them", text: "", video, at: new Date().toISOString(), read: false });
+    writeTexts(c.id, [...readTexts(c.id), ...added]);
+  } else if (/\b(pics?|pictures?|photos?|selfies?|images?|snap(shot)?)\b/i.test(ask)) {
     photo = await friendPhoto(c, ask).catch((err) => (console.error("Photo failed:", err?.message ?? err), null));
     if (!photo) throw new Error("That picture couldn't be made right now. Try again in a bit, or describe it another way.");
     added.push({ id: `${Date.now()}-p`, from: "them", text: "", photo, at: new Date().toISOString(), read: false });
     writeTexts(c.id, [...readTexts(c.id), ...added]);
   }
-  const direct = photo
-    ? `(Your buddy asked you for a photo, and you just sent it. It shows: ${photo.desc}. Text one short line to go with it, in your own style. Don't ask about it, don't argue, don't say you'll call, and don't send another photo.)`
+  const sent = video ?? photo;
+  const direct = sent
+    ? `(Your buddy asked you for a ${video ? "video" : "photo"}, and you just sent it. It shows: ${sent.desc}. Text one short line to go with it, in your own style. Don't ask about it, don't argue, don't say you'll call, and don't send another photo.)`
     : `(A direction from your buddy, who set you up, given outside the conversation: "${ask}". Your next texts must be exactly that, in your own voice and within your rules, and nothing else: not a reaction to earlier texts, not a complaint that they haven't answered, not a question about it, and not an offer to call instead.)`;
   const out = await friendTexts(c, { direct, noPhoto: true }); // only the photo you asked for
   return { texts: [...added, ...out.texts], call: false, reaction: null };
@@ -1229,7 +1235,7 @@ const pictureModelReady = () => fs.existsSync(path.join(os.homedir(), ".cache", 
 const photoHabits = (c) => c.photoHabits ?? catalogEntry(c.id)?.photoHabits;
 // friend.json "looks": what the friend looks like (always with skin tone), so pictures of them, even just legs, match.
 const looksOf = (c) => c.looks ?? catalogEntry(c.id)?.looks;
-const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person. Your photos are part of your character, like your stories: your buddy set them up and knows they're made-up pictures, so sending them (even of yourself) is fine and nothing to apologize for. If they sincerely ask whether you're real, still answer honestly.`;
+const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person. Only when your buddy asks you for a video, send a short one: a line with only [video: what it shows and what happens]. Never send a video on your own. Your photos are part of your character, like your stories: your buddy set them up and knows they're made-up pictures, so sending them (even of yourself) is fine and nothing to apologize for. If they sincerely ask whether you're real, still answer honestly.`;
 
 // Claude, briefly, answering in JSON (null if it can't).
 // It sometimes thinks first and answers with no text, so it gets room for that and a second try.
@@ -1251,7 +1257,8 @@ async function askJson(content, model = NEWS_MODEL) {
 async function describePhoto(c, file) {
   const full = path.join(photoDir(c.id), file);
   if (fs.statSync(full).size > 4.5 * 1024 * 1024) return { desc: "", ok: false, note: "too big to look at (over 4.5 MB)" };
-  const hint = file.startsWith(`${MADE}/`) ? "" : ` Its file name is "${file.replace(PHOTO_EXT, "")}", which may name who or what is in it.`;
+  // Made pictures and video frames (in subfolders) have no meaningful name.
+  const hint = file.includes("/") ? "" : ` Its file name is "${file.replace(PHOTO_EXT, "")}", which may name who or what is in it.`;
   const about = catalogEntry(c.id)?.about ?? c.name;
   const out = await askJson([
     { type: "image", source: { type: "base64", media_type: photoMime(file), data: fs.readFileSync(full).toString("base64") } },
@@ -1417,6 +1424,109 @@ async function keepMadePhoto(c, file, logIt) {
   return entry;
 }
 
+// ---- Short videos (only when you ask) ----
+// "send me a video of the kids at practice": an 8 to 10 second vertical clip with sound, made by Google's Gemini Omni
+// Flash (about $0.10 a second, so about $1 a video) from the friend's album pictures and face, like their photos. A
+// frame from the middle is checked by Claude before it's sent (the same rules as photos) and used as its preview.
+// Saved in data/contacts/<id>/photos/videos/ (and copied to the Desktop's generated folder). Needs the Google AI key.
+const VIDEO_MODEL = "gemini-omni-1.1-flash";
+const videoDir = (id) => path.join(photoDir(id), "videos");
+function ffmpegExe() {
+  const bin = path.join(dir, "video", ".venv", "Lib", "site-packages", "imageio_ffmpeg", "binaries");
+  const exe = fs.existsSync(bin) && fs.readdirSync(bin).find((f) => /^ffmpeg.*\.exe$/i.test(f));
+  return exe ? path.join(bin, exe) : "ffmpeg";
+}
+// The first video anywhere in Google's answer: inline base64, or a file to download.
+function findVideo(v) {
+  if (!v || typeof v !== "object") return null;
+  const d = v.inlineData ?? v.inline_data;
+  if (d?.data && /video/.test(d.mimeType ?? d.mime_type ?? "")) return { data: d.data };
+  if (typeof v.data === "string" && v.data.length > 1000 && (v.type === "video" || /video/.test(v.mime_type ?? v.mimeType ?? ""))) return { data: v.data };
+  if (typeof v.uri === "string" && (v.type === "video" || /video/.test(v.mime_type ?? v.mimeType ?? ""))) return { uri: v.uri };
+  for (const x of Array.isArray(v) ? v : Object.values(v)) {
+    const found = findVideo(x);
+    if (found) return found;
+  }
+  return null;
+}
+async function geminiVideo(prompt, refs) {
+  let budget = 12 * 1024 * 1024;
+  const images = [];
+  for (const f of refs) {
+    const size = fs.statSync(f).size;
+    if (size > budget) continue;
+    budget -= size;
+    images.push({ type: "image", mime_type: photoMime(f), data: fs.readFileSync(f).toString("base64") });
+  }
+  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": config.googleKey },
+    signal: AbortSignal.timeout(10 * 60 * 1000),
+    body: JSON.stringify({ model: VIDEO_MODEL, input: [{ type: "text", text: prompt }, ...images], response_format: { type: "video", aspect_ratio: "9:16" }, store: false, background: false }),
+  });
+  const out = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`Google answered ${r.status}: ${String(out?.error?.message ?? JSON.stringify(out)).slice(0, 300)}`);
+  const found = findVideo(out);
+  if (!found) throw new Error(`Google sent no video: ${JSON.stringify(out).slice(0, 300)}`);
+  if (found.data) return Buffer.from(found.data, "base64");
+  // A file link: wait until it's ready, then download it.
+  for (let i = 0; i < 60; i++) {
+    const d = await fetch(`${found.uri}${found.uri.includes("?") ? "&" : "?"}alt=media`, { headers: { "x-goog-api-key": config.googleKey } });
+    if (d.ok && /video|octet/.test(d.headers.get("content-type") ?? "")) return Buffer.from(await d.arrayBuffer());
+    await new Promise((res) => setTimeout(res, 5000));
+  }
+  throw new Error("The video never finished downloading.");
+}
+async function friendVideo(c, want) {
+  if (!config.googleKey || config.airplane) throw new Error("Videos need a Google AI key (Settings → Account).");
+  const album = (await syncAlbum(c)).filter((p) => p.ok);
+  const face = faceFile(c.settings.face);
+  let persona = "";
+  try { persona = fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8").split(PHONE_RULES_HEADING)[0].slice(0, 2500); } catch {}
+  const first = firstName(c);
+  const plan = await askJson([{ type: "text", text: `${persona || c.name}
+
+${c.name} wants to send a short phone video they just shot: "${want}".
+${looksOf(c) ? `What ${first} looks like: ${looksOf(c)}.\n` : ""}Pictures in their camera roll:
+${album.map((p, i) => `${i + 1}. ${p.desc}`).join("\n") || "(none)"}
+${madeLessons(c.id)}${PHOTO_RULES}
+Write a prompt for a video model that is also given the camera-roll pictures you pick (and their face picture, if their face shows) as references. Say to keep everyone looking exactly like the references. Then describe an 8 to 10 second vertical smartphone video, handheld, natural light, realistic, with natural sound (voices, the place), and what happens in it, second by second if it helps. Anyone in it is described concretely (age, skin tone, hair, clothes; ${first} exactly as described above). Pick up to 3 camera-roll pictures showing the same people, place or things. If it can't be made within the rules, give an empty prompt.
+Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if ${first}'s face shows, otherwise false}` }], MEMORY_MODEL);
+  if (!plan?.prompt) throw new Error("That video can't be made.");
+  const refs = (plan.refs ?? []).map((n) => album[n - 1]).filter(Boolean).map((p) => path.join(photoDir(c.id), p.file));
+  if (plan.self && face) refs.unshift(face);
+  console.log(`Making a video for ${c.name}: ${plan.prompt}`);
+  const video = await geminiVideo(plan.prompt, refs.slice(0, 4));
+  fs.mkdirSync(videoDir(c.id), { recursive: true });
+  const name = `${Date.now()}`;
+  const file = path.join(videoDir(c.id), `${name}.mp4`);
+  fs.writeFileSync(file, video);
+  // Google's file is large (about 13 MB for 8 seconds); a phone-quality copy is a fraction of that.
+  try {
+    const small = path.join(videoDir(c.id), `${name}-small.mp4`);
+    execFileSync(ffmpegExe(), ["-y", "-loglevel", "error", "-i", file, "-c:v", "libx264", "-crf", "26", "-preset", "veryfast", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", small], { windowsHide: true });
+    if (fileSize(small) > 0 && fileSize(small) < fileSize(file)) fs.renameSync(small, file);
+    else fs.rmSync(small, { force: true });
+  } catch (err) {
+    console.error("Shrinking the video failed:", err?.message ?? err);
+  }
+  // A frame from the middle: Claude checks it, and it's the preview in the conversation.
+  const poster = path.join(videoDir(c.id), `${name}.jpg`);
+  try { execFileSync(ffmpegExe(), ["-y", "-loglevel", "error", "-ss", "4", "-i", file, "-frames:v", "1", "-q:v", "3", poster], { windowsHide: true }); } catch {}
+  const seen = fs.existsSync(poster) ? await describePhoto(c, `videos/${name}.jpg`) : null;
+  if (!seen?.ok) {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(poster, { force: true });
+    throw new Error("That video didn't pass the check.");
+  }
+  writeJson(madeLogFile(c.id), [...readMadeLog(c.id), { file: `videos/${name}.mp4`, want, prompt: plan.prompt, guides: refs.map((f) => path.basename(f)), maker: VIDEO_MODEL, at: new Date().toISOString(), kept: true, desc: seen.desc, video: true }]);
+  try {
+    const desk = desktopFolder(c);
+    if (desk) { fs.mkdirSync(desk, { recursive: true }); fs.copyFileSync(file, path.join(desk, `${name}.mp4`)); }
+  } catch {}
+  return { url: `/api/photos/${c.id}/${encodeURIComponent(`videos/${name}.mp4`)}`, poster: `/api/photos/${c.id}/${encodeURIComponent(`videos/${name}.jpg`)}`, desc: seen.desc };
+}
+
 // The picture a friend texts for [photo: ...]: the best album match, or a new one. null if neither works.
 async function friendPhoto(c, want) {
   const album = (await syncAlbum(c)).filter((p) => p.ok);
@@ -1438,7 +1548,7 @@ function textTurns(list, extra) {
   const turns = [];
   for (const t of list.slice(-40)) {
     const role = t.from === "me" ? "user" : "assistant";
-    const line = t.vm ? `(You missed their call. They left you a voicemail:) ${t.text}` : t.photo ? `[photo: ${t.photo.desc}]` : t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
+    const line = t.vm ? `(You missed their call. They left you a voicemail:) ${t.text}` : t.video ? `[video: ${t.video.desc}]` : t.photo ? `[photo: ${t.photo.desc}]` : t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
     if (turns.at(-1)?.role === role) turns.at(-1).content += `\n${line}`;
     else turns.push({ role, content: line });
   }
@@ -1497,7 +1607,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false, l
     : wantsCall
       ? `(This text conversation has gone on a while, and you'd rather just talk. Text that you're calling, in your own style, and end with ${CALL_MARK}.)`
       : null);
-  const noPhotoNote = noPhoto ? "(You can't send a photo right now. Text without one, and don't say you're sending or sent one.)" : null;
+  const noPhotoNote = noPhoto ? "(You can't send a photo or video right now. Text without one, and don't say you're sending or sent one.)" : null;
   const waited = late?.since ? Date.now() - Date.parse(late.since) : 0;
   const ago = waited > 90 * 60 * 1000 ? `${Math.round(waited / 3600000)} hours` : `${Math.round(waited / 60000)} minutes`;
   const lateNote = !opener && waited > 20 * 60 * 1000
@@ -1534,7 +1644,15 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false, l
       if (words) added.push({ ...entry, id: `${now + i}-t`, text: words });
       Object.assign(entry, { text: "", photo });
     }
-    if (!entry.text && !entry.photo && !part.match(/^\[gif:/i)) continue;
+    if (!entry.text && !entry.photo && !entry.video && !part.match(/^\[gif:/i)) continue;
+    const vid = part.match(/\[video:\s*([^\]]+)\]/i);
+    if (vid) {
+      const video = noPhoto ? null : await friendVideo(c, vid[1].trim()).catch((err) => (console.error("Video failed:", err?.message ?? err), null));
+      if (!video) return friendTexts(c, { opener, about, late, direct, noPhoto: true });
+      const words = part.replace(/\[video:[^\]]*\]/gi, "").trim();
+      if (words) added.push({ ...entry, id: `${now + i}-t`, text: words });
+      Object.assign(entry, { text: "", video });
+    }
     const g = part.match(/^\[gif:\s*([^\]]+)\]$/i);
     if (g) {
       const found = await searchGifs(g[1].trim(), 5).catch(() => []);
@@ -1562,7 +1680,7 @@ function takeUnrememberedTexts(c) {
   for (const t of fresh) t.remembered = true;
   writeTexts(c.id, list);
   const first = firstName(c);
-  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.vm ? `(voicemail) ${t.text}` : t.photo ? `(photo: ${t.photo.desc})` : t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
+  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.vm ? `(voicemail) ${t.text}` : t.video ? `(video: ${t.video.desc})` : t.photo ? `(photo: ${t.photo.desc})` : t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
 }
 async function rememberTexts(c) {
   const transcript = takeUnrememberedTexts(c);
@@ -2640,7 +2758,7 @@ const server = http.createServer(async (req, res) => {
       const last = list.at(-1);
       return last && {
         contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
-        last: last.photo ? "📷 Photo" : last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
+        last: last.video ? "🎬 Video" : last.photo ? "📷 Photo" : last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
       };
     }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at))]);
   }
@@ -2652,11 +2770,11 @@ const server = http.createServer(async (req, res) => {
   const photoReq = url.pathname.match(/^\/api\/photos\/([a-z0-9-]+)\/([^/]+)$/);
   if (req.method === "GET" && photoReq) {
     const file = decodeURIComponent(photoReq[2]);
-    const name = file.startsWith(`${MADE}/`) ? file.slice(MADE.length + 1) : file;
-    if (!validId(photoReq[1]) || !name || path.basename(name) !== name || !PHOTO_EXT.test(name)) return json(res, 400, { error: "Bad photo." });
+    const name = file.replace(/^(made|videos)\//, "");
+    if (!validId(photoReq[1]) || !name || path.basename(name) !== name || !(PHOTO_EXT.test(name) || /\.mp4$/i.test(name))) return json(res, 400, { error: "Bad photo." });
     const full = path.join(photoDir(photoReq[1]), file);
     if (!fs.existsSync(full)) return json(res, 404, { error: "That photo is gone." });
-    res.writeHead(200, { "Content-Type": photoMime(file), "Cache-Control": "max-age=86400" });
+    res.writeHead(200, { "Content-Type": /\.mp4$/i.test(file) ? "video/mp4" : photoMime(file), "Cache-Control": "max-age=86400" });
     return fs.createReadStream(full).pipe(res);
   }
   const albumReq = url.pathname.match(/^\/api\/album\/([a-z0-9-]+)$/);

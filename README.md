@@ -39,6 +39,8 @@ Your own hours (text Support `/quiet 10pm-7am`, `/work weekdays 9-5`; quiet defa
 
 In a friend's own conversation, a text starting with `/ai` tells them what to do, outside the conversation: `/ai send a pic of you at lunch`, `/ai text me a goodnight message`. They do it right away, in character and within their rules, without arguing or calling instead. The `/ai` text isn't shown or remembered; what they send is.
 
+**Short videos.** Ask a friend for one ("send me a video of the kids at practice", or `/ai send me a video of your lunch`) and they send an 8 to 10 second vertical clip with sound, made by Google's Gemini Omni Flash from their album pictures and face (about $1 a video, with the Google AI key). Friends never send videos on their own. A frame from the middle is checked by Claude before it's sent. Videos are saved in `photos/videos/` (compressed to about 3 MB) and copied to the Desktop's `generated` folder.
+
 **Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. And if there's no Anthropic key, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as an Anthropic key is saved.
 
 ## The phone

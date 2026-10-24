@@ -3017,8 +3017,19 @@ function addBubble(from, text, at = new Date().toISOString(), extra = {}) {
   lastBubbleAt = time;
   const b = document.createElement("div");
   const pic = extra.photo ?? extra.gif;
-  b.className = `bubble ${from}${pic ? " gif" : ""}`;
-  if (pic) {
+  b.className = `bubble ${from}${pic || extra.video ? " gif" : ""}`;
+  if (extra.video) {
+    // A short video: tap to play, with sound; it has its own full-screen button.
+    const v = document.createElement("video");
+    v.src = extra.video.url;
+    v.poster = extra.video.poster ?? "";
+    v.controls = true;
+    v.playsInline = true;
+    v.preload = "metadata";
+    v.style.cssText = "display:block; max-width:220px; border-radius:16px; background:#000";
+    v.onloadedmetadata = () => ($("bubbles").scrollTop = $("bubbles").scrollHeight);
+    b.append(v);
+  } else if (pic) {
     const img = document.createElement("img");
     img.src = pic.url;
     img.alt = extra.photo ? extra.photo.desc : extra.gif.title;
