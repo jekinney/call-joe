@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createKnowledge } from "./knowledge.mjs";
 import { createGeminiClient } from "./gemini.mjs";
+import { stateAt, describeState, replyDelayMs, answersCall, canReachOut, cleanSchedule, scheduleText } from "./availability.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 // CALLJOE_DATA and CALLJOE_PORT let a test copy run beside the real one without touching your data.
@@ -342,6 +343,7 @@ function supportPrompt(c) {
     `# The caller's profile (shared by every agent)\n${profileText()}`,
     `# Their friends in the app\n${friends || "(None installed.)"}`,
     read(supportFile("help.md")),
+    `# Texting\nYour caller may text you in Messages ("Support"). Commands start with /, and /help lists them:\n${SUPPORT_HELP}`,
     read(supportNotesFile) && `# Notes from earlier support calls\n${read(supportNotesFile)}`,
     ENDING_THE_CALL,
     `# Right now\nIt's ${now}. Airplane mode is ${config.airplane ? "on" : "off"}.`,
@@ -487,6 +489,7 @@ async function systemPrompt(c) {
     ...(persona ? [persona.trimEnd()] : [`${src.character}\n\n${src.rules}`.trim(), src.role]),
     aboutBuddy(c),
     treatment(c),
+    houseRules(),
     languageRules(c),
     flirtingRules(c),
     speaksRules(c),
@@ -496,8 +499,400 @@ async function systemPrompt(c) {
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
     `# Memory\n${mem}${connectionNews(c)}${voicemailsLeft(c)}${recentTexts(c)}`,
     await knowledge.briefing(c, config.user?.home),
-    `# Right now\nIt's ${now} where you both live. ${last}`,
+    `# Right now\nIt's ${now} where you both live. ${last} Right now you're ${nowLine(c)}${nowFor(c).what === "free" ? "" : ", so keep it in mind (on a break, in a hurry, just woke up)"}.`,
   ].filter(Boolean).join("\n\n");
+}
+
+// ---- When friends are free (availability.mjs) ----
+// Each friend has a day: asleep, at work, lunch, practices... (contact.json "schedule", drafted once by Claude from
+// their persona; change it by texting Support "/Elena schedule ..."). It decides whether they pick up, how long a text
+// reply takes (your texts wait in data/contacts/<id>/pending.json until then), and when they reach out. Your own
+// hours (config.user.hours, "/quiet" and "/work") keep them from calling at bad times, and data/activity.json learns
+// which hours you usually text and answer, so they reach out more then.
+const scheduleOf = (c) => c.schedule ?? catalogEntry(c.id)?.schedule ?? null;
+const nowFor = (c) => stateAt(scheduleOf(c));
+const nowLine = (c) => describeState(nowFor(c), scheduleOf(c)?.tz);
+
+async function draftSchedule(c) {
+  let persona = "";
+  try { persona = fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8").split(PHONE_RULES_HEADING)[0].slice(0, 4000); } catch {}
+  const out = await askJson([{ type: "text", text: `${persona || c.name}
+
+Write ${c.name}'s typical weekly routine as time blocks, for a phone app that decides when they can answer calls and texts. Include sleep, work or school hours and what that job allows (a nurse or teacher can't use the phone on shift, an office worker can text but not take calls, a stay-at-home parent is busy at school pickup and practices), lunch, regular commitments (church, gym, kids' activities), and anything from the description above. 24-hour times. A later block overrides an earlier one where they overlap, so list lunch after work.
+Reply with only JSON: {"textStyle": "fast" | "normal" | "slow" (how quickly they usually text back), "blocks": [{"what": "asleep", "days": "daily" | "weekdays" | "weekends" | "mon,wed", "from": "22:30", "to": "06:00", "calls": "yes" | "rare" | "no", "texts": "fast" | "normal" | "slow" | "none"}]}` }], MEMORY_MODEL);
+  return cleanSchedule(out);
+}
+// Friends without a schedule get one drafted (at startup and hourly, so newly installed friends get one too).
+async function ensureSchedules() {
+  if (!getClient()) return;
+  for (const c of listContacts()) {
+    if (scheduleOf(c)) continue;
+    const schedule = await draftSchedule(c).catch(() => null);
+    if (!schedule?.blocks.length) continue;
+    const fresh = loadContact(c.id);
+    fresh.schedule = schedule;
+    saveContact(fresh);
+    console.log(`Drafted ${c.name}'s schedule`);
+  }
+}
+setTimeout(() => ensureSchedules().catch(() => {}), 8000);
+setInterval(() => ensureSchedules().catch(() => {}), 60 * 60 * 1000);
+
+async function reviseSchedule(c, change) {
+  const out = await askJson([{ type: "text", text: `${c.name}'s current weekly routine (JSON):
+${JSON.stringify(scheduleOf(c) ?? { textStyle: "normal", blocks: [] })}
+
+The change: ${change}
+
+Apply the change, keep everything else, same JSON shape (a later block overrides an earlier one). Reply with only the JSON.` }], MEMORY_MODEL);
+  return cleanSchedule(out);
+}
+
+// Your hours. Defaults to quiet 9 PM to 8 AM, like before.
+function userSchedule() {
+  const h = config.user?.hours ?? {};
+  return { blocks: [
+    ...(h.work?.from && h.work?.to ? [{ what: "work", days: h.work.days ?? "weekdays", from: h.work.from, to: h.work.to, calls: "no", texts: "normal" }] : []),
+    { what: "quiet", days: "daily", from: h.quiet?.from ?? "21:00", to: h.quiet?.to ?? "08:00", calls: "no", texts: "none" },
+  ] };
+}
+const userBusy = () => { const st = stateAt(userSchedule()); return st.what === "free" ? null : st.what; };
+
+// Which hours you're usually around (texting, calling, answering), so friends reach out more then.
+const activityFile = path.join(dataDir, "activity.json");
+function noteActivity() {
+  const a = readJson(activityFile, { hours: Array(24).fill(0) });
+  a.hours[new Date().getHours()] += 1;
+  if (a.hours.reduce((x, y) => x + y, 0) > 600) a.hours = a.hours.map((n) => n / 2); // old habits fade
+  writeJson(activityFile, a);
+}
+function activityFactor(hour = new Date().getHours()) {
+  const h = readJson(activityFile, { hours: Array(24).fill(0) }).hours;
+  const total = h.reduce((x, y) => x + y, 0);
+  if (total < 30) return 1; // not enough to go on yet
+  const active = h.filter((n) => n > 0).length || 1;
+  return Math.min(2, Math.max(0.3, h[hour] / (total / active)));
+}
+
+// Replies and follow-ups waiting for their time. One per friend: { kind: "reply" | "followup", dueAt, since, what, about }.
+const pendingFile = (id) => contactPath(id, "pending.json");
+const readPending = (id) => readJson(pendingFile(id), null);
+function setPending(c, entry) {
+  const cur = readPending(c.id);
+  // A reply already on its way stays as it is; they'll answer everything at once.
+  if (cur?.kind === "reply" && entry.kind === "reply") return cur;
+  const next = cur ? { ...entry, kind: cur.kind === "reply" ? "reply" : entry.kind, dueAt: Math.min(cur.dueAt, entry.dueAt) } : entry;
+  writeJson(pendingFile(c.id), next);
+  return next;
+}
+// What the page picks up: new texts that arrived on their own, and friends calling back. Polled by /api/updates.
+const updates = [];
+let updateSeq = 0;
+const pushUpdate = (u) => { updates.push({ seq: ++updateSeq, ...u }); if (updates.length > 200) updates.shift(); };
+const delivering = new Set();
+setInterval(async () => {
+  if (Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
+  for (const c of listContacts()) {
+    // A pause from Support ("/Elena pause 3d") ends by itself.
+    if (c.pausedUntil && Date.parse(c.pausedUntil) <= Date.now()) {
+      const since = c.inactiveSince;
+      c.active = true;
+      delete c.pausedUntil;
+      delete c.inactiveSince;
+      saveContact(c);
+      if (since) catchUp(loadContact(c.id), since).catch(() => {});
+      addNotice(`${firstName(c)} is back on.`, c.id);
+      continue;
+    }
+    const p = readPending(c.id);
+    if (!p || p.dueAt > Date.now() || delivering.has(c.id) || c.active === false) continue;
+    delivering.add(c.id);
+    fs.rmSync(pendingFile(c.id), { force: true });
+    try {
+      const out = await friendTexts(c, p.kind === "reply" ? { late: p } : { opener: true, about: p.about, late: p });
+      pushUpdate({ type: "texts", contact: c.id, texts: out.texts });
+      if (out.call) pushUpdate({ type: "call", contact: c.id });
+    } catch (err) {
+      console.error(`${c.name}'s reply failed:`, err?.message ?? err);
+    } finally {
+      delivering.delete(c.id);
+    }
+  }
+}, 3000);
+
+// Rules you set for everyone (Support: "/rule ..."), in data/rules.md, one per line.
+const houseRulesFile = path.join(dataDir, "rules.md");
+const readHouseRules = () => { try { return fs.readFileSync(houseRulesFile, "utf8").split("\n").map((l) => l.trim()).filter(Boolean); } catch { return []; } };
+const writeHouseRules = (list) => fs.writeFileSync(houseRulesFile, list.join("\n") + (list.length ? "\n" : ""));
+const houseRules = () => { const r = readHouseRules(); return r.length ? `# Your buddy's rules for everyone\nFollow these always:\n${r.map((x) => `- ${x.replace(/^[-*]\s*/, "")}`).join("\n")}` : ""; };
+
+// ---- Support by text ----
+// One support agent shows up in Messages as "Support". Plain texts are questions about the app (answered right away).
+// Texts starting with / are commands (SUPPORT_HELP). Anything that rewrites a friend (their life story, schedule,
+// memory) is shown first and applied on /yes. Every change is logged in data/changes.json and /undo reverses the last.
+const supportAgent = () => listSupport().sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
+function supportThread() {
+  const sup = supportAgent();
+  if (!sup) return [];
+  const list = shownTexts(sup.id);
+  const last = list.at(-1);
+  return [{
+    contact: sup.id, name: "Support", face: null, active: true, support: true,
+    last: last ? last.text : "Text /help to see what I can change for you.", lastFrom: last?.from ?? "them",
+    at: last?.at ?? new Date().toISOString(), unread: list.filter((t) => t.from === "them" && !t.read).length,
+  }];
+}
+const SUPPORT_HELP = `Commands (anything else, just ask me):
+/Elena got divorced: a change in a friend's life (I'll show it first)
+/Elena show: their summary, schedule, rules, settings
+/Elena schedule works nights now
+/Elena rule never mention her ex
+/Elena forget the cornbread thing
+/Elena pause 3d, /Elena resume
+/Elena calls daily, /Elena texts often
+/Elena photo at the beach
+/rule no one texts before 8am (everyone)
+/rules, /rules delete 2
+/me new job at Ford, 7 to 3
+/quiet 10pm-7am, /work weekdays 9-5 (or /work off)
+/who: who's free right now
+/log, /undo
+/yes, /no: answer a change I showed you`;
+
+const changesFile = path.join(dataDir, "changes.json");
+function logChange(entry) {
+  writeJson(changesFile, [...readJson(changesFile, []), { at: new Date().toISOString(), ...entry }].slice(-100));
+}
+function undoLast() {
+  const list = readJson(changesFile, []);
+  const last = list.findLast((e) => !e.undone && e.undo);
+  if (!last) return "Nothing to undo.";
+  const u = last.undo;
+  if (u.type === "persona") {
+    fs.writeFileSync(path.join(personasDir, u.id, "persona.md"), u.before);
+    const c = loadContact(u.id);
+    if (c && typeof u.notesBefore === "string") { c.memory.notes = u.notesBefore; writeJson(contactPath(c.id, "memory.json"), c.memory); }
+  } else if (u.type === "rules") writeHouseRules(u.before);
+  else if (u.type === "profile") { config.user = u.before; writeJson(configFile, config); }
+  else if (["schedule", "settings", "memory"].includes(u.type)) {
+    const c = loadContact(u.id);
+    if (!c) return "That friend is gone.";
+    if (u.type === "schedule") { if (u.before) c.schedule = u.before; else delete c.schedule; saveContact(c); }
+    if (u.type === "settings") { Object.assign(c, u.before); for (const k of Object.keys(u.before)) if (u.before[k] === undefined) delete c[k]; saveContact(c); }
+    if (u.type === "memory") { c.memory[u.field] = u.before; writeJson(contactPath(c.id, "memory.json"), c.memory); }
+  } else return "I can't undo that one.";
+  last.undone = new Date().toISOString();
+  writeJson(changesFile, list);
+  return `Undone: ${last.what}`;
+}
+
+let supportProposal = null; // a change waiting for /yes: { what, apply }
+const propose = (what, preview, apply) => { supportProposal = { what, apply }; return `${preview}\n\nReply /yes to make this change, or /no.`; };
+
+// A friend's life update ("got divorced") rewrites the character part of their persona (the phone rules stay as they
+// are), archives the old one, and adds a dated line to their notes so they know it's recent. Their identity is rebuilt
+// at the next call or text.
+async function proposeLifeUpdate(c, update) {
+  const file = path.join(personasDir, c.id, "persona.md");
+  const persona = fs.readFileSync(file, "utf8");
+  const i = persona.indexOf(PHONE_RULES_HEADING);
+  const character = (i >= 0 ? persona.slice(0, i) : persona).trimEnd();
+  const msg = await getClient().messages.create({
+    model: MEMORY_MODEL,
+    max_tokens: 8000,
+    output_config: { effort: "low" },
+    system: `You update an AI friend's character description after a change in their life. Change only what the update affects (and what follows from it: names, living situation, daily life), keep everything else word for word, same Markdown layout. Then summarize what you changed in 1 to 3 short lines. Answer with JSON only: {"persona": "...", "summary": "..."}`,
+    messages: [{ role: "user", content: `Character description of ${c.name}:\n${character}\n\nThe update: ${update}` }],
+  });
+  const out = JSON.parse(textOf(msg.content).replace(/^```(json)?|```$/gm, "").trim());
+  if (!out?.persona?.startsWith("#")) throw new Error("I couldn't rewrite that. Try saying it another way.");
+  const first = firstName(c);
+  return propose(`${first}: ${update}`, `${first}, updated:\n${out.summary}`, () => {
+    const fresh = loadContact(c.id);
+    const notesBefore = fresh.memory.notes ?? "";
+    fs.mkdirSync(contactPath(c.id, "persona-history"), { recursive: true });
+    fs.writeFileSync(contactPath(c.id, "persona-history", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`), persona);
+    fs.writeFileSync(file, `${out.persona.trim()}\n\n${i >= 0 ? persona.slice(i) : ""}`.trimEnd() + "\n");
+    const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    fresh.memory.notes = `${notesBefore}\n- Recent news in your own life (${today}): ${update}.`.trim();
+    writeJson(contactPath(c.id, "memory.json"), fresh.memory);
+    logChange({ what: `${first}: ${update}`, undo: { type: "persona", id: c.id, before: persona, notesBefore } });
+    // A private friend's Desktop kit (with the persona that "Recreate" uses) gets the update too.
+    const kit = desktopFolder(fresh) && path.join(path.dirname(desktopFolder(fresh)), "persona.md");
+    if (kit && fs.existsSync(kit)) fs.writeFileSync(kit, fs.readFileSync(file, "utf8"));
+    return `Done. ${first} will be living with it from the next call or text.`;
+  });
+}
+
+function friendSummary(c) {
+  const first = firstName(c);
+  return [
+    `${c.name}: your ${shownRole(c.role ?? "friend").replace("-", " ")}${c.active === false ? " (turned off)" : ""}${c.pausedUntil ? `, paused until ${new Date(c.pausedUntil).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : ""}`,
+    `Calls you: ${callsYouOf(c)}. Texts you: ${textsYouOf(c)}.`,
+    `Right now ${first} is ${nowLine(c)}.`,
+    `Schedule:\n${scheduleText(scheduleOf(c))}`,
+    `Rules:\n${c.memory.rules || "(none)"}`,
+  ].join("\n");
+}
+
+const parseDuration = (t) => {
+  const m = String(t ?? "").match(/(\d+)\s*(m|min|h|hr|hour|d|day|w|week)?/i);
+  if (!m) return null;
+  const unit = (m[2] ?? "d").toLowerCase()[0];
+  return Number(m[1]) * { m: 60e3, h: 3600e3, d: 864e5, w: 7 * 864e5 }[unit];
+};
+
+async function friendCommand(c, rest) {
+  const first = firstName(c);
+  const [w, ...more] = rest.split(/\s+/);
+  const word = (w ?? "").toLowerCase();
+  const arg = more.join(" ").trim();
+  if (!word || word === "show") return friendSummary(c);
+  if (word === "schedule") {
+    if (!arg) return `${first}'s schedule:\n${scheduleText(scheduleOf(c))}`;
+    const schedule = await reviseSchedule(c, arg);
+    if (!schedule?.blocks.length) return "I couldn't work that schedule out. Try saying it another way.";
+    return propose(`${first}'s schedule: ${arg}`, `${first}'s new schedule:\n${scheduleText(schedule)}`, () => {
+      const fresh = loadContact(c.id);
+      logChange({ what: `${first}'s schedule: ${arg}`, undo: { type: "schedule", id: c.id, before: fresh.schedule ?? null } });
+      fresh.schedule = schedule;
+      saveContact(fresh);
+      return `Done. ${first}'s schedule is updated.`;
+    });
+  }
+  if (word === "rule") {
+    if (!arg) return `What rule? Like: /${first} rule never mention her ex`;
+    const before = c.memory.rules ?? "";
+    c.memory.rules = `${before}\n- ${arg.replace(/^[-*]\s*/, "")}`.trim();
+    writeJson(contactPath(c.id, "memory.json"), c.memory);
+    logChange({ what: `${first} rule: ${arg}`, undo: { type: "memory", id: c.id, field: "rules", before } });
+    return `Done. ${first} will follow that from the next call or text.`;
+  }
+  if (word === "forget") {
+    if (!arg) return `Forget what? Like: /${first} forget the cornbread thing`;
+    const before = c.memory.notes ?? "";
+    const out = await askJson([{ type: "text", text: `Notes:\n${before}\n\nRemove everything about: ${arg}. Keep all other lines exactly. Reply with only JSON: {"notes": "the notes without those lines", "removed": "the removed lines"}` }]);
+    if (!out?.removed?.trim()) return `I didn't find anything about that in ${first}'s notes.`;
+    return propose(`${first} forgets: ${arg}`, `${first} will forget:\n${out.removed}`, () => {
+      const fresh = loadContact(c.id);
+      logChange({ what: `${first} forgets: ${arg}`, undo: { type: "memory", id: c.id, field: "notes", before: fresh.memory.notes ?? "" } });
+      fresh.memory.notes = out.notes;
+      writeJson(contactPath(c.id, "memory.json"), fresh.memory);
+      return `Done. ${first} won't remember that.`;
+    });
+  }
+  if (word === "pause") {
+    const ms = parseDuration(arg || "1d");
+    if (!ms) return `For how long? Like: /${first} pause 3d`;
+    logChange({ what: `${first} paused for ${arg || "1d"}`, undo: { type: "settings", id: c.id, before: { active: c.active, pausedUntil: c.pausedUntil, inactiveSince: c.inactiveSince } } });
+    c.active = false;
+    c.inactiveSince ??= new Date().toISOString();
+    c.pausedUntil = new Date(Date.now() + ms).toISOString();
+    saveContact(c);
+    return `${first} is paused until ${new Date(c.pausedUntil).toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" })}. They'll catch up when they're back.`;
+  }
+  if (word === "resume") {
+    if (c.active !== false) return `${first} is already on.`;
+    const since = c.inactiveSince;
+    logChange({ what: `${first} back on`, undo: { type: "settings", id: c.id, before: { active: false, pausedUntil: c.pausedUntil, inactiveSince: c.inactiveSince } } });
+    c.active = true;
+    delete c.pausedUntil;
+    delete c.inactiveSince;
+    saveContact(c);
+    if (since) catchUp(loadContact(c.id), since).catch(() => {});
+    return `${first} is back on and catching up.`;
+  }
+  if (word === "calls" || word === "texts") {
+    const choices = word === "calls" ? CALLS_YOU : TEXTS_YOU;
+    if (!choices.includes(arg)) return `Pick one: ${choices.join(", ")}`;
+    const key = word === "calls" ? "callsYou" : "textsYou";
+    logChange({ what: `${first} ${word} ${arg}`, undo: { type: "settings", id: c.id, before: { settings: { ...c.settings } } } });
+    c.settings[key] = arg;
+    saveContact(c);
+    return `Done. ${first} ${word} you: ${arg}.`;
+  }
+  if (word === "photo") {
+    if (!arg) return `A photo of what? Like: /${first} photo at the beach`;
+    setPending(c, { kind: "followup", dueAt: Date.now() + (20 + Math.random() * 60) * 1000, since: new Date().toISOString(), what: "free", about: `you're sending your buddy a photo: ${arg}` });
+    return `Okay, ${first} will send it soon.`;
+  }
+  return proposeLifeUpdate(c, rest);
+}
+
+async function supportCommand(text) {
+  const [w, ...more] = text.slice(1).trim().split(/\s+/);
+  const word = (w ?? "").toLowerCase();
+  const rest = more.join(" ").trim();
+  if (word === "help" || !word) return SUPPORT_HELP;
+  if (word === "yes") {
+    if (!supportProposal) return "There's nothing waiting for a yes.";
+    const p = supportProposal;
+    supportProposal = null;
+    return p.apply();
+  }
+  if (word === "no") { supportProposal = null; return "Okay, I left it as it was."; }
+  if (word === "undo") return undoLast();
+  if (word === "log") {
+    const list = readJson(changesFile, []).slice(-10);
+    return list.length ? list.map((e) => `${new Date(e.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}: ${e.what}${e.undone ? " (undone)" : ""}`).join("\n") : "No changes yet.";
+  }
+  if (word === "rule") {
+    if (!rest) return "What rule? Like: /rule no one texts before 8am";
+    const before = readHouseRules();
+    writeHouseRules([...before, rest]);
+    logChange({ what: `Rule for everyone: ${rest}`, undo: { type: "rules", before } });
+    return "Done. Everyone follows it from their next call or text.";
+  }
+  if (word === "rules") {
+    const list = readHouseRules();
+    const del = rest.match(/^(delete|remove)\s+(\d+)/i);
+    if (del) {
+      const n = Number(del[2]);
+      if (!list[n - 1]) return "There's no rule with that number. Text /rules to see them.";
+      logChange({ what: `Removed rule: ${list[n - 1]}`, undo: { type: "rules", before: list } });
+      writeHouseRules(list.filter((_, i) => i !== n - 1));
+      return `Removed: ${list[n - 1]}`;
+    }
+    return list.length ? list.map((r, i) => `${i + 1}. ${r}`).join("\n") : "No rules for everyone yet. Add one with /rule.";
+  }
+  if (word === "me") {
+    if (!rest) return "What changed? Like: /me new job at Ford, 7 to 3";
+    const before = JSON.parse(JSON.stringify(config.user ?? {}));
+    await afterSupportCall(`Caller: ${rest}\nAgent: Got it, I'll update your profile.`);
+    logChange({ what: `About you: ${rest}`, undo: { type: "profile", before } });
+    return "Done. Your friends will hear about it naturally.";
+  }
+  if (word === "quiet" || word === "work") {
+    const off = /^off$/i.test(rest);
+    const out = off ? null : await askJson([{ type: "text", text: `Turn this into hours: "${rest}". Reply with only JSON: {"days": "daily" | "weekdays" | "weekends" | "mon,tue,...", "from": "HH:MM" (24-hour), "to": "HH:MM"}` }]);
+    if (!off && !/^\d{2}:\d{2}$/.test(out?.from ?? "")) return `I couldn't read that. Like: /${word} ${word === "quiet" ? "10pm-7am" : "weekdays 9-5"}`;
+    const before = JSON.parse(JSON.stringify(config.user ?? {}));
+    config.user = config.user ?? {};
+    config.user.hours = config.user.hours ?? {};
+    if (off) delete config.user.hours[word];
+    else config.user.hours[word] = word === "quiet" ? { from: out.from, to: out.to } : { days: out.days ?? "weekdays", from: out.from, to: out.to };
+    writeJson(configFile, config);
+    logChange({ what: `Your ${word} hours: ${rest}`, undo: { type: "profile", before } });
+    return off ? `Your ${word} hours are off.` : word === "quiet"
+      ? `Quiet hours: ${out.from} to ${out.to}. No calls or texts from friends then.`
+      : `Work hours: ${out.days} ${out.from} to ${out.to}. Friends won't call then; texts are fine.`;
+  }
+  if (word === "who") return listContacts().filter((c) => c.active !== false).map((c) => `${firstName(c)}: ${nowLine(c)}`).join("\n") || "No friends installed.";
+  const c = listContacts().find((f) => firstName(f).toLowerCase() === word || f.id === word);
+  if (c) return friendCommand(c, rest);
+  return `I don't know /${w}. Text /help to see the commands.`;
+}
+
+// A text to Support: a command, or a question answered by the agent right away.
+async function supportText(sup, said) {
+  let reply;
+  if (said.startsWith("/")) {
+    try { reply = await supportCommand(said); } catch (err) { reply = `That didn't work: ${err?.message ?? err}`; }
+    const entry = { id: `${Date.now()}`, from: "them", text: reply, at: new Date().toISOString(), read: false };
+    writeTexts(sup.id, [...readTexts(sup.id), entry]);
+    return { texts: [entry], call: false, reaction: null };
+  }
+  return friendTexts(sup, {});
 }
 
 // ---- Text messages ----
@@ -595,6 +990,36 @@ const writeAlbum = (id, list) => writeJson(path.join(photoDir(id), "index.json")
 const MADE = "made"; // subfolder for pictures made for the friend (auto-generated), "made/<name>" in the album
 const madeLogFile = (id) => path.join(photoDir(id), MADE, "prompts.json");
 const readMadeLog = (id) => readJson(madeLogFile(id), []);
+// Made pictures and their prompt log are also copied to your Desktop, Desktop\Call Joe\<friend's folder>\generated\,
+// so you can look through them (the friend's existing folder there is used, like "Elena Rodriguez"; otherwise one is
+// made). Test copies (CALLJOE_DATA) don't copy anything there.
+const DESKTOP_DIR = path.join(os.homedir(), "Desktop", "Call Joe");
+function desktopFolder(c) {
+  if (process.env.CALLJOE_DATA) return null;
+  fs.mkdirSync(DESKTOP_DIR, { recursive: true });
+  const words = c.name.toLowerCase().split(/\s+/);
+  const found = fs.readdirSync(DESKTOP_DIR, { withFileTypes: true }).filter((d) => d.isDirectory())
+    .find((d) => d.name.toLowerCase() === c.name.toLowerCase())
+    ?? fs.readdirSync(DESKTOP_DIR, { withFileTypes: true }).filter((d) => d.isDirectory())
+      .find((d) => d.name.toLowerCase().split(/[\s()]+/)[0] === words[0] || d.name.toLowerCase().split(/[\s()]+/).includes(words.at(-1)));
+  return path.join(DESKTOP_DIR, found?.name ?? c.name.replace(/[<>:"/\\|?*]/g, ""), "generated");
+}
+function copyMadeToDesktop(c) {
+  try {
+    const out = desktopFolder(c);
+    if (!out) return;
+    fs.mkdirSync(out, { recursive: true });
+    const made = path.join(photoDir(c.id), MADE);
+    for (const f of fs.existsSync(made) ? fs.readdirSync(made) : []) {
+      const target = path.join(out, f);
+      if (!fs.existsSync(target)) fs.copyFileSync(path.join(made, f), target);
+    }
+    if (fs.existsSync(madeLogFile(c.id))) fs.copyFileSync(madeLogFile(c.id), path.join(out, "prompts.json"));
+  } catch (err) {
+    console.error("Copying pictures to the Desktop failed:", err?.message ?? err);
+  }
+}
+
 // What earlier pictures taught: the request, the prompt, and how it came out (kept, failed the check, or deleted by you).
 function madeLessons(id) {
   const log = readMadeLog(id).slice(-10);
@@ -613,10 +1038,10 @@ const photoRules = (c) => `\nNow and then, when it really fits, you can text a p
 
 // Claude, briefly, answering in JSON (null if it can't).
 // It sometimes thinks first and answers with no text, so it gets room for that and a second try.
-async function askJson(content) {
+async function askJson(content, model = NEWS_MODEL) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const msg = await getClient().messages.create({ model: NEWS_MODEL, max_tokens: 4000, messages: [{ role: "user", content }] });
+      const msg = await getClient().messages.create({ model, max_tokens: 4000, messages: [{ role: "user", content }] });
       if (msg.stop_reason === "refusal") return null;
       const answer = textOf(msg.content);
       if (answer.includes("{")) return JSON.parse(answer.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
@@ -746,9 +1171,12 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their
   if (plan.self && face) refs.unshift(face);
   let file = `${MADE}/${Date.now()}.jpg`;
   let maker = gemini ? GEMINI_IMAGE_MODEL : "local RealVisXL";
-  const logIt = (extra) => writeJson(madeLogFile(c.id), [...readMadeLog(c.id), {
-    file, want, prompt: plan.prompt, guides: refs.map((f) => path.basename(f)), maker, at: new Date().toISOString(), ...extra,
-  }]);
+  const logIt = (extra) => {
+    writeJson(madeLogFile(c.id), [...readMadeLog(c.id), {
+      file, want, prompt: plan.prompt, guides: refs.map((f) => path.basename(f)), maker, at: new Date().toISOString(), ...extra,
+    }]);
+    copyMadeToDesktop(c);
+  };
   if (gemini) {
     try {
       const img = await geminiPicture(plan.prompt, refs.slice(0, 4));
@@ -864,25 +1292,30 @@ function textHabit(c) {
 const textsPerDay = (c) => (TEXTS_PER_DAY[c.role] ?? 0.7) * (c.textScale ?? catalogEntry(c.id)?.textScale ?? 1);
 
 // Asks the friend for their next text(s). opener: they're texting first; about: what prompted it.
-async function friendTexts(c, { opener = false, about = null, noPhoto = false } = {}) {
+async function friendTexts(c, { opener = false, about = null, noPhoto = false, late = null } = {}) {
   const list = readTexts(c.id);
   const thread = currentThread(list);
   const mine = thread.filter((t) => t.from === "me").length;
-  const wantsCall = !opener && mine >= textsBeforeCall(c);
+  const wantsCall = !opener && !c.support && mine >= textsBeforeCall(c); // Support never rings you
   const note = opener
     ? `(You decide to text your buddy, on your own. What prompted it: ${about ?? textHabit(c)}. Text the way you would. Just the text.)`
     : wantsCall
       ? `(This text conversation has gone on a while, and you'd rather just talk. Text that you're calling, in your own style, and end with ${CALL_MARK}.)`
       : null;
   const noPhotoNote = noPhoto ? "(You can't send a photo right now. Text without one, and don't say you're sending or sent one.)" : null;
+  const waited = late?.since ? Date.now() - Date.parse(late.since) : 0;
+  const ago = waited > 90 * 60 * 1000 ? `${Math.round(waited / 3600000)} hours` : `${Math.round(waited / 60000)} minutes`;
+  const lateNote = !opener && waited > 20 * 60 * 1000
+    ? `(It's been ${ago} since your buddy's text${late.what && late.what !== "free" ? `; you couldn't get to your phone because you were ${late.what}` : ""}. Answer naturally, and mention why you're late only if it fits, briefly.)`
+    : null;
   const model = chatModel(c);
   const msg = await getClient().beta.messages.create({
     model: model.id,
     max_tokens: 1500,
     output_config: { effort: "low" },
     ...model.params,
-    system: `${await systemPrompt(c)}\n\n${TEXTING}${noPhoto ? "" : photoRules(c)}`,
-    messages: textTurns(list, [note, noPhotoNote].filter(Boolean).join("\n\n") || null),
+    system: `${await systemPrompt(c)}\n\n${TEXTING}${noPhoto || c.support ? "" : photoRules(c)}`,
+    messages: textTurns(list, [note, lateNote, noPhotoNote].filter(Boolean).join("\n\n") || null),
   });
   if (msg.stop_reason === "refusal") throw new Error("They couldn't text back right now.");
   let raw = untag(textOf(msg.content));
@@ -901,7 +1334,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false } 
     if (ph && noPhoto) entry.text = part.replace(/\[photo:[^\]]*\]/gi, "").trim();
     else if (ph) {
       const photo = await friendPhoto(c, ph[1].trim()).catch((err) => (console.error("Photo failed:", err?.message ?? err), null));
-      if (!photo) return friendTexts(c, { opener, about, noPhoto: true }); // nothing sent yet: text again without it
+      if (!photo) return friendTexts(c, { opener, about, late, noPhoto: true }); // nothing sent yet: text again without it
       const words = part.replace(/\[photo:[^\]]*\]/gi, "").trim();
       if (words) added.push({ ...entry, id: `${now + i}-t`, text: words });
       Object.assign(entry, { text: "", photo });
@@ -922,7 +1355,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false } 
     if (mine) mine.reaction = reaction;
   }
   writeTexts(c.id, [...all, ...added]);
-  if (readTexts(c.id).filter((t) => !t.remembered).length >= 20) rememberTexts(c).catch(() => {});
+  if (!c.support && readTexts(c.id).filter((t) => !t.remembered).length >= 20) rememberTexts(c).catch(() => {}); // Support keeps no memory
   return { texts: added, call, reaction };
 }
 
@@ -1526,12 +1959,23 @@ async function learnRules(c, memory, transcript) {
         `Write short lines starting with '- ', at most 20, phrased as instructions to ${first} ("Don't joke about his weight."). Keep earlier rules unless the buddy changed their mind. ` +
         `Also decide whether the buddy changed how often ${first} may call them while the app is open: ${CALLS_YOU.map((k) => `"${k}" (${CALL_FREQ[k].label.toLowerCase()})`).join(", ")}. "Call me anytime" means daily unless they clearly want more; "stop calling so much" means a step or two less. Use null if nothing was said about it. ` +
         (sp ? `The buddy is married to ${sp.name}. Also merge everything the buddy said about ${sp.name} into the existing notes about them (likes, plans, health, gift ideas, how things are between them), as short '- ' lines, at most 30, and list any dates mentioned for ${sp.name} or the two of them (birthday, anniversary, a big event) as MM-DD. ` : "") +
-        `Answer with JSON only: {"rules": "...", "callsYou": null or one of the values, "why": "a few words, when callsYou changes"${sp ? `, "spouseNotes": "...", "spouseDates": [{"what": "${sp.name}'s birthday", "date": "MM-DD"}]` : ""}, "buddyBirthday": null or "MM-DD" if the buddy said when their own birthday is}.`,
+        `Also, if ${first} mentioned a lasting change to their own routine (new work hours, night shifts, a new class, a trip), describe it in a few words as "scheduleChange", otherwise null. ` +
+        `Answer with JSON only: {"rules": "...", "scheduleChange": null or "...", "callsYou": null or one of the values, "why": "a few words, when callsYou changes"${sp ? `, "spouseNotes": "...", "spouseDates": [{"what": "${sp.name}'s birthday", "date": "MM-DD"}]` : ""}, "buddyBirthday": null or "MM-DD" if the buddy said when their own birthday is}.`,
       messages: [{ role: "user", content: `Existing rules:\n${memory.rules || "(none yet)"}\n\n${sp ? `Existing notes about ${sp.name}:\n${sp.notes || "(none yet)"}\n\n` : ""}Newest call:\n${transcript}\n\n${first} is currently allowed to call: ${c.settings.callsYou ?? "never"}.` }],
     });
     if (msg.stop_reason === "refusal") return;
     const out = JSON.parse(textOf(msg.content).replace(/^```(json)?|```$/gm, "").trim());
     if (typeof out.rules === "string") memory.rules = out.rules.trim();
+    if (typeof out.scheduleChange === "string" && out.scheduleChange.trim()) {
+      reviseSchedule(c, out.scheduleChange).then((schedule) => {
+        if (!schedule?.blocks.length) return;
+        const fresh = loadContact(c.id);
+        logChange({ what: `${first}'s schedule: ${out.scheduleChange}`, undo: { type: "schedule", id: c.id, before: fresh.schedule ?? null } });
+        fresh.schedule = schedule;
+        saveContact(fresh);
+        addNotice(`${first}'s routine changed: ${out.scheduleChange}.`, c.id);
+      }).catch(() => {});
+    }
     if (/^\d{2}-\d{2}$/.test(out.buddyBirthday ?? "") && config.user && config.user.birthday !== out.buddyBirthday) {
       config.user.birthday = out.buddyBirthday;
       writeJson(configFile, config);
@@ -1642,7 +2086,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, brain: config.apiKey ? "claude" : config.googleKey ? "gemini" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, userBusy: userBusy(), brain: config.apiKey ? "claude" : config.googleKey ? "gemini" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -1897,14 +2341,14 @@ const server = http.createServer(async (req, res) => {
   }
   // ---- Texts ----
   if (req.method === "GET" && url.pathname === "/api/texts/threads") {
-    return json(res, 200, listContacts().map((c) => {
+    return json(res, 200, [...supportThread(), ...listContacts().map((c) => {
       const list = shownTexts(c.id);
       const last = list.at(-1);
       return last && {
         contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
         last: last.photo ? "📷 Photo" : last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
       };
-    }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at)));
+    }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at))]);
   }
   if (req.method === "GET" && url.pathname === "/api/texts") {
     const c = loadContact(url.searchParams.get("contact"));
@@ -1969,6 +2413,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const opener = url.pathname.endsWith("/start");
+    // Friends text first only when they're free to, and not during your quiet hours.
+    if (opener && (!canReachOut(scheduleOf(c), "text") || userBusy() === "quiet")) return json(res, 409, { error: `${firstName(c)} is busy.` });
     if (!opener) {
       const said = String(text ?? "").trim().slice(0, 2000);
       if (!said && !sentGifs.length) return json(res, 400, { error: "Nothing to send." });
@@ -1976,6 +2422,16 @@ const server = http.createServer(async (req, res) => {
       const mine = sentGifs.map((g, i) => ({ id: `${stamp}-${i}`, from: "me", text: "", gif: g, at, read: true }));
       if (said) mine.push({ id: `${stamp}`, from: "me", text: said, at, read: true });
       writeTexts(c.id, [...readTexts(c.id), ...mine]);
+      noteActivity();
+      if (c.support) {
+        try { return json(res, 200, await supportText(c, said)); } catch (err) { return json(res, 502, { error: err?.message ?? String(err) }); }
+      }
+      // Their answer comes when they'd really get to it: seconds in a live back-and-forth, minutes or hours otherwise,
+      // after work or in the morning if they're busy or asleep. The page picks it up from /api/updates.
+      const lastThem = readTexts(c.id).findLast((t) => t.from === "them");
+      const live = !!lastThem && Date.now() - Date.parse(lastThem.at) < 6 * 60 * 1000;
+      const p = setPending(c, { kind: "reply", dueAt: Date.now() + replyDelayMs(scheduleOf(c), { live }), since: new Date().toISOString(), what: nowFor(c).what });
+      return json(res, 200, { texts: [], waiting: true, dueIn: p.dueAt - Date.now(), now: nowLine(c) });
     }
     try {
       return json(res, 200, await friendTexts(c, { opener }));
@@ -2080,10 +2536,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/contacts") {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
-      hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: callsYouOf(c), callOdds: CALL_FREQ[callsYouOf(c)].odds,
+      hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: callsYouOf(c), callOdds: CALL_FREQ[callsYouOf(c)].odds * activityFactor(),
+      now: (({ what, calls, texts }) => ({ what, calls, texts }))(nowFor(c)), nowLine: nowLine(c),
       newVoicemail: keptVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
       roleChoices: roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)), ready: identityReady(c),
-      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: textsYouOf(c), textScale: TEXT_FREQ[textsYouOf(c)].scale, textsPerDay: textsPerDay(c),
+      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: textsYouOf(c), textScale: TEXT_FREQ[textsYouOf(c)].scale, textsPerDay: textsPerDay(c) * activityFactor(),
       // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).
       missed: c.memory.missed ? { ...c.memory.missed, openMinutes: (config.openMinutes ?? 0) - (c.memory.missed.atOpenMinute ?? config.openMinutes ?? 0) } : null,
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
@@ -2156,6 +2613,32 @@ const server = http.createServer(async (req, res) => {
       id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy, role: shownRole(c.role ?? "friend"),
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall, cussing: !!c.cussing, flirting: flirtingOf(c), speaks: LANGS[c.speaks] ? c.speaks : "",
     });
+  }
+
+  // Does the friend pick up? Asleep or at work, it rings out (or they decline) and they text about it later.
+  if (req.method === "POST" && url.pathname === "/api/call/try") {
+    const { contact: contactId } = await readBody(req);
+    const c = loadContact(contactId);
+    if (!c) return json(res, 400, { error: "No such friend." });
+    noteActivity();
+    if (c.support || answersCall(scheduleOf(c))) return json(res, 200, { answers: true });
+    const st = nowFor(c);
+    const declined = st.texts !== "none" && Math.random() < 0.5;
+    const dueAt = declined
+      ? Date.now() + (1 + Math.random() * 3) * 60 * 1000
+      : (st.until?.getTime() ?? Date.now() + 60 * 60 * 1000) + (5 + Math.random() * 40) * 60 * 1000;
+    setPending(c, {
+      kind: "followup", dueAt, since: new Date().toISOString(), what: st.what,
+      about: declined
+        ? `you just declined your buddy's call because you're ${st.what}; text that you can't talk right now and when you can`
+        : `you missed your buddy's call earlier because you were ${st.what}; text them about it (sorry I missed you, what's up?)`,
+    });
+    return json(res, 200, { answers: false, declined, what: st.what });
+  }
+  if (req.method === "GET" && url.pathname === "/api/updates") {
+    const after = Number(url.searchParams.get("after") ?? 0);
+    const typing = listContacts().filter((c) => delivering.has(c.id) || ((p) => p && p.dueAt - Date.now() < 12000)(readPending(c.id))).map((c) => c.id);
+    return json(res, 200, { seq: updateSeq, events: updates.filter((u) => u.seq > after), typing });
   }
 
   if (req.method === "POST" && url.pathname === "/api/call") {

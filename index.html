@@ -1309,6 +1309,8 @@ function stopSpeaking() {
 
 // ---------- Talking to the server ----------
 let turnId = 0;
+let supportId = null; // the Support thread in Messages
+let userBusyNow = null; // your quiet or work hours right now, from the server
 let byeTimer = null;
 const BYE_GRACE_MS = 4000; // how long the line stays open after your friend's last goodbye
 
@@ -1609,6 +1611,11 @@ async function startCall(video, incoming = false) {
   } else {
     leaveVideo();
   }
+  if (!incoming) {
+    const pick = await fetch("/api/call/try", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: contact.id }) })
+      .then((r) => r.json()).catch(() => ({ answers: true }));
+    if (pick.answers === false) return noAnswer(pick);
+  }
   interrupted = false;
   startInterruptWatch();
   setState("ringing", incoming ? "Connecting…" : "Ringing…");
@@ -1645,6 +1652,17 @@ function hangUpTone() {
   }
   osc.start(t0);
   osc.stop(t0 + 0.6);
+}
+
+// They didn't pick up: it rings out (seven rings), or a decline cuts it short after a couple.
+async function noAnswer(pick) {
+  setState("ringing", "Ringing…");
+  const rings = pick.declined ? 2 : RINGS_BEFORE_VOICEMAIL;
+  for (let i = 0; i < rings && state === "ringing"; i++) await ring(2).then(() => sleep(1000));
+  if (state !== "ringing") return; // you hung up first
+  leaveVideo();
+  setState("idle", pick.declined ? `${who()} declined. They'll probably text you.` : `No answer. ${who()} might be busy.`);
+  lastCallEnded = Date.now();
 }
 
 async function hangUp(byFriend = false) {
@@ -2040,17 +2058,21 @@ function worriedCallback(c) {
   return (c.missed.openMinutes ?? 0) * 60 * 1000 > wait;
 }
 
+// Your quiet and work hours, from the server (text Support /quiet or /work). Friends don't call you during either,
+// and don't text during quiet hours.
 function quietHours() {
+  if (userBusyNow !== undefined && userBusyNow !== null) return userBusyNow === "quiet";
   const h = new Date().getHours();
   return h >= QUIET_FROM || h < QUIET_UNTIL;
 }
 
 setInterval(async () => {
-  if (airplane || quietHours()) return;
+  if (airplane || quietHours() || userBusyNow === "work") return;
   const list = (await fetch("/api/contacts").then((r) => r.json()).catch(() => []))
-    .filter((c) => c.active && c.hasVoice && c.callOdds > 0);
+    .filter((c) => c.active && c.hasVoice && c.callOdds > 0 && c.now?.calls !== "no");
   const queued = new Set(callQueue.map((c) => c.id));
-  const wants = (c) => !queued.has(c.id) && (worriedCallback(c) || Math.random() < c.callOdds);
+  const odds = (c) => c.callOdds * (c.now?.calls === "rare" ? 0.2 : 1);
+  const wants = (c) => !queued.has(c.id) && (worriedCallback(c) || Math.random() < odds(c));
   for (const c of list) if (priorityCaller(c) && wants(c)) callQueue.push(c);
   if (!callQueue.length) for (const c of list) if (!priorityCaller(c) && wants(c)) { callQueue.push(c); break; }
   callQueue.sort((a, b) => callRank(a) - callRank(b) || (b.calls ?? 0) - (a.calls ?? 0));
@@ -2065,7 +2087,7 @@ let lastAnyText = 0;
 setInterval(() => {
   if (airplane || quietHours() || Date.now() - lastAnyText < 10 * 60 * 1000) return;
   for (const c of data.friends) {
-    if (!c.active || !c.textScale || Date.now() - (lastTextFrom[c.id] ?? 0) < (c.textScale >= 3 ? 15 : 45) * 60 * 1000) continue;
+    if (!c.active || !c.textScale || c.now?.texts === "none" || Date.now() - (lastTextFrom[c.id] ?? 0) < (c.textScale >= 3 ? 15 : 45) * 60 * 1000) continue;
     if (Math.random() < (c.textsPerDay * c.textScale) / 480) {
       lastTextFrom[c.id] = lastAnyText = Date.now();
       return friendTextsYou(c);
@@ -2378,7 +2400,7 @@ $("removeKeyBtn").onclick = async () => {
 };
 
 async function refreshData() {
-  fetch("/api/status").then((r) => r.json()).then((st) => { showAirplane(!!st.airplane); showSilent(!!st.silent); }).catch(() => {});
+  fetch("/api/status").then((r) => r.json()).then((st) => { showAirplane(!!st.airplane); showSilent(!!st.silent); userBusyNow = st.userBusy ?? null; }).catch(() => {});
   const [friends, voicemail, notices] = await Promise.all([
     fetch("/api/contacts").then((r) => r.json()).catch(() => data.friends),
     fetch("/api/voicemail").then((r) => r.json()).catch(() => data.voicemail),
@@ -2386,6 +2408,7 @@ async function refreshData() {
     fetch("/api/texts/threads").then((r) => r.json()).then((t) => (data.threads = t)).catch(() => {}),
   ]);
   // A text that arrived without the phone asking (like a friend texting about the game): announce it once.
+  supportId = data.threads.find((t) => t.support)?.contact ?? supportId;
   const newest = data.threads.find((t) => t.unread && t.lastFrom === "them");
   if (seenTextAt !== null && newest && newest.at > seenTextAt && newest.contact !== threadId) {
     toast(`💬 ${newest.name}: ${newest.last}`);
@@ -2869,7 +2892,8 @@ $("threadList").onclick = async (e) => {
 };
 
 async function openThread(id) {
-  const f = data.friends.find((c) => c.id === id) ?? (await refreshData(), data.friends.find((c) => c.id === id));
+  const f = data.friends.find((c) => c.id === id) ?? (await refreshData(), data.friends.find((c) => c.id === id))
+    ?? (data.threads.find((t) => t.contact === id && t.support) && { id, name: "Support" });
   if (!f) return;
   showPage("thread");
   if (threadId !== id) { pendingGifs = []; renderGifTray(); }
@@ -2971,6 +2995,7 @@ async function sendText() {
   const gifs = pendingGifs;
   const id = threadId;
   if ((!text && !gifs.length) || !id || textBusy) return;
+  const support = id === supportId;
   $("textInput").value = "";
   pendingGifs = [];
   renderGifTray();
@@ -2981,8 +3006,8 @@ async function sendText() {
   if (text) mine = addBubble("me", text);
   textBusy = true;
   $("textSend").disabled = true;
-  await sleep(900);
-  if (threadId === id) showTyping(true);
+  await sleep(support ? 300 : 900);
+  if (threadId === id && support) showTyping(true); // a friend's typing bubble shows when they really start replying
   const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text, gifs: gifs.map((g) => ({ url: g.url, title: g.title })) }) }).catch(() => null);
   const out = await res?.json().catch(() => ({}));
   if (threadId === id) showTyping(false);
@@ -2993,9 +3018,32 @@ async function sendText() {
     return;
   }
   if (out.reaction && threadId === id) setReaction(mine, out.reaction);
-  await showTheirTexts(id, out.texts);
+  if (out.texts?.length) await showTheirTexts(id, out.texts);
   if (out.call) setTimeout(() => ringYou(id), 4000); // "calling u" means the phone rings
 }
+
+// Replies that come later (a friend answering after work, or calling back) arrive through /api/updates.
+let updateSeq = null;
+setInterval(async () => {
+  const u = await fetch(`/api/updates?after=${updateSeq ?? 0}`).then((r) => r.json()).catch(() => null);
+  if (!u) return;
+  const first = updateSeq === null;
+  updateSeq = u.seq;
+  if (threadId && !textBusy) showTyping(u.typing.includes(threadId));
+  if (first) return; // don't replay what happened before the page opened
+  for (const e of u.events) {
+    if (e.type === "texts" && e.texts?.length) {
+      if (threadId === e.contact) {
+        // Reactions on your texts may have changed too, so redraw, then show the new ones as they "arrive".
+        const list = await fetch(`/api/texts?contact=${encodeURIComponent(e.contact)}`).then((r) => r.json()).catch(() => []);
+        const ids = new Set(e.texts.map((t) => t.id));
+        drawBubbles(list.filter((t) => !ids.has(t.id)));
+        await showTheirTexts(e.contact, e.texts);
+      } else refreshViews();
+    }
+    if (e.type === "call") setTimeout(() => ringYou(e.contact), 4000);
+  }
+}, 3000);
 $("textSend").onclick = () => sendText();
 
 $("googleHelpBtn").onclick = () => $("googleHelp").showModal();

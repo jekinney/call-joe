@@ -23,6 +23,20 @@ A brand-new (or reset) phone walks you through setup: your name, whether you're 
 
 Your API key is never deleted by anything, not even Reset phone. **Airplane mode** (the ✈ tile when you pull down the status bar, or Settings → Account) turns the key off: no calls, friends don't call you, no news passes between friends, and live knowledge stops updating. Everything already saved stays on this computer. To remove the key for good, turn on airplane mode first, then Settings → Account → Remove key (two warnings).
 
+## When friends are free
+
+Every friend has a weekly routine (`availability.mjs`; `schedule` in their `data/contacts/<id>/contact.json`), drafted once by Claude from their persona: asleep, at work and what the job allows, lunch, school pickup, practices, church. It decides:
+
+- **Calls:** asleep or at work, your call rings out, or they decline, and they text about it later ("sorry I missed you, was at work").
+- **Text replies:** seconds in a live back-and-forth; otherwise a few minutes to an hour (now and then longer), slower when they're busy, and after they wake up if they're asleep. Waiting replies are kept in `pending.json` and arrive when they're due, or when you next open the app.
+- **Reaching out:** they only call or text when they're free.
+
+Your own hours (text Support `/quiet 10pm-7am`, `/work weekdays 9-5`; quiet defaults to 9 PM to 8 AM) keep friends from calling then. `data/activity.json` learns which hours you usually text and answer, so they reach out more then. When a friend mentions a lasting change to their routine ("I start night shifts"), their schedule updates and you get a notice.
+
+## Support by text
+
+**Support** sits at the top of Messages. Ask it anything, or use commands (`/help` lists them): `/Elena got divorced` (a life update: shown first, applied on `/yes`, the old persona archived and a dated note added so she knows it's recent), `/Elena show`, `/Elena schedule …`, `/Elena rule …`, `/Elena forget …`, `/Elena pause 3d` and `/Elena resume`, `/Elena calls daily`, `/Elena texts often`, `/Elena photo …`, `/rule …` for everyone (`data/rules.md`), `/rules`, `/me …`, `/quiet`, `/work`, `/who`, `/log` and `/undo` (`data/changes.json`).
+
 **Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. And if there's no Anthropic key, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as an Anthropic key is saved.
 
 ## The phone
