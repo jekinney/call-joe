@@ -1664,15 +1664,83 @@ function hangUpTone() {
   osc.stop(t0 + 0.6);
 }
 
-// They didn't pick up: it rings out (seven rings), or a decline cuts it short after a couple.
+// They didn't pick up: it rings out (seven rings), or a decline cuts it short after a couple. Then their voicemail:
+// their greeting in their own voice, the beep, and your message (speech to text) until you hang up or go quiet.
 async function noAnswer(pick) {
   setState("ringing", "Ringing…");
   const rings = pick.declined ? 2 : RINGS_BEFORE_VOICEMAIL;
   for (let i = 0; i < rings && state === "ringing"; i++) await ring(2).then(() => sleep(1000));
   if (state !== "ringing") return; // you hung up first
   leaveVideo();
-  setState("idle", pick.declined ? `${who()} declined. They'll probably text you.` : `No answer. ${who()} might be busy.`);
+  const friend = contact;
+  setState("ringing", `${who()}'s voicemail`);
+  const res = await fetch(`/api/voicemail/greeting?contact=${encodeURIComponent(friend.id)}`).catch(() => null);
+  if (state !== "ringing") return;
+  if (res?.headers.get("content-type")?.startsWith("audio")) {
+    addLine("joe", decodeURIComponent(res.headers.get("x-greeting") ?? ""), "");
+    await playUrl(URL.createObjectURL(await res.blob()));
+  } else {
+    const g = await res?.json().catch(() => ({}));
+    if (g?.text) { addLine("joe", g.text); await sleep(3000); }
+  }
+  if (state !== "ringing") return;
+  await beep();
+  setState("ringing", "Recording… hang up when you're done");
+  startTimer();
+  const said = await recordMessage();
+  clearInterval(timerId);
+  if (said) {
+    await fetch("/api/voicemail/leave", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: friend.id, text: said }) }).catch(() => {});
+    addLine("me", said);
+  }
+  setState("idle", said ? `Message left for ${friend.name.split(" ")[0]}.` : `No message left. ${friend.name.split(" ")[0]} will see you called.`);
   lastCallEnded = Date.now();
+}
+function beep() {
+  audioCtx ??= new AudioContext();
+  const t0 = audioCtx.currentTime, gain = audioCtx.createGain(), osc = audioCtx.createOscillator();
+  osc.frequency.value = 1000;
+  gain.gain.value = 0.08;
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.5);
+  return sleep(700);
+}
+// Your message, as text: ends when you hang up, after 5 seconds of quiet once you've started, or at 2 minutes.
+function recordMessage() {
+  return new Promise((resolve) => {
+    if (!SR || muted) return resolve("");
+    let text = "", interim = "", lastHeard = Date.now(), done = false;
+    const r = new SR();
+    r.lang = "en-US";
+    r.continuous = true;
+    r.interimResults = true;
+    const line = addLine("me", "", "interim");
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearInterval(watch);
+      try { r.stop(); } catch {}
+      line.remove();
+      resolve(`${text} ${interim}`.trim());
+    };
+    r.onresult = (e) => {
+      interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) text += ` ${e.results[i][0].transcript}`;
+        else interim += e.results[i][0].transcript;
+      }
+      lastHeard = Date.now();
+      line.textContent = `${text} ${interim}`.trim();
+    };
+    r.onend = () => { if (!done) try { r.start(); } catch { finish(); } };
+    const started = Date.now();
+    const watch = setInterval(() => {
+      const spoke = !!`${text}${interim}`.trim();
+      if (state !== "ringing" || (spoke && Date.now() - lastHeard > 5000) || Date.now() - started > 120000) finish();
+    }, 300);
+    try { r.start(); } catch { finish(); }
+  });
 }
 
 async function hangUp(byFriend = false) {

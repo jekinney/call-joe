@@ -1263,7 +1263,7 @@ function textTurns(list, extra) {
   const turns = [];
   for (const t of list.slice(-40)) {
     const role = t.from === "me" ? "user" : "assistant";
-    const line = t.photo ? `[photo: ${t.photo.desc}]` : t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
+    const line = t.vm ? `(You missed their call. They left you a voicemail:) ${t.text}` : t.photo ? `[photo: ${t.photo.desc}]` : t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
     if (turns.at(-1)?.role === role) turns.at(-1).content += `\n${line}`;
     else turns.push({ role, content: line });
   }
@@ -1387,7 +1387,7 @@ function takeUnrememberedTexts(c) {
   for (const t of fresh) t.remembered = true;
   writeTexts(c.id, list);
   const first = firstName(c);
-  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.photo ? `(photo: ${t.photo.desc})` : t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
+  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.vm ? `(voicemail) ${t.text}` : t.photo ? `(photo: ${t.photo.desc})` : t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
 }
 async function rememberTexts(c) {
   const transcript = takeUnrememberedTexts(c);
@@ -1423,6 +1423,37 @@ function voicemailsLeft(c) {
   if (!recent.length) return "";
   return `\n\n# Voicemails you left your buddy\n` + recent.map((v) =>
     `- ${v.when} (${v.heard ? "they've listened to it" : "they haven't listened yet"}): "${v.text}"`).join("\n");
+}
+
+// ---- Your voicemails to friends ----
+// When a friend doesn't pick up, you hear their voicemail greeting (written once in character, spoken in their cloned
+// voice, cached in data/contacts/<id>/greeting.wav), then the beep, and you can leave a message. It's saved with your
+// texts (hidden from the thread) so they remember it, and their follow-up answers it.
+async function voicemailGreeting(c) {
+  const file = contactPath(c.id, "greeting.wav");
+  if (!c.vmGreeting) {
+    let persona = "";
+    try { persona = fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8").split(PHONE_RULES_HEADING)[0].slice(0, 3000); } catch {}
+    const out = await askJson([{ type: "text", text: `${persona || c.name}
+
+Write the voicemail greeting ${c.name} recorded on their own phone, in their own voice and style: one or two short sentences, the kind people really record ("Hey, it's Joe. Leave me a message and I'll get back to ya."). Just the words they say.${LANGS[c.speaks] ? ` If they'd say a word in ${LANGS[c.speaks]}, wrap it in <${c.speaks}>...</${c.speaks}>.` : ""} Reply with only JSON: {"greeting": "..."}` }]);
+    if (!out?.greeting) return { text: `Hi, you've reached ${firstName(c)}. Leave a message.`, file: null };
+    const fresh = loadContact(c.id);
+    fresh.vmGreeting = String(out.greeting).slice(0, 400);
+    saveContact(fresh);
+    c.vmGreeting = fresh.vmGreeting;
+    fs.rmSync(file, { force: true });
+  }
+  if (!fs.existsSync(file)) {
+    const voice = voiceFile(c.settings.cbVoice);
+    if (!voice) return { text: untag(c.vmGreeting), file: null };
+    await chatterbox.start();
+    for (let i = 0; i < 60 && !(await chatterbox.status()).ready; i++) await new Promise((r) => setTimeout(r, 1000));
+    const r = await fetch(`${chatterbox.url}/tts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: c.vmGreeting, voice_path: voice }) }).catch(() => null);
+    if (!r?.ok) return { text: untag(c.vmGreeting), file: null };
+    fs.writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+  }
+  return { text: untag(c.vmGreeting), file };
 }
 
 async function leaveVoicemail(c, declined) {
@@ -2690,6 +2721,30 @@ const server = http.createServer(async (req, res) => {
         : `you missed your buddy's call earlier because you were ${st.what}; text them about it (sorry I missed you, what's up?)`,
     });
     return json(res, 200, { answers: false, declined, what: st.what });
+  }
+  if (req.method === "GET" && url.pathname === "/api/voicemail/greeting") {
+    const c = loadContact(url.searchParams.get("contact"));
+    if (!c) return json(res, 404, { error: "No such friend." });
+    const g = await voicemailGreeting(c).catch(() => ({ text: `Hi, you've reached ${firstName(c)}. Leave a message.`, file: null }));
+    if (!g.file) return json(res, 200, { text: g.text });
+    res.writeHead(200, { "Content-Type": "audio/wav", "X-Greeting": encodeURIComponent(g.text) });
+    return fs.createReadStream(g.file).pipe(res);
+  }
+  if (req.method === "POST" && url.pathname === "/api/voicemail/leave") {
+    const { contact: id, text } = await readBody(req);
+    const c = loadContact(id);
+    if (!c) return json(res, 404, { error: "No such friend." });
+    const said = String(text ?? "").trim().slice(0, 3000);
+    if (!said) return json(res, 200, { ok: true, empty: true });
+    writeTexts(c.id, [...readTexts(c.id), { id: `${Date.now()}`, from: "me", text: said, vm: true, hidden: true, at: new Date().toISOString(), read: true }]);
+    const st = nowFor(c);
+    const cur = readPending(c.id);
+    const dueAt = cur?.dueAt ?? (st.texts === "none" ? (st.until?.getTime() ?? Date.now() + 3600e3) + 20 * 60e3 : Date.now() + (5 + Math.random() * 40) * 60e3);
+    setPending(c, {
+      kind: "followup", dueAt, since: new Date().toISOString(), what: st.what,
+      about: `your buddy called while you were ${st.what === "free" ? "away from your phone" : st.what}, and left you a voicemail: "${said}". You just listened to it. Answer it the way you would: text back about what they said, or say you'll call them`,
+    });
+    return json(res, 200, { ok: true });
   }
   if (req.method === "GET" && url.pathname === "/api/updates") {
     const after = Number(url.searchParams.get("after") ?? 0);
