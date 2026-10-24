@@ -10,17 +10,178 @@
   :root {
     --bg: #1d1712; --panel: #2a211a; --ink: #f4ead9; --muted: #b8a68c;
     --accent: #d98c3f; --green: #3fae5a; --red: #d9443a; --line: #4a3b2e;
+    --frame: #050505; --bezel: 7px;
+    --wall-ink: #f4ead9; --wall-shadow: rgba(0,0,0,.6); --wall-bar: rgba(0,0,0,.28); /* text on the wallpaper (Settings → Looks) */
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
     background: radial-gradient(circle at 50% 20%, #3a2a1c, var(--bg) 70%);
-    color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--ink); font-family: Roboto, "Segoe UI", system-ui, sans-serif;
     display: flex; flex-direction: column; align-items: center; overflow: hidden;
   }
-  header { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; }
-  #backBtn { font-size: 15px; }
+  /* ---------- The phone: an Android-style status bar on top, pages in the middle, the tabs and the
+     three navigation buttons (back, home, recents) at the bottom, all inside a thin phone outline ---------- */
+  html.framed body { padding: var(--bezel); }
+  #bezel { position: fixed; inset: 0; pointer-events: none; z-index: 1000; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); }
+  #bezel::before {
+    content: ""; position: absolute; inset: var(--bezel); border-radius: 26px;
+    box-shadow: 0 0 0 60px var(--frame), inset 0 0 0 1px rgba(255,255,255,.06);
+  }
+  html:not(.framed) #bezel { display: none; }
+  html:not(.framed) { --bezel: 0px; }
+  .statusbar {
+    width: 100%; height: 30px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+    font-size: 13px; font-variant-numeric: tabular-nums; background: var(--wall-bar); z-index: 40; position: relative; cursor: pointer;
+  }
+  html.framed .statusbar { padding: 0 24px; }
+  .statusbar .cam { position: absolute; left: 50%; top: 8px; width: 13px; height: 13px; margin-left: -6.5px; border-radius: 50%; background: #000; box-shadow: inset 0 0 0 3px #15171a; }
+  .statusbar .clock { font-weight: 600; }
+  .statusbar .icons { display: flex; gap: 12px; align-items: center; }
+  .bell { position: relative; background: none; border: 0; color: inherit; font-size: 15px; cursor: pointer; padding: 2px 4px; }
+  .badge {
+    position: absolute; top: -4px; right: -8px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--red); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center;
+  }
+  .battery { width: 22px; height: 10px; border: 1.5px solid currentColor; border-radius: 3px; position: relative; opacity: .85; }
+  .battery::before { content: ""; position: absolute; inset: 1.5px; right: 4px; background: var(--green); border-radius: 1px; }
+  .battery::after { content: ""; position: absolute; right: -4px; top: 2px; width: 2px; height: 4px; background: currentColor; border-radius: 0 1px 1px 0; }
+  .shade {
+    position: fixed; top: calc(var(--bezel) + 30px); left: var(--bezel); right: var(--bezel); z-index: 45; max-height: 70vh; overflow-y: auto; border-radius: 0 0 22px 22px;
+    background: rgba(16, 12, 9, .97); border-bottom: 1px solid var(--line); padding: 12px 16px 16px;
+    animation: drop .18s ease-out; box-shadow: 0 16px 30px rgba(0,0,0,.5);
+  }
+  @keyframes drop { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .shade h3, .section-title { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .note {
+    display: flex; gap: 12px; align-items: center; width: 100%; padding: 10px 12px; margin-bottom: 8px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--line); color: var(--ink); text-align: left; cursor: pointer; font: inherit;
+  }
+  .note .c-avatar { width: 38px; height: 38px; font-size: 16px; }
+  .n-title { font-weight: 600; font-size: 14px; }
+  .n-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
   main { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; }
+  .page { overflow-y: auto; padding-bottom: 16px; }
+  .page-top { width: min(520px, calc(100% - 32px)); display: flex; align-items: center; gap: 10px; margin: 14px 0 14px; }
+  .page-top h1 { flex: 1; font-size: 26px; font-weight: 400; text-shadow: 0 2px 8px rgba(0,0,0,.5); }
+  .top-btn { background: none; border: 0; color: var(--ink); border-radius: 50%; width: 40px; height: 40px; font-size: 22px; cursor: pointer; display: grid; place-items: center; }
+  .top-btn:hover { background: rgba(255,255,255,.08); }
+  /* Floating action button, bottom right, like Android's Contacts app */
+  .fab {
+    position: fixed; right: calc(var(--bezel) + 18px); bottom: calc(var(--bezel) + 124px); width: 58px; height: 58px; border-radius: 18px; border: 0;
+    background: var(--accent); color: #241a12; font-size: 28px; cursor: pointer; box-shadow: 0 6px 16px rgba(0,0,0,.45); z-index: 15;
+  }
+  html:not(.framed) .fab { right: 18px; bottom: 124px; }
+  .call-top { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 8px 16px 0; }
+  .call-top .icon-btn { font-size: 15px; color: var(--ink); text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+
+  .tabbar {
+    width: 100%; flex: none; display: flex; justify-content: space-around; padding: 10px 8px 8px;
+    background: rgba(24, 19, 15, .94); z-index: 10;
+  }
+  .tabbar button {
+    flex: 1; max-width: 110px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 0 4px;
+    background: none; border: 0; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; position: relative;
+  }
+  .tabbar .ico { width: 60px; height: 30px; border-radius: 15px; display: grid; place-items: center; font-size: 19px; line-height: 1; filter: grayscale(.7); transition: background .15s; }
+  .tabbar button:hover .ico { background: rgba(255,255,255,.06); }
+  .tabbar button.on { color: var(--ink); font-weight: 600; }
+  .tabbar button.on .ico { filter: none; background: rgba(217,140,63,.3); }
+  .tabbar .badge { top: -3px; right: auto; left: calc(50% + 12px); }
+  /* Android's three navigation buttons: back, home, recent calls */
+  .navbar { width: 100%; flex: none; display: flex; justify-content: space-evenly; align-items: center; height: 42px; background: rgba(24, 19, 15, .94); }
+  .navbar button { width: 64px; height: 34px; border-radius: 17px; border: 0; background: none; color: var(--ink); opacity: .75; cursor: pointer; display: grid; place-items: center; }
+  .navbar button:hover { opacity: 1; background: rgba(255,255,255,.07); }
+  .navbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+
+  /* Home: a big clock, app icons and favorite friends, on the wallpaper */
+  .home-clock { width: min(420px, calc(100% - 40px)); margin: 4vh 0 5vh; text-shadow: 0 2px 12px rgba(0,0,0,.6); }
+  .home-clock .t { font-size: 72px; font-weight: 300; line-height: 1; }
+  .home-clock .d { font-size: 16px; margin-top: 8px; opacity: .9; }
+  .apps { width: min(420px, calc(100% - 32px)); display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px 10px; }
+  .app { display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; position: relative; text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+  .app .ic { width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; font-size: 28px; box-shadow: 0 6px 14px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.15); }
+  .app .badge { top: -6px; right: calc(50% - 38px); }
+  .app.soon .ic { filter: saturate(.4); }
+  /* Favorite friends sit in the dock at the bottom of the home screen */
+  .favs-wrap { width: min(420px, calc(100% - 32px)); margin: auto 0 4px; padding: 12px; border-radius: 28px; background: rgba(0,0,0,.3); }
+  .favs { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+  .fav { display: flex; flex-direction: column; align-items: center; gap: 5px; background: none; border: 0; color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
+  .fav .c-avatar { width: 58px; height: 58px; border: 2px solid rgba(255,255,255,.25); }
+
+  /* Lists (recents, voicemail, settings) */
+  .list { width: min(520px, calc(100% - 32px)); background: rgba(24, 18, 13, .86); border-radius: 22px; overflow: hidden; }
+  .list + .section-title, .list + .list { margin-top: 18px; }
+  .row-item { display: flex; align-items: center; gap: 12px; padding: 11px 14px; width: 100%; background: none; border: 0; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+  .row-item + .row-item { border-top: 1px solid var(--line); }
+  .row-item .c-avatar { width: 44px; height: 44px; font-size: 18px; }
+  .row-item .txt { flex: 1; min-width: 0; }
+  .row-item .t1 { font-weight: 600; font-size: 15px; }
+  .row-item .t2 { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+  .row-item .words { font-size: 14px; line-height: 1.45; margin-top: 5px; }
+  .row-item.heard .words { color: var(--muted); }
+  .row-item.missed .t1 { color: #ff8a80; }
+  .row-item .chev { color: var(--muted); font-size: 20px; }
+  .row-item .ic { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; flex: none; }
+  .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
+  /* Tabs with an underline, like Android's Phone app */
+  .segmented { width: min(520px, calc(100% - 32px)); display: flex; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+  .segmented button { flex: 1; padding: 10px 7px 9px; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .segmented button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .new-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
+  .play { width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer; flex: none; background: var(--accent); color: #1d1712; font-size: 14px; display: grid; place-items: center; }
+  .play.playing { background: var(--line); color: var(--ink); }
+  .off-friends { width: min(520px, calc(100% - 32px)); margin-top: 18px; }
+  .off-friends summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 6px 2px; }
+  .soon-card { width: min(420px, calc(100% - 32px)); text-align: center; margin-top: 8vh; padding: 28px 20px; border-radius: 18px; background: rgba(24, 18, 13, .86); border: 1px solid var(--line); }
+  .soon-card .big { font-size: 54px; }
+
+  /* Settings */
+  .switch {
+    appearance: none; width: 52px; height: 32px; border-radius: 16px; background: #2e251d; box-shadow: inset 0 0 0 2px #8a7a66;
+    position: relative; cursor: pointer; flex: none; margin: 0; padding: 0; border: 0; transition: background .15s;
+  }
+  .switch::after { content: ""; position: absolute; top: 8px; left: 8px; width: 16px; height: 16px; border-radius: 50%; background: #8a7a66; transition: all .15s; }
+  .switch:checked { background: var(--accent); box-shadow: none; }
+  .switch:checked::after { top: 4px; left: 24px; width: 24px; height: 24px; background: #fff; }
+  .inks { display: flex; flex-wrap: wrap; gap: 12px; padding: 14px; }
+  .ink-sw { display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+  .ink-sw span { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; font-weight: 700; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .ink-sw[aria-pressed="true"] span { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .frames { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px; }
+  .frame-sw { display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; color: var(--ink); font: inherit; font-size: 11px; cursor: pointer; }
+  .frame-sw span { width: 40px; height: 40px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+  .frame-sw[aria-pressed="true"] span { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .frame-sw.none span { background: repeating-linear-gradient(45deg, transparent 0 5px, rgba(255,255,255,.18) 5px 7px); }
+  .drawer {
+    position: fixed; top: calc(var(--bezel) + 30px); bottom: var(--bezel); left: var(--bezel); width: min(300px, 82vw); z-index: 44; background: rgba(16, 12, 9, .98);
+    border-radius: 0 22px 22px 0;
+    border-right: 1px solid var(--line); padding: 16px 12px; animation: slide .2s ease-out; box-shadow: 16px 0 30px rgba(0,0,0,.5);
+  }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: none; } }
+  .drawer .list { width: 100%; }
+  .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; padding: 12px; }
+  .wall {
+    aspect-ratio: 3 / 4; border-radius: 12px; border: 2px solid transparent; cursor: pointer; overflow: hidden;
+    display: flex; align-items: flex-end; padding: 7px; color: #fff; font-size: 11px; font-weight: 600; text-shadow: 0 1px 4px #000;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+  }
+  .wall[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(217,140,63,.35); }
+  .wall.add { background: var(--bg); border: 2px dashed var(--line); justify-content: center; align-items: center; flex-direction: column; gap: 4px; color: var(--muted); text-shadow: none; }
+  .styles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }
+  .style-card { border-radius: 12px; border: 2px solid var(--line); cursor: pointer; padding: 8px; background: var(--bg); color: var(--ink); font: inherit; text-align: left; }
+  .style-card[aria-pressed="true"] { border-color: var(--accent); }
+  .style-card .mock { height: 110px; border-radius: 8px; margin-bottom: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; overflow: hidden; }
+  .style-card .mock .c-avatar { width: 44px; height: 44px; }
+  .style-card .t { font-weight: 600; font-size: 14px; }
+  .style-card .d { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .field { display: flex; gap: 10px; padding: 12px 14px; flex-wrap: wrap; }
+  .field input { flex: 1; min-width: 160px; }
+  .msg { font-size: 13px; padding: 0 14px 12px; color: var(--muted); }
+  .msg.ok { color: #8fd69f; }
+  .msg.err { color: #ff8a80; }
+  code.cmd { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: block; margin: 8px 0; font-size: 15px; }
 
   /* Friends list (home screen) */
   .home-title { font-size: 26px; margin: 4px 0 18px; }
@@ -60,7 +221,7 @@
 
   /* Voicemail player and pop-up notices on the friends list */
   #vmPlayer {
-    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(520px, calc(100% - 32px));
+    position: fixed; left: 50%; bottom: 124px; transform: translateX(-50%); width: min(520px, calc(100% - 32px));
     background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
     display: flex; gap: 12px; align-items: flex-start; box-shadow: 0 12px 30px rgba(0,0,0,.5); z-index: 20;
   }
@@ -69,9 +230,10 @@
   #vmPlayer .vm-who { font-weight: 600; }
   #vmPlayer .vm-when { font-size: 12px; color: var(--muted); }
   #vmPlayer .vm-words { font-size: 14px; line-height: 1.45; margin-top: 6px; }
+  /* Android-style snackbar above the tabs */
   #toast {
-    position: fixed; left: 50%; top: 16px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--accent);
-    border-radius: 12px; padding: 10px 16px; font-size: 14px; box-shadow: 0 10px 24px rgba(0,0,0,.45); z-index: 30;
+    position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); background: #efe4d4; color: #241a12; width: max-content;
+    border-radius: 8px; padding: 12px 16px; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); z-index: 30;
     max-width: calc(100% - 32px);
   }
   .c-wrap { position: relative; flex: none; }
@@ -184,22 +346,116 @@
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
   .hint a { color: var(--accent); }
   #keyError, .err { color: #ff8a80; font-size: 13px; min-height: 1em; margin-top: 8px; }
+  /* Text that sits right on the wallpaper takes your text color for it */
+  .statusbar, .home-clock, .app, .fav, .page-top h1, .page-top .top-btn, .call-top .top-btn, .call-top .icon-btn, .who h1,
+  #status, #timer, .ctl, .off-friends summary, .favs-wrap .section-title, .set-sub > .section-title, .set-sub > .hint, .set-sub > .msg {
+    color: var(--wall-ink); text-shadow: 0 1px 6px var(--wall-shadow);
+  }
+  #status, #timer, .set-sub > .hint { opacity: .85; }
+  .app .ic, .fav .c-avatar, .ctl .round { text-shadow: none; }
+  .segmented button:not(.on) { color: var(--wall-ink); opacity: .75; }
+  body.photo-call { --wall-ink: var(--ink); --wall-shadow: rgba(0,0,0,.9); }
 </style>
 </head>
 <body>
-<header>
-  <button class="icon-btn" id="backBtn" title="Back to your friends" hidden>‹ Friends</button><span></span>
-  <button class="icon-btn" id="settingsBtn" title="Settings">⚙</button>
-</header>
+<div id="bezel"></div>
+<div class="statusbar" id="statusbar">
+  <span class="cam"></span>
+  <span class="clock" id="clock"></span>
+  <span class="icons">
+    <button class="bell" id="bell" title="Notifications" aria-expanded="false">🔔<span class="badge" id="bellBadge" hidden></span></button>
+    <span class="battery"></span>
+  </span>
+</div>
+<div class="shade" id="shade" hidden>
+  <h3>Notifications</h3>
+  <div id="notes"></div>
+</div>
 
-<main id="home">
-  <h1 class="home-title">Your friends</h1>
+<!-- Home: the phone's home screen -->
+<main id="pageHome" class="page">
+  <div class="home-clock"><div class="t" id="bigClock"></div><div class="d" id="bigDate"></div></div>
+  <div class="apps" id="apps"></div>
+  <div class="favs-wrap" id="favsWrap"><div class="section-title" style="text-align:center">Favorites</div><div class="favs" id="favs"></div></div>
+</main>
+
+<!-- Contacts: your active friends (the friends list), and friends you've turned off -->
+<main id="home" class="page" hidden>
+  <div class="page-top"><h1>Contacts</h1></div>
+  <button class="fab" id="addFriendBtn" title="Add a friend">＋</button>
   <div id="contactList" class="contacts"></div>
-  <div class="hint home-hint">To add a friend, open Claude Code in the Call Joe folder and type <code>/new-contact</code>.
-    Have a short voice clip and a face picture ready.</div>
+  <details class="off-friends" id="offWrap" hidden><summary id="offSummary"></summary><div class="list" id="offList"></div></details>
+</main>
+
+<!-- Calls: recent calls and voicemail -->
+<main id="pageCalls" class="page" hidden>
+  <div class="page-top"><h1>Calls</h1></div>
+  <div class="segmented"><button data-calls="recents" class="on">Recents</button><button data-calls="voicemail">Voicemail<span id="vmSegCount"></span></button></div>
+  <div class="list" id="callsList"></div>
+</main>
+
+<!-- Messages: text messages are a later feature -->
+<main id="pageMessages" class="page" hidden>
+  <div class="page-top"><h1>Messages</h1></div>
+  <div class="soon-card"><div class="big">💬</div><h2>Text messages are coming soon</h2>
+    <p class="hint" style="font-size:14px">You'll be able to text your friends, and they'll text you back in their own words.</p></div>
+</main>
+
+<!-- Settings: ☰ opens the list of settings; each one has its own page -->
+<main id="pageSettings" class="page" hidden>
+  <div class="page-top"><button class="top-btn" id="setMenuBtn" title="All settings">☰</button><h1 id="setTitle">Settings</h1></div>
+  <div class="drawer" id="setDrawer" hidden><div class="section-title">Settings</div><div class="list" id="setDrawerList"></div></div>
+  <div class="list" id="setIndex"></div>
+
+  <div id="set-calls" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="list" style="width:100%">
+      <label class="row-item" style="cursor:pointer">
+        <span class="txt"><div class="t1">Interrupt by talking</div><div class="t2">Talk over a friend and they stop to listen. Works best with headphones. The spacebar and ✋ Hush always work.</div></span>
+        <input type="checkbox" class="switch" id="interruptToggle" aria-label="Interrupt by talking">
+      </label>
+    </div>
+    <p class="hint" style="font-size:13px">How often each friend calls you is set on their page: Contacts → a friend → Edit.</p>
+  </div>
+
+  <div id="set-looks" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="section-title">Wallpaper</div>
+    <div class="list" style="width:100%"><div class="walls" id="walls"></div></div>
+    <input type="file" id="wallFile" accept="image/*" hidden>
+    <div class="msg" id="wallMsg"></div>
+    <div class="section-title" style="margin-top:12px" id="inkTitle">Text color</div>
+    <div class="list" style="width:100%"><div class="inks" id="inks"></div></div>
+    <div class="section-title" style="margin-top:12px">Phone outline</div>
+    <div class="list" style="width:100%"><div class="frames" id="frames"></div></div>
+    <div class="section-title" style="margin-top:12px">Call screen</div>
+    <div class="list" style="width:100%"><div class="styles">
+      <button class="style-card" data-style="classic"><div class="mock" id="mockClassic"></div><div class="t">Classic</div><div class="d">Their picture in a circle. The default.</div></button>
+      <button class="style-card" data-style="photo"><div class="mock" id="mockPhoto"></div><div class="t">Photo</div><div class="d">Their picture fills the screen, name across it.</div></button>
+    </div></div>
+  </div>
+
+  <div id="set-account" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="list" style="width:100%">
+      <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">Anthropic API key</div><div class="t2" id="keyState">Checking…</div></span></div>
+      <div class="field"><input id="newKeyInput" type="password" placeholder="Paste a new key: sk-ant-..." autocomplete="off"><button class="btn" id="newKeySave">Save key</button></div>
+      <div class="msg" id="newKeyMsg"></div>
+    </div>
+    <p class="hint" style="font-size:13px">Your friends think with Claude, using your own key. It's saved only on this computer. Manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
+  </div>
+
+  <div id="set-about" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="list" style="width:100%; padding:14px; line-height:1.5; font-size:14px">
+      <b>Call Joe</b><br>
+      Voice and video calls with AI friends. Conversations go to Anthropic through your own key; everything else (memories, voices, faces and voicemail) stays on this computer.<br><br>
+      Voices are cloned by Chatterbox (Resemble AI) and faces are animated by Ditto (Ant Group), both on your graphics card. Credits for each friend's voice clip and picture are in <code>docs/credits.md</code>.
+    </div>
+  </div>
 </main>
 
 <main id="callScreen" hidden>
+<div class="call-top">
+  <button class="top-btn" id="backBtn" title="Back">←</button>
+  <button class="icon-btn" id="settingsBtn" title="Edit this friend">✎ Edit</button>
+</div>
 <div class="who">
   <div class="avatar" id="friendAvatar">🧢</div>
   <h1 id="friendName">Joe Tucker</h1>
@@ -223,6 +479,40 @@
   <div class="ctl" id="ccCtl"><button class="round soft" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
 </div>
 </main>
+
+<nav class="tabbar" id="tabbar" aria-label="Phone">
+  <button data-go="calls"><span class="ico">📞</span>Calls<span class="badge" id="tabCallsBadge" hidden></span></button>
+  <button data-go="contacts"><span class="ico">👥</span>Contacts</button>
+  <button data-go="messages"><span class="ico">💬</span>Messages</button>
+  <button data-go="settings"><span class="ico">⚙</span>Settings</button>
+</nav>
+<nav class="navbar" id="homebar" aria-label="Navigation">
+  <button id="navBack" title="Back"><svg viewBox="0 0 18 18"><path d="M13 2.5 3.5 9 13 15.5Z"/></svg></button>
+  <button id="navHome" title="Home"><svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="7"/></svg></button>
+  <button id="navRecents" title="Recent calls"><svg viewBox="0 0 18 18"><rect x="2.5" y="2.5" width="13" height="13" rx="2"/></svg></button>
+</nav>
+
+<dialog id="addFriendDialog">
+  <h2>Add a friend</h2>
+  <p class="hint" style="font-size:14px">For now, Claude builds new friends with you. Open Claude Code in the <b>Call Joe</b> folder and type:</p>
+  <code class="cmd">/new-contact</code>
+  <p class="hint" style="font-size:14px">Have ready: their name and a few sentences about who they are, a 10 to 20 second voice clip (someone who's okay with it), and a made-up face picture for video calls. Claude writes their personality, shows it to you, and sets everything up.</p>
+  <div class="row"><button class="btn ghost" id="copyCmd">Copy command</button><button class="btn" id="addFriendClose">Got it</button></div>
+</dialog>
+
+<dialog id="helpDialog">
+  <h2>Tips</h2>
+  <ul class="hint" style="font-size:14px; line-height:1.6; padding-left:18px">
+    <li>Tap a friend, then 📞 to call or 🎥 for video.</li>
+    <li>Talk over them to interrupt, or press the spacebar or ✋.</li>
+    <li>They hang up on their own when you've both said bye.</li>
+    <li>Miss a call and they leave a voicemail: Calls → Voicemail.</li>
+    <li>Turn friends on or off: Contacts → a friend → Edit.</li>
+    <li>Change the wallpaper, phone outline and call screen: Settings → Looks.</li>
+    <li>The buttons at the very bottom work like Android: ◁ back, ○ home, □ recent calls. Esc goes back too.</li>
+  </ul>
+  <div class="row"><button class="btn" id="helpClose">Got it</button></div>
+</dialog>
 
 <div id="toast" hidden></div>
 <div id="vmPlayer" hidden>
@@ -259,6 +549,10 @@
 
 <dialog id="settingsDialog">
   <h2><span class="fn">Joe</span>'s settings</h2>
+  <label class="row-item" style="padding:6px 0; color:var(--ink); font-size:14px">
+    <span class="txt"><div class="t1">Show on your contacts</div><div class="t2">Turned off, they're hidden and won't call you. Nothing about them is lost.</div></span>
+    <input type="checkbox" class="switch" id="activeToggle" aria-label="Active">
+  </label>
   <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
   <div class="face-row">
     <select id="callsYouSelect">
@@ -350,6 +644,16 @@ let lastBackground = "";
 // Photo style applies on a voice call screen when the friend has a picture.
 const photoCall = () => Theme.get().callStyle === "photo" && !videoMode && !$("callScreen").hidden && !!contact?.settings?.face;
 function applyLooks() {
+  const frame = Theme.FRAMES[Theme.get().frame] ?? Theme.FRAMES.black;
+  document.documentElement.classList.toggle("framed", frame !== Theme.FRAMES.none);
+  document.documentElement.style.setProperty("--frame", frame.color);
+  // Text on the wallpaper; dark text gets a soft light glow instead of a shadow.
+  const ink = Theme.inkColor();
+  const [r, g, b] = ink.match(/\w\w/g).map((h) => parseInt(h, 16));
+  const darkInk = r * 0.3 + g * 0.59 + b * 0.11 < 128;
+  document.documentElement.style.setProperty("--wall-ink", ink);
+  document.documentElement.style.setProperty("--wall-shadow", darkInk ? "rgba(255,255,255,.45)" : "rgba(0,0,0,.6)");
+  document.documentElement.style.setProperty("--wall-bar", darkInk ? "rgba(255,255,255,.25)" : "rgba(0,0,0,.28)");
   const bg = photoCall() ? Theme.photoCss(contact.settings.face) : Theme.wallpaperCss();
   if (bg !== lastBackground) {
     document.body.style.background = bg;
@@ -373,6 +677,10 @@ function setState(s, text) {
   $("muteCtl").hidden = !inCall;
   $("switchCtl").hidden = !inCall;
   $("backBtn").hidden = inCall || $("callScreen").hidden;
+  $("settingsBtn").hidden = inCall || $("callScreen").hidden;
+  // The tabs and home bar step aside during a call, like a phone.
+  $("tabbar").hidden = inCall;
+  $("homebar").hidden = inCall;
   $("hushCtl").hidden = s !== "speaking";
   $("stage").hidden = !videoMode;
   applyLooks();
@@ -992,8 +1300,8 @@ $("keySave").onclick = async () => {
 };
 
 $("settingsBtn").onclick = async () => {
-  if (!contact) return openSettingsWindow();
   $("modelSelect").value = store.get("model", "sonnet");
+  $("activeToggle").checked = contact.active !== false;
   $("callsYouSelect").value = store.get("callsYou", "never");
   refreshChatterbox();
   refreshFaces();
@@ -1182,11 +1490,15 @@ async function showHome() {
   idle?.stop();
   idle = null;
   leaveVideo();
-  $("callScreen").hidden = true;
-  $("home").hidden = false;
-  $("backBtn").hidden = true;
+  showPage("contacts");
   const all = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
   const list = all.filter((c) => c.active);
+  const off = all.filter((c) => !c.active);
+  $("offWrap").hidden = !off.length;
+  $("offSummary").textContent = `Turned off (${off.length})`;
+  $("offList").innerHTML = off.map((c) => `
+    <div class="row-item" style="cursor:default">${avatarHtml(c.name, c.face)}<span class="txt"><div class="t1">${esc(c.name)}</div><div class="t2">Hidden, and won't call you</div></span>
+      <button class="btn ghost" data-turn-on="${esc(c.id)}">Turn on</button></div>`).join("");
   $("contactList").innerHTML = list.map((c) => `
     <div class="contact" data-id="${esc(c.id)}">
       <div class="c-wrap">
@@ -1248,26 +1560,19 @@ async function openContact(id, startWith, incoming = false) {
     ? `<img src="/api/face?name=${encodeURIComponent(c.settings.face)}" alt="">`
     : esc(c.name[0]);
   $("captions").innerHTML = "";
-  $("home").hidden = true;
-  $("callScreen").hidden = false;
+  showPage("call");
   applyLooks();
   idle = null;
   setState("idle", c.calls ? `Ready when you are · ${c.calls} call${c.calls === 1 ? "" : "s"} so far` : "Ready when you are");
   if (startWith) startCall(startWith === "video", incoming);
 }
 
-$("backBtn").onclick = () => { if (state === "idle") showHome(); };
+$("backBtn").onclick = () => goBack();
 
-// ---------- Settings window ----------
-// The gear on the friends list opens Settings (settings.html) in its own tablet-style window. It tells this
-// window about changes, so the friends list updates as soon as a friend is turned on or off.
-function openSettingsWindow() {
-  const w = window.open("/settings", "calljoe-settings", "popup,width=1040,height=760");
-  w?.focus();
-}
 if ("BroadcastChannel" in window) {
   new BroadcastChannel("calljoe").onmessage = (e) => {
     if (["contacts-changed", "voicemail-changed"].includes(e.data?.type) && !$("home").hidden) showHome();
+    if (["contacts-changed", "voicemail-changed"].includes(e.data?.type)) refreshViews();
     if (e.data?.type === "appearance-changed") Theme.load().then(applyLooks);
   };
 }
@@ -1322,6 +1627,7 @@ async function ringYou(id) {
   if (!me.answered) {
     missed[c.id] = new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
     if (!$("home").hidden) showHome();
+    refreshViews();
     receiveVoicemail(c, me.declined);
   }
 }
@@ -1405,7 +1711,394 @@ $("answerBtn").onclick = () => answer(false);
 $("answerVideoBtn").onclick = () => answer(true);
 $("declineBtn").onclick = () => { if (ringingIn) { ringingIn.declined = true; ringingIn.stop = true; } };
 
-showHome();
+// ---------- The phone: pages, tabs, status bar ----------
+// Pages: home (app icons), contacts (the friends list, id "home"), calls, messages, settings, and call (a friend's
+// page, which is also the call screen). The tabs and home bar hide during a call.
+const PAGE_IDS = { home: "pageHome", contacts: "home", calls: "pageCalls", messages: "pageMessages", settings: "pageSettings", call: "callScreen" };
+let page = "home";
+let pagesBack = [], goingBack = false;
+const data = { friends: [], voicemail: [] }; // refreshed by refreshData()
+
+function showPage(name) {
+  // Leaving a friend's page between calls puts their video away.
+  if (page === "call" && name !== "call" && state === "idle" && contact) {
+    contact = null;
+    idle?.stop();
+    idle = null;
+    leaveVideo();
+  }
+  if (goingBack) goingBack = false;
+  else if (name === "home") pagesBack = [];
+  else if (page !== name) pagesBack.push(page);
+  page = name;
+  for (const [n, id] of Object.entries(PAGE_IDS)) $(id).hidden = n !== name;
+  document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.go === (name === "call" ? "contacts" : name)));
+  closeShade();
+  $("setDrawer").hidden = true;
+  $("backBtn").hidden = name !== "call" || state !== "idle";
+  $("settingsBtn").hidden = name !== "call" || state !== "idle";
+  if (name === "home") renderHome();
+  if (name === "calls") renderCalls();
+  if (name === "settings") showSetting(null);
+  applyLooks();
+}
+
+$("tabbar").onclick = (e) => {
+  const b = e.target.closest("[data-go]");
+  if (!b || state !== "idle") return;
+  if (b.dataset.go === "contacts") showHome();
+  else showPage(b.dataset.go);
+};
+// The three navigation buttons. Back closes whatever is open first (the notification shade, the settings
+// list, a setting's page), then steps back through the pages you came from, ending at Home.
+function goBack() {
+  if (state !== "idle") return;
+  if (!$("shade").hidden) return closeShade();
+  if (!$("setDrawer").hidden) return void ($("setDrawer").hidden = true);
+  if (page === "settings" && $("setIndex").hidden) return showSetting(null);
+  let prev = pagesBack.pop();
+  while (prev === "call") prev = pagesBack.pop(); // a friend's page closes when you leave it
+  goingBack = true;
+  if (prev === "contacts") showHome();
+  else showPage(prev ?? "home");
+  goingBack = false;
+}
+$("navBack").onclick = goBack;
+$("navHome").onclick = () => { if (state === "idle") showPage("home"); };
+$("navRecents").onclick = () => { if (state === "idle") { callsTab = "recents"; showPage("calls"); } };
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !document.querySelector("dialog[open]")) goBack();
+});
+document.addEventListener("mouseup", (e) => { if (e.button === 3) goBack(); }); // a mouse's side back button
+
+async function refreshData() {
+  const [friends, voicemail] = await Promise.all([
+    fetch("/api/contacts").then((r) => r.json()).catch(() => data.friends),
+    fetch("/api/voicemail").then((r) => r.json()).catch(() => data.voicemail),
+  ]);
+  data.friends = friends;
+  data.voicemail = voicemail;
+  renderNotifications();
+}
+// After a voicemail, a missed call or a change from another window: update whatever is showing.
+async function refreshViews() {
+  await refreshData();
+  if (page === "home") renderHome();
+  if (page === "calls") renderCalls();
+}
+
+// Status bar and home-screen clocks.
+function tickClock() {
+  const now = new Date();
+  $("clock").textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  $("bigClock").textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s?[AP]M$/i, "");
+  $("bigDate").textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+}
+tickClock();
+setInterval(tickClock, 10000);
+setInterval(refreshViews, 60000);
+
+// ---------- Notifications (the bell) ----------
+const avatarHtml = (name, face) => `<span class="c-avatar">${face ? `<img src="/api/face?name=${encodeURIComponent(face)}" alt="">` : esc(name[0])}</span>`;
+function notifications() {
+  const byId = Object.fromEntries(data.friends.map((c) => [c.id, c]));
+  return [
+    ...data.voicemail.filter((v) => !v.heard).map((v) => ({ go: "voicemail", name: v.name, face: v.face, title: `${v.name} left you a voicemail`, sub: v.when })),
+    ...Object.entries(missed).filter(([id]) => byId[id]).map(([id, when]) => ({ go: "recents", name: byId[id].name, face: byId[id].face, title: `Missed call from ${byId[id].name}`, sub: when })),
+    ...data.friends.filter((c) => c.active && !c.hasVoice).map((c) => ({ go: "contacts", name: c.name, face: c.face, title: `${c.name} needs a voice clip`, sub: "They can't be called until they have one." })),
+  ];
+}
+function renderNotifications() {
+  const notes = notifications();
+  $("bellBadge").textContent = notes.length;
+  $("bellBadge").hidden = !notes.length;
+  $("notes").innerHTML = notes.map((n) => `
+    <button class="note" data-note="${n.go}">${avatarHtml(n.name, n.face)}
+      <span><div class="n-title">${esc(n.title)}</div><div class="n-sub">${esc(n.sub)}</div></span></button>`).join("")
+    || `<div class="empty">You're all caught up.</div>`;
+  const fresh = data.voicemail.filter((v) => !v.heard).length + Object.keys(missed).length;
+  $("tabCallsBadge").textContent = fresh;
+  $("tabCallsBadge").hidden = !fresh;
+}
+function closeShade() {
+  $("shade").hidden = true;
+  $("bell").setAttribute("aria-expanded", "false");
+}
+$("statusbar").onclick = $("bell").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("shade").hidden;
+  $("shade").hidden = !open;
+  $("bell").setAttribute("aria-expanded", String(open));
+};
+$("notes").onclick = (e) => {
+  const n = e.target.closest("[data-note]");
+  if (!n || state !== "idle") return;
+  if (n.dataset.note === "contacts") return showHome();
+  callsTab = n.dataset.note;
+  showPage("calls");
+};
+document.addEventListener("click", (e) => {
+  if (!$("shade").hidden && !e.target.closest("#shade")) closeShade();
+  if (!$("setDrawer").hidden && !e.target.closest("#setDrawer, #setMenuBtn")) $("setDrawer").hidden = true;
+});
+
+// ---------- Home ----------
+const APPS = [
+  { go: "calls", ic: "📞", name: "Phone", bg: "#2f9e4f" },
+  { go: "contacts", ic: "👥", name: "Contacts", bg: "#8a5a2b" },
+  { go: "messages", ic: "💬", name: "Messages", bg: "#2f7fd1", soon: true },
+  { go: "voicemail", ic: "📩", name: "Voicemail", bg: "#b8792f" },
+  { go: "add", ic: "➕", name: "Add friend", bg: "#4c6b3a" },
+  { go: "looks", ic: "🎨", name: "Wallpaper", bg: "#7b3f8c" },
+  { go: "settings", ic: "⚙", name: "Settings", bg: "#5a5550" },
+  { go: "help", ic: "❓", name: "Tips", bg: "#3c5a78" },
+];
+async function renderHome() {
+  tickClock();
+  const draw = () => {
+    const fresh = data.voicemail.filter((v) => !v.heard).length;
+    $("apps").innerHTML = APPS.map((a) => `
+      <button class="app ${a.soon ? "soon" : ""}" data-app="${a.go}">
+        <span class="ic" style="background:${a.bg}">${a.ic}</span>${a.name}
+        ${a.go === "voicemail" && fresh ? `<span class="badge">${fresh}</span>` : ""}
+      </button>`).join("");
+    const favs = data.friends.filter((c) => c.active).slice(0, 8);
+    $("favsWrap").hidden = !favs.length;
+    $("favs").innerHTML = favs.map((c) => `<button class="fav" data-fav="${esc(c.id)}">${avatarHtml(c.name, c.face)}${esc(c.name.split(" ")[0])}</button>`).join("");
+  };
+  draw();
+  await refreshData();
+  if (page === "home") draw();
+}
+$("apps").onclick = (e) => {
+  const a = e.target.closest("[data-app]")?.dataset.app;
+  if (!a) return;
+  if (a === "contacts") return showHome();
+  if (a === "voicemail") { callsTab = "voicemail"; return showPage("calls"); }
+  if (a === "add") return $("addFriendDialog").showModal();
+  if (a === "help") return $("helpDialog").showModal();
+  if (a === "looks") { showPage("settings"); return showSetting("looks"); }
+  showPage(a);
+};
+$("favs").onclick = (e) => {
+  const f = e.target.closest("[data-fav]");
+  if (f) openContact(f.dataset.fav);
+};
+
+// ---------- Calls: recents and voicemail ----------
+let callsTab = "recents", listAudio = null, listPlaying = null;
+async function renderCalls() {
+  document.querySelectorAll("[data-calls]").forEach((b) => b.classList.toggle("on", b.dataset.calls === callsTab));
+  const fresh = data.voicemail.filter((v) => !v.heard).length;
+  $("vmSegCount").textContent = fresh ? ` (${fresh})` : "";
+  if (callsTab === "recents") {
+    const items = await fetch("/api/recents").then((r) => r.json()).catch(() => []);
+    if (page !== "calls" || callsTab !== "recents") return;
+    $("callsList").innerHTML = items.map((r) => {
+      const missedCall = r.kind !== "call";
+      const what = r.kind === "call" ? "📞 Call" : r.kind === "missed" ? "Missed call · left a voicemail" : "You declined · left a voicemail";
+      return `<button class="row-item ${missedCall ? "missed" : ""}" data-open="${esc(r.contact)}" data-active="${r.active}">
+        ${avatarHtml(r.name, r.face)}<span class="txt"><div class="t1">${esc(r.name)}</div><div class="t2">${what} · ${esc(r.when)}</div></span><span class="chev">›</span></button>`;
+    }).join("") || `<div class="empty">No calls yet. Pick a friend in Contacts and give them a call.</div>`;
+  } else {
+    await refreshData();
+    if (page !== "calls" || callsTab !== "voicemail") return;
+    $("callsList").innerHTML = data.voicemail.map((v) => `
+      <div class="row-item ${v.heard ? "heard" : ""}" style="cursor:default; align-items:flex-start">
+        ${avatarHtml(v.name, v.face)}
+        <span class="txt"><div class="t1">${v.heard ? "" : `<span class="new-dot"></span>`}${esc(v.name)}</div>
+          <div class="t2">${esc(v.when)}${v.declined ? " · you declined" : " · missed call"}</div>
+          <div class="words">${esc(v.text)}</div></span>
+        <button class="play ${listPlaying === v.id ? "playing" : ""}" data-vm="${esc(v.id)}" data-contact="${esc(v.contact)}" title="${listPlaying === v.id ? "Stop" : "Play"}">${listPlaying === v.id ? "■" : "▶"}</button>
+      </div>`).join("") || `<div class="empty">No voicemail yet. When a friend calls and you miss it, their message shows up here.</div>`;
+  }
+}
+document.querySelector(".segmented").onclick = (e) => {
+  const b = e.target.closest("[data-calls]");
+  if (!b) return;
+  callsTab = b.dataset.calls;
+  renderCalls();
+};
+$("callsList").onclick = async (e) => {
+  const open = e.target.closest("[data-open]");
+  if (open) {
+    if (open.dataset.active === "false") return toast("That friend is turned off. Turn them on in Contacts.");
+    return openContact(open.dataset.open);
+  }
+  const b = e.target.closest("button[data-vm]");
+  if (!b) return;
+  const wasPlaying = listPlaying === b.dataset.vm;
+  listAudio?.pause();
+  listAudio = null;
+  listPlaying = null;
+  if (wasPlaying) return renderCalls();
+  const { contact: who, vm } = b.dataset;
+  const audio = (listAudio = new Audio(`/api/voicemail/audio?contact=${encodeURIComponent(who)}&id=${encodeURIComponent(vm)}`));
+  listPlaying = vm;
+  audio.onended = async () => {
+    listPlaying = null;
+    await fetch("/api/voicemail/heard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: who, id: vm }) }).catch(() => {});
+    if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
+    refreshViews();
+  };
+  audio.play().catch(() => { listPlaying = null; renderCalls(); });
+  renderCalls();
+};
+
+// ---------- Settings: a list, with ☰ to jump between them ----------
+const SETTINGS = [
+  { id: "calls", ic: "📞", name: "Calls", sub: "Interrupting", bg: "#2f9e4f" },
+  { id: "looks", ic: "🎨", name: "Looks", sub: "Wallpaper and call screen", bg: "#7b3f8c" },
+  { id: "account", ic: "🔑", name: "Account", sub: "Your API key", bg: "#8a6a2b" },
+  { id: "about", ic: "ℹ", name: "About", sub: "Call Joe and credits", bg: "#3c5a78" },
+];
+const settingsRows = () => SETTINGS.map((x) => `
+  <button class="row-item" data-set="${x.id}"><span class="ic" style="background:${x.bg}">${x.ic}</span>
+    <span class="txt"><div class="t1">${x.name}</div><div class="t2">${x.sub}</div></span><span class="chev">›</span></button>`).join("");
+function showSetting(id) {
+  $("setIndex").innerHTML = settingsRows();
+  $("setDrawerList").innerHTML = settingsRows();
+  $("setIndex").hidden = !!id;
+  document.querySelectorAll(".set-sub").forEach((el) => (el.hidden = el.id !== `set-${id}`));
+  $("setTitle").textContent = id ? SETTINGS.find((x) => x.id === id).name : "Settings";
+  $("setDrawer").hidden = true;
+  if (id === "calls") $("interruptToggle").checked = voiceInterruptOn();
+  if (id === "looks") renderLooks();
+  if (id === "account") loadKeyState();
+}
+$("setIndex").onclick = $("setDrawerList").onclick = (e) => {
+  const b = e.target.closest("[data-set]");
+  if (b) showSetting(b.dataset.set);
+};
+$("setMenuBtn").onclick = () => { $("setDrawer").hidden = !$("setDrawer").hidden; };
+$("interruptToggle").onchange = (e) => store.set("interruptByVoice", e.target.checked ? "on" : "off");
+
+// Looks: wallpaper and call screen style (saved on the server through theme.js).
+function renderLooks() {
+  const a = Theme.get();
+  const presets = Object.entries(Theme.WALLPAPERS).map(([id, w]) =>
+    `<button class="wall" data-wall="${id}" aria-pressed="${a.wallpaper === id}" style="background:${w.css}">${esc(w.name)}</button>`);
+  const custom = a.v
+    ? `<button class="wall" data-wall="custom" aria-pressed="${a.wallpaper === "custom"}" style="background:url('/api/wallpaper?v=${a.v}') center / cover">Your picture</button>`
+    : "";
+  $("walls").innerHTML = presets.join("") + custom + `<button class="wall add" id="wallAdd"><span style="font-size:20px">＋</span>Your picture</button>`;
+  // Text color, chosen for this wallpaper only; each swatch previews "Aa" on the wallpaper itself.
+  const wallName = a.wallpaper === "custom" ? "your picture" : (Theme.WALLPAPERS[a.wallpaper] ?? Theme.WALLPAPERS.classic).name;
+  $("inkTitle").textContent = `Text color on ${wallName}`;
+  const autoInk = Theme.inkColor({ ...a, ink: {} });
+  $("inks").innerHTML = Object.entries(Theme.INKS).map(([id, k]) =>
+    `<button class="ink-sw" data-ink="${id}" aria-pressed="${(a.ink?.[a.wallpaper] ?? "auto") === id}"><span style="background:${Theme.wallpaperCss().replace(/"/g, "'")}; color:${k.color ?? autoInk}">Aa</span>${k.name}</button>`).join("");
+  $("frames").innerHTML = Object.entries(Theme.FRAMES).map(([id, f]) =>
+    `<button class="frame-sw ${id === "none" ? "none" : ""}" data-frame="${id}" aria-pressed="${(a.frame ?? "black") === id}"><span style="background:${id === "none" ? "" : f.color}"></span>${f.name}</button>`).join("");
+  document.querySelectorAll(".style-card").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.style === a.callStyle)));
+  const f = data.friends.find((c) => c.face) ?? data.friends[0];
+  if (f) {
+    $("mockClassic").style.background = Theme.wallpaperCss();
+    $("mockClassic").style.color = Theme.inkColor();
+    $("mockClassic").innerHTML = `${avatarHtml(f.name, f.face)}<b style="font-size:12px">${esc(f.name)}</b>`;
+    $("mockPhoto").style.background = f.face ? Theme.photoCss(f.face) : "#000";
+    $("mockPhoto").innerHTML = `<b style="font-size:17px;text-shadow:0 2px 8px #000">${esc(f.name)}</b>`;
+  }
+}
+$("walls").onclick = async (e) => {
+  if (e.target.closest("#wallAdd")) return $("wallFile").click();
+  const w = e.target.closest("[data-wall]");
+  if (!w) return;
+  await Theme.save({ wallpaper: w.dataset.wall });
+  applyLooks();
+  renderLooks();
+};
+// Your own picture: shrunk to at most 1920 pixels wide and saved as a JPEG.
+$("wallFile").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  $("wallMsg").className = "msg";
+  $("wallMsg").textContent = "Saving…";
+  try {
+    const img = await createImageBitmap(file);
+    const scale = Math.min(1, 1920 / img.width);
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * scale);
+    c.height = Math.round(img.height * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const jpg = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.88));
+    const res = await fetch("/api/wallpaper", { method: "POST", body: jpg });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error);
+    await Theme.load();
+    applyLooks();
+    renderLooks();
+    $("wallMsg").textContent = "";
+  } catch (err) {
+    $("wallMsg").className = "msg err";
+    $("wallMsg").textContent = err?.message || "Couldn't read that picture. Try a JPG or PNG.";
+  }
+};
+$("inks").onclick = async (e) => {
+  const k = e.target.closest("[data-ink]");
+  if (!k) return;
+  await Theme.save({ ink: { [Theme.get().wallpaper]: k.dataset.ink } });
+  applyLooks();
+  renderLooks();
+};
+$("frames").onclick = async (e) => {
+  const f = e.target.closest("[data-frame]");
+  if (!f) return;
+  await Theme.save({ frame: f.dataset.frame });
+  applyLooks();
+  renderLooks();
+};
+document.querySelector(".styles").onclick = async (e) => {
+  const b = e.target.closest("[data-style]");
+  if (!b) return;
+  await Theme.save({ callStyle: b.dataset.style });
+  renderLooks();
+};
+
+// Account: your API key.
+async function loadKeyState() {
+  const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  $("keyState").textContent = st.hasKey ? "A key is saved. Paste a new one below to replace it." : "No key yet. Paste one below.";
+}
+$("newKeySave").onclick = async () => {
+  const key = $("newKeyInput").value.trim();
+  if (!key) return;
+  $("newKeyMsg").className = "msg";
+  $("newKeyMsg").textContent = "Checking…";
+  const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    $("newKeyMsg").className = "msg err";
+    $("newKeyMsg").textContent = out.error || "That didn't work.";
+    return;
+  }
+  $("newKeyInput").value = "";
+  $("newKeyMsg").className = "msg ok";
+  $("newKeyMsg").textContent = "Saved. Your friends will use the new key from the next call.";
+  loadKeyState();
+};
+
+// ---------- Contacts extras: add a friend, friends you've turned off, the Active switch ----------
+$("addFriendBtn").onclick = () => $("addFriendDialog").showModal();
+$("addFriendClose").onclick = () => $("addFriendDialog").close();
+$("copyCmd").onclick = async () => {
+  try { await navigator.clipboard.writeText("/new-contact"); $("copyCmd").textContent = "Copied ✓"; } catch {}
+};
+$("helpClose").onclick = () => $("helpDialog").close();
+$("offList").onclick = async (e) => {
+  const b = e.target.closest("[data-turn-on]");
+  if (!b) return;
+  await fetch(`/api/contacts/${b.dataset.turnOn}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: true }) });
+  showHome();
+};
+$("activeToggle").onchange = async (e) => {
+  if (!contact) return;
+  await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: e.target.checked }) });
+  contact.active = e.target.checked;
+  toast(e.target.checked ? `${contact.name} is back on your contacts.` : `${contact.name} is turned off. Find them at the bottom of Contacts.`);
+};
+
+showPage("home");
 Theme.load().then(applyLooks); // your wallpaper and call-screen style, saved on the server
 </script>
 </body>

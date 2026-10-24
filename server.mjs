@@ -498,9 +498,14 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/appearance") {
     const a = { wallpaper: "classic", callStyle: "classic", v: 0, ...(config.appearance ?? {}) };
     if (req.method === "PUT") {
-      const { wallpaper, callStyle } = await readBody(req);
+      const { wallpaper, callStyle, frame, ink } = await readBody(req);
       if (/^(custom|[a-z-]{1,30})$/.test(String(wallpaper ?? ""))) a.wallpaper = wallpaper;
       if (["classic", "photo"].includes(callStyle)) a.callStyle = callStyle;
+      if (/^[a-z]{1,20}$/.test(String(frame ?? ""))) a.frame = frame;
+      // ink: { <wallpaper>: <text color name> }
+      for (const [wall, color] of Object.entries(ink && typeof ink === "object" ? ink : {})) {
+        if (/^(custom|[a-z-]{1,30})$/.test(wall) && /^[a-z]{1,20}$/.test(String(color))) a.ink = { ...(a.ink ?? {}), [wall]: color };
+      }
       config.appearance = a;
       writeJson(configFile, config);
     }
@@ -522,10 +527,6 @@ const server = http.createServer(async (req, res) => {
     return fs.createReadStream(wallpaperFile).pipe(res);
   }
 
-  if (req.method === "GET" && (url.pathname === "/settings" || url.pathname === "/settings.html")) {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    return res.end(fs.readFileSync(path.join(dir, "settings.html")));
-  }
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     return res.end(fs.readFileSync(path.join(dir, "index.html")));
@@ -648,6 +649,28 @@ const server = http.createServer(async (req, res) => {
     }
     res.writeHead(200, { "Content-Type": "audio/wav" });
     return Readable.fromWeb(r.body).pipe(res);
+  }
+
+  // ---- Recents: every call (from each friend's call log) plus missed or declined calls (their voicemails) ----
+  if (req.method === "GET" && url.pathname === "/api/recents") {
+    const year = new Date().getFullYear();
+    const items = [];
+    for (const c of listContacts()) {
+      const face = c.settings.face && faceFile(c.settings.face) ? c.settings.face : null;
+      const who = { contact: c.id, name: c.name, face, active: c.active !== false };
+      let log = "";
+      try { log = fs.readFileSync(contactPath(c.id, "call-log.txt"), "utf8"); } catch {}
+      // Headers look like "===== Call on Friday, October 23 at 3:02 PM =====" (no year).
+      for (const m of log.matchAll(/^===== Call on (.+?) =====$/gm)) {
+        const when = m[1];
+        const at = Date.parse(`${when.replace(/^\w+, /, "").replace(" at ", ` ${year} `)}`);
+        if (!Number.isNaN(at)) items.push({ ...who, kind: "call", when, at: new Date(at > Date.now() + 864e5 ? at - 31536e6 : at).toISOString() });
+      }
+      for (const v of readVoicemails(c.id)) {
+        items.push({ ...who, kind: v.declined ? "declined" : "missed", when: v.when, at: v.at, voicemail: v.id, heard: v.heard });
+      }
+    }
+    return json(res, 200, items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100));
   }
 
   // ---- Voicemail ----

@@ -15,18 +15,22 @@ Desktop voice and video calls with AI friends powered by Claude. Joe Tucker ("Jo
 
 Open Claude Code in this folder and type `/new-contact`, then give Claude a name, a few sentences about who they are, a short voice clip and a face picture. Details are in `docs/building-a-contact.md`.
 
-## Settings (⚙ on the friends list)
+## The phone
 
-Opens in its own tablet-style window (`settings.html`), laid out like a phone: a clock and 🔔 notifications at the top (new voicemails, friends who need a voice clip), and tabs at the bottom:
-- **Friends:** every friend, with an Active switch. Only active friends show on the friends list and call you; turning a friend off keeps their memory. Each friend's own page will go here later.
-- **Voicemail:** messages friends left when you missed or declined their call, with play buttons.
-- **Calls:** interrupt by talking, on or off.
-- **Looks:** a wallpaper (presets, or your own picture) for Call Joe and Settings, and the call screen style: Classic (the default) or Photo, where the friend's picture fills the screen with their name across it.
-- **Account:** change your Anthropic API key.
+Call Joe looks and works like an Android phone, inside a thin phone outline:
+- **Status bar:** the time, and 🔔 notifications (new voicemails, missed calls, friends who need a voice clip). Click it to pull them down.
+- **Home:** a clock, app icons (Phone, Contacts, Messages, Voicemail, Add friend, Wallpaper, Settings, Tips) and your favorite friends in the dock.
+- **Tabs, always at the bottom:** Calls, Contacts, Messages and Settings.
+  - **Calls:** Recents (every call, missed call and declined call) and Voicemail, with play buttons.
+  - **Contacts:** your active friends, the ＋ button to add one, and friends you've turned off (with Turn on).
+  - **Messages:** texting your friends is coming later.
+  - **Settings:** a list of settings; ☰ jumps between them. Calls (interrupt by talking), Looks, Account (your API key) and About.
+- **Navigation buttons:** ◁ back, ○ home, □ recent calls. Esc and a mouse's back button also go back.
+- **Looks:** a wallpaper (presets, including softer ones like Blush, Lavender, Peach, Rose gold and Floral, or your own picture), the text color on it (picked separately for each wallpaper; Auto suits it), the phone outline color (black by default, or None), and the call screen style: Classic (the default) or Photo, where the friend's picture fills the screen.
 
-Changes show up in the main window right away.
+## Each friend's settings (✎ Edit on their page)
 
-## Each friend's settings (⚙ on their call screen)
+- **Show on your contacts:** turn a friend off to hide them and stop their calls. Their memory is kept.
 
 - **Calls you:** how often this friend rings you while the app is open: never, now and then, or often. The "Try it" button makes them call in a few seconds.
 - **Brain:** Haiku (fastest, cheapest), Sonnet (default), or Opus (deepest). Their notes about you are always written by Opus.
@@ -41,7 +45,8 @@ Changes show up in the main window right away.
 - `contacts/<id>/persona.md` — who each friend is (Joe is `contacts/joe/`). `contacts/_call-rules.md` holds the phone and safety rules every new friend gets.
 - `tools/contact.py` — builds and manages friends: persona, voice clip, face picture.
 - `server.mjs` — local server that talks to Claude and runs the voice and face engines.
-- `index.html` — the friends list and call screen.
+- `index.html` — the phone: home screen, contacts, calls, settings and the call screen.
+- `theme.js` — the looks: wallpapers, text colors and phone outlines.
 - `voice/` — the Chatterbox installer and its local voice server.
 - `video/` — the Ditto installer, the face server for video calls, and the speed-ups that make it fast enough to run live.
 - `data/` — your API keys, each friend's memory notes and call logs (`data/contacts/<id>/`), voice samples and face pictures. Never committed.
