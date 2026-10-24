@@ -899,6 +899,13 @@
     <span class="txt"><div class="t1">Cussing</div><div class="t2">Let <span class="fn">Joe</span> swear the way they naturally would. Off, they keep it clean. Takes effect on their next call or text.</div></span>
     <input type="checkbox" class="switch" id="cussToggle" aria-label="Cussing">
   </label>
+  <label for="flirtSelect">Flirting</label>
+  <select id="flirtSelect">
+    <option value="off">Off</option>
+    <option value="playful">Playful (a little teasing and charm)</option>
+    <option value="romantic">Romantic (openly into you, PG-13)</option>
+  </select>
+  <div class="hint">Never explicit. Takes effect on their next call or text.</div>
   <details id="learnedWrap" style="margin-top:12px"><summary style="cursor:pointer">What <span class="fn">Joe</span> has learned about you</summary><div id="learnedBox"></div></details>
   <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
   <div class="face-row">
@@ -1670,6 +1677,7 @@ $("settingsBtn").onclick = async () => {
   $("modelSelect").value = store.get("model", "sonnet");
   $("activeToggle").checked = contact.active !== false;
   $("cussToggle").checked = !!contact.cussing;
+  $("flirtSelect").value = contact.flirting ?? "off";
   $("callsYouSelect").value = store.get("callsYou", "never");
   $("textsYouSelect").value = store.get("textsYou", "sometimes");
   $("learnedWrap").open = false;
@@ -1980,7 +1988,7 @@ const FAMILY_ORDER = ["spouse", "mom", "dad", "sister", "brother", "grandparent"
 // the app closed doesn't count. Roles not listed don't call back. The line itself starts fresh each time the app opens.
 const WORRY_HOURS = {
   mom: [1.5, 4], spouse: [1.5, 4], dad: [5, 20], grandparent: [5, 20],
-  sister: [8, 24], brother: [8, 24], "best-friend": [8, 24],
+  sister: [8, 24], brother: [8, 24], "best-friend": [8, 24], "romantic-interest": [6, 18],
   "close-friend": [24, 48], aunt: [24, 48], uncle: [24, 48], cousin: [24, 48],
 };
 const WORRY_SCALE = { high: 0.6, normal: 1, low: 1.6 }; // a friend's personality (friend.json "worry")
@@ -1991,7 +1999,7 @@ const randomGap = () => (3 + Math.random() * 9) * 60 * 1000; // 3 to 12 minutes 
 
 const callRank = (c) => {
   const family = FAMILY_ORDER.indexOf(c.role);
-  return family >= 0 ? family : c.role === "best-friend" ? FAMILY_ORDER.length : FAMILY_ORDER.length + 1;
+  return family >= 0 ? family : ["best-friend", "romantic-interest"].includes(c.role) ? FAMILY_ORDER.length : FAMILY_ORDER.length + 1;
 };
 const priorityCaller = (c) => callRank(c) <= FAMILY_ORDER.length;
 function worriedCallback(c) {
@@ -2764,6 +2772,12 @@ $("offList").onclick = async (e) => {
   if (!b) return;
   await fetch(`/api/contacts/${b.dataset.turnOn}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: true }) });
   showHome();
+};
+$("flirtSelect").onchange = async (e) => {
+  if (!contact) return;
+  await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ flirting: e.target.value }) });
+  contact.flirting = e.target.value;
+  toast({ off: `${contact.name} won't flirt.`, playful: `${contact.name} will flirt a little.`, romantic: `${contact.name} is into you now.` }[e.target.value]);
 };
 $("cussToggle").onchange = async (e) => {
   if (!contact) return;

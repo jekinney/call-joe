@@ -129,3 +129,4 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 ## Live game news on calls (October 23, 2026)
 
 - Chosen over screen watching (video frames cost far more). The game watcher checks ESPN once a minute. On a call (or on hold) with a fan of that team, a score goes into the call instead of a text: it's added to your next words ("Just now, you see on your TV: the Vikings just scored…"), so they react right away. Otherwise they text as before.
+- **Flirting and romantic interests** (October 23, 2026): per-friend `flirting` (off, playful, romantic) adds `contacts/_flirting/<level>.md` to the prompt; the `romantic-interest` relationship (in the friends group, so friendships can turn romantic) defaults to romantic. Never explicit: Anthropic's policy, which no prompt changes, so the instructions keep it suggestive and fade to black in character.

@@ -40,6 +40,7 @@ Call Joe looks and works like an Android phone, inside a thin phone outline:
 ## Each friend's settings (✎ Edit on their page)
 
 - **Show on your contacts:** turn a friend off to hide them and stop their calls. Their memory is kept.
+- **Flirting:** Off, Playful (a little teasing and charm) or Romantic (openly into you). Never explicit: Claude keeps it suggestive at most and fades to black in character. The **Romantic interest** relationship flirts romantically by default; a friendship can turn romantic and back.
 - **Cussing:** let them swear the way they naturally would, or keep it clean (the default). It's also a checkbox when you install a friend; it starts checked for friends who swear by nature, like George.
 
 - **Calls you:** how often this friend rings you while the app is open: never, rarely (every few days), about once a day, now and then (every few hours), often (about hourly) or constantly (a few times an hour). The "Try it" button makes them call in a few seconds.

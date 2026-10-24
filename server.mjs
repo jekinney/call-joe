@@ -428,6 +428,16 @@ const languageRules = (c) => {
   try { return fs.readFileSync(path.join(personasDir, "_language", c.cussing ? "cussing.md" : "clean.md"), "utf8").trim(); } catch { return ""; }
 };
 
+// Flirting: off unless you set it (✎ Edit), except a romantic interest, who flirts romantically by default. PG-13 at
+// most: contacts/_flirting/ keeps it suggestive, never explicit.
+const FLIRTING = ["off", "playful", "romantic"];
+const flirtingOf = (c) => (FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
+const flirtingRules = (c) => {
+  const level = flirtingOf(c);
+  if (level === "off") return "";
+  try { return fs.readFileSync(path.join(personasDir, "_flirting", `${level}.md`), "utf8").trim(); } catch { return ""; }
+};
+
 async function systemPrompt(c) {
   if (c.support) return supportPrompt(c);
   // Official friends use their merged identity; until then, the persona and relationship as written.
@@ -448,6 +458,7 @@ async function systemPrompt(c) {
     aboutBuddy(c),
     treatment(c),
     languageRules(c),
+    flirtingRules(c),
     reachingOut(c),
     missedCalls(c),
     ENDING_THE_CALL,
@@ -472,6 +483,7 @@ const CALL_MARK = "<call>";
 const TEXTS_BEFORE_CALL = {
   mom: 4, dad: 5, grandparent: 3, spouse: 8, sister: 8, brother: 8, "best-friend": 10, "girlfriend-bestie": 12,
   "close-friend": 8, cousin: 8, aunt: 5, uncle: 5, friend: 6, "family-friend": 5, neighbor: 4, coworker: 4,
+  "romantic-interest": 12,
 };
 const TEXTING_SCALE = { calls: 0.6, normal: 1, texts: 1.5 };
 function textsBeforeCall(c) {
@@ -564,6 +576,7 @@ const TEXT_HABITS = {
   "best-friend": ["a random funny observation, like describing a meme", "venting about their day", "making plans", "checking on something the buddy told them", "'omg you will not believe this'"],
   "girlfriend-bestie": ["'omg you will not believe this'", "venting about her day", "hyping her up or a compliment", "making plans for girls' night", "checking on something she told you", "a funny thing that happened"],
   "close-friend": ["checking in", "sharing something that reminded them of the buddy", "making plans"],
+  "romantic-interest": ["a flirty good-morning or goodnight text", "'thinking about you'", "a playful tease", "asking how their day is going", "a compliment out of nowhere", "'when do I get to see you?'"],
   friend: ["checking in", "sharing something that reminded them of the buddy"],
   "family-friend": ["a warm check-in and asking after the family"],
   cousin: ["family gossip", "a funny memory from when you were kids", "a check-in"],
@@ -577,6 +590,7 @@ const TEXT_HABITS = {
 const TEXTS_PER_DAY = {
   mom: 2, dad: 0.7, spouse: 3, sister: 3, brother: 1.5, "best-friend": 3, "girlfriend-bestie": 3.5, "close-friend": 1.5,
   friend: 0.7, "family-friend": 0.4, cousin: 1, aunt: 0.5, uncle: 0.5, grandparent: 0.5, neighbor: 0.3, coworker: 0.4,
+  "romantic-interest": 2.5,
 };
 function textHabit(c) {
   const own = c.textHabits ?? catalogEntry(c.id)?.textHabits ?? [];
@@ -859,14 +873,14 @@ const ROLE_CHOICES = [
   ["family-friend", "Family friend"],
   ["neighbor", "Neighbor"], ["coworker", "Coworker"], ["mom", "Mom"], ["dad", "Dad"], ["sister", "Sister"],
   ["brother", "Brother"], ["grandparent", "Grandparent"], ["aunt", "Aunt"], ["uncle", "Uncle"], ["cousin", "Cousin"],
-  ["spouse", "Spouse"],
+  ["spouse", "Spouse"], ["romantic-interest", "Romantic interest"],
 ];
 // Relationships that make sense. Family by blood or marriage has a gender (a man can't be your sister) and, once you've
 // talked or texted, is fixed for good: your sister can't later become your wife or your coworker. Friendships can grow
 // closer or drift (best friend <-> close friend <-> friend <-> distant friend), and anyone in the friends group can be
 // moved anywhere in it. Before the first call or text, anything that fits their gender is fine.
 const ROLE_GENDER = { mom: "woman", sister: "woman", aunt: "woman", dad: "man", brother: "man", uncle: "man" };
-const FRIEND_ROLES = new Set(["best-friend", "close-friend", "friend", "distant-friend", "family-friend", "neighbor", "coworker"]);
+const FRIEND_ROLES = new Set(["best-friend", "close-friend", "friend", "distant-friend", "family-friend", "neighbor", "coworker", "romantic-interest"]);
 const hasTalked = (c) => (c.memory?.calls ?? 0) > 0 || readJson(contactPath(c.id, "texts.json"), []).length > 0;
 function roleChoicesFor(gender, current, talked) {
   const fits = ROLE_CHOICES.filter(([r]) => !ROLE_GENDER[r] || !gender || ROLE_GENDER[r] === gender);
@@ -914,7 +928,7 @@ function installFriend(id, role, cussing = false) {
   fs.mkdirSync(path.join(contactsDir, id), { recursive: true });
   writeJson(contactPath(id, "contact.json"), {
     name: f.name, created: new Date().toISOString(), gender: f.gender, settings,
-    role: resolveRole(role, f.gender), ...(cussing ? { cussing: true } : {}), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
+    role: resolveRole(role, f.gender), ...(cussing ? { cussing: true } : {}), ...(FLIRTING.includes(f.flirting) && f.flirting !== "off" ? { flirting: f.flirting } : {}), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
   });
   for (const l of links) {
     const other = loadContact(l.id);
@@ -1794,7 +1808,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === "PUT") {
-      const { settings = {}, active, role, cussing } = await readBody(req);
+      const { settings = {}, active, role, cussing, flirting } = await readBody(req);
+      if (FLIRTING.includes(flirting)) c.flirting = flirting;
       const bad = (k) => (k === "callsYou" && !CALL_FREQ[settings[k]]) || (k === "textsYou" && !TEXT_FREQ[settings[k]]);
       for (const k of SETTING_KEYS) if (k in settings && !bad(k)) c.settings[k] = settings[k];
       if (cussing === true) c.cussing = true;
@@ -1821,7 +1836,7 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 200, {
       id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy, role: shownRole(c.role ?? "friend"),
-      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall, cussing: !!c.cussing,
+      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall, cussing: !!c.cussing, flirting: flirtingOf(c),
     });
   }
 
