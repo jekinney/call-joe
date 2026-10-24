@@ -606,6 +606,7 @@ function installFriend(id, role) {
   role = ROLE_CHOICES.some(([r]) => r === role) ? role : f.roles?.[yourGender()] ?? "friend";
   const folder = path.join(personasDir, id);
   const settings = { model: MODELS[f.model] ? f.model : DEFAULT_MODEL, cbVoice: `${f.name} voice` };
+  if (["sometimes", "often"].includes(f.callsYou)) settings.callsYou = f.callsYou; // like Coop, who's clingy
   fs.mkdirSync(voicesDir, { recursive: true });
   fs.copyFileSync(path.join(folder, "voice.wav"), path.join(voicesDir, `${settings.cbVoice}.wav`));
   if (fs.existsSync(path.join(folder, "face.png"))) {

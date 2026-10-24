@@ -41,7 +41,8 @@ Commands:
                                           first-time setup): copies their voice sample and face into
                                           contacts/<id>/ and writes contacts/<id>/friend.json with their
                                           defaults (model, live knowledge, links, and the relationship they
-                                          start with for a man or a woman). Run it after building a friend.
+                                          start with for a man or a woman, and how often they call you).
+                                          Run it after building a friend.
 
 A friend's id is short and lowercase, like "joe" or "uncle-earl". Their memory and call logs are never
 touched by this tool except "reset" and "remove", which move them to an archive folder.
@@ -417,6 +418,7 @@ def cmd_publish(args):
         "gender": args.gender,
         "about": args.about.strip(),
         "model": s.get("model", "sonnet"),
+        **({"callsYou": s["callsYou"]} if s.get("callsYou") and s["callsYou"] != "never" else {}),
         "roles": {"man": args.role_man, "woman": args.role_woman},
         **({"knows": info["knows"]} if info.get("knows") else {}),
         **({"links": info["links"]} if info.get("links") else {}),
