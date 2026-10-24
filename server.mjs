@@ -711,7 +711,7 @@ async function proposeLifeUpdate(c, update) {
     const fresh = loadContact(c.id);
     const notesBefore = fresh.memory.notes ?? "";
     fs.mkdirSync(contactPath(c.id, "persona-history"), { recursive: true });
-    fs.writeFileSync(contactPath(c.id, "persona-history", `${new Date().toISOString().replace(/[:.]/g, "-")}.md`), persona);
+    fs.writeFileSync(path.join(contactPath(c.id, "persona-history"), `${new Date().toISOString().replace(/[:.]/g, "-")}.md`), persona);
     fs.writeFileSync(file, `${out.persona.trim()}\n\n${i >= 0 ? persona.slice(i) : ""}`.trimEnd() + "\n");
     const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
     fresh.memory.notes = `${notesBefore}\n- Recent news in your own life (${today}): ${update}.`.trim();
@@ -827,8 +827,9 @@ async function supportCommand(text) {
   if (word === "yes") {
     if (!supportProposal) return "There's nothing waiting for a yes.";
     const p = supportProposal;
+    const done = await p.apply(); // if it fails, the change stays waiting so /yes can try again
     supportProposal = null;
-    return p.apply();
+    return done;
   }
   if (word === "no") { supportProposal = null; return "Okay, I left it as it was."; }
   if (word === "undo") return undoLast();
