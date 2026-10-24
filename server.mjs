@@ -1631,21 +1631,29 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
   if (req.method === "POST" && (url.pathname === "/api/texts/send" || url.pathname === "/api/texts/start")) {
-    const { contact, text, gif } = await readBody(req);
+    const { contact, text, gif, gifs } = await readBody(req);
     const c = loadContact(contact);
     if (!c) return json(res, 400, { error: "No such friend." });
     if (config.airplane) return json(res, 400, { error: "Airplane mode is on." });
-    const sentGif = gif?.url && /^https:\/\/media\d*\.giphy\.com\//.test(gif.url) ? { url: gif.url, title: String(gif.title ?? "GIF").slice(0, 100) } : null;
-    if (sentGif && !config.airplane) {
-      const desc = await describeGif(sentGif);
-      if (desc) sentGif.desc = desc;
+    // GIFs you stacked up before pressing send (up to 6), each described so the friend knows what it shows.
+    const sentGifs = (Array.isArray(gifs) ? gifs : gif ? [gif] : []).slice(0, 6)
+      .filter((g) => g?.url && /^https:\/\/media\d*\.giphy\.com\//.test(g.url))
+      .map((g) => ({ url: g.url, title: String(g.title ?? "GIF").slice(0, 100) }));
+    if (sentGifs.length && !config.airplane) {
+      await Promise.all(sentGifs.map(async (g) => {
+        const desc = await describeGif(g);
+        if (desc) g.desc = desc;
+      }));
     }
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const opener = url.pathname.endsWith("/start");
     if (!opener) {
       const said = String(text ?? "").trim().slice(0, 2000);
-      if (!said && !sentGif) return json(res, 400, { error: "Nothing to send." });
-      writeTexts(c.id, [...readTexts(c.id), { id: `${Date.now()}`, from: "me", text: said, ...(sentGif ? { gif: sentGif } : {}), at: new Date().toISOString(), read: true }]);
+      if (!said && !sentGifs.length) return json(res, 400, { error: "Nothing to send." });
+      const at = new Date().toISOString(), stamp = Date.now();
+      const mine = sentGifs.map((g, i) => ({ id: `${stamp}-${i}`, from: "me", text: "", gif: g, at, read: true }));
+      if (said) mine.push({ id: `${stamp}`, from: "me", text: said, at, read: true });
+      writeTexts(c.id, [...readTexts(c.id), ...mine]);
     }
     try {
       return json(res, 200, await friendTexts(c, { opener }));

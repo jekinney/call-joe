@@ -323,6 +323,12 @@
   .gif-grid img { width: 100%; border-radius: 8px; margin-bottom: 6px; cursor: pointer; display: block; }
   .gif-credit { font-size: 10px; color: var(--muted); text-align: right; }
   .bubble.gif { padding: 4px; background: none !important; }
+  /* GIFs waiting to be sent, above the text box */
+  .gif-tray { display: flex; gap: 8px; padding: 8px 12px 0; width: 100%; align-self: stretch; box-sizing: border-box; background: rgba(24, 19, 15, .94); overflow-x: auto; }
+  .gif-tray[hidden] { display: none; }
+  .gif-tray .g { position: relative; flex: none; }
+  .gif-tray img { height: 72px; border-radius: 10px; display: block; }
+  .gif-tray .x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: #000; color: #fff; font-size: 13px; cursor: pointer; line-height: 22px; padding: 0; }
   .bubble.gif img { display: block; max-width: 220px; border-radius: 16px; }
   .bubble { position: relative; }
   .bubble .tap { position: absolute; top: -10px; left: -10px; background: #3a2f26; border: 2px solid var(--bg); border-radius: 12px; font-size: 13px; padding: 1px 5px; }
@@ -534,6 +540,7 @@
     <div class="gif-grid" id="gifGrid"></div>
     <div class="gif-credit">Powered by GIPHY</div>
   </div>
+  <div class="gif-tray" id="gifTray" hidden></div>
   <div class="composer">
     <button class="comp-btn" id="emojiBtn" title="Emoji">😊</button>
     <button class="comp-btn gif-btn" id="gifBtn" title="GIF">GIF</button>
@@ -2799,6 +2806,7 @@ async function openThread(id) {
   const f = data.friends.find((c) => c.id === id) ?? (await refreshData(), data.friends.find((c) => c.id === id));
   if (!f) return;
   showPage("thread");
+  if (threadId !== id) { pendingGifs = []; renderGifTray(); }
   threadId = id;
   $("threadName").textContent = f.name;
   $("threadAvatar").innerHTML = f.face ? `<img src="/api/face?name=${encodeURIComponent(f.face)}" alt="">` : esc(f.name[0]);
@@ -2867,19 +2875,37 @@ async function showTheirTexts(id, texts) {
   }
   if (threadId === id) markRead(id); else refreshViews();
 }
-async function sendText(gif = null) {
-  const text = gif ? "" : $("textInput").value.trim();
+// GIFs you pick wait above the text box until you press send, so you can stack a few (and add words), like a phone.
+let pendingGifs = [];
+function renderGifTray() {
+  $("gifTray").hidden = !pendingGifs.length;
+  $("gifTray").innerHTML = pendingGifs.map((g, i) =>
+    `<span class="g"><img src="${esc(g.small ?? g.url)}" alt="${esc(g.title)}"><button class="x" data-unpick="${i}" title="Remove">×</button></span>`).join("");
+}
+$("gifTray").onclick = (e) => {
+  const x = e.target.closest("[data-unpick]");
+  if (!x) return;
+  pendingGifs.splice(Number(x.dataset.unpick), 1);
+  renderGifTray();
+};
+async function sendText() {
+  const text = $("textInput").value.trim();
+  const gifs = pendingGifs;
   const id = threadId;
-  if ((!text && !gif) || !id || textBusy) return;
-  if (!gif) $("textInput").value = "";
+  if ((!text && !gifs.length) || !id || textBusy) return;
+  $("textInput").value = "";
+  pendingGifs = [];
+  renderGifTray();
   $("emojiPanel").hidden = $("gifPanel").hidden = true;
   await ensureReady(id);
-  const mine = addBubble("me", text, undefined, gif ? { gif } : {});
+  let mine = null;
+  for (const gif of gifs) mine = addBubble("me", "", undefined, { gif: { url: gif.url, title: gif.title } });
+  if (text) mine = addBubble("me", text);
   textBusy = true;
   $("textSend").disabled = true;
   await sleep(900);
   if (threadId === id) showTyping(true);
-  const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text, gif }) }).catch(() => null);
+  const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text, gifs: gifs.map((g) => ({ url: g.url, title: g.title })) }) }).catch(() => null);
   const out = await res?.json().catch(() => ({}));
   if (threadId === id) showTyping(false);
   textBusy = false;
@@ -2942,7 +2968,10 @@ $("gifBtn").onclick = () => {
 $("gifSearch").oninput = () => { clearTimeout(gifTimer); gifTimer = setTimeout(() => loadGifs($("gifSearch").value.trim()), 400); };
 $("gifGrid").onclick = (e) => {
   const img = e.target.closest("img[data-url]");
-  if (img) sendText({ url: img.dataset.url, title: img.alt });
+  if (!img) return;
+  if (pendingGifs.length >= 6) return toast("That's plenty of GIFs. Send these first.");
+  pendingGifs.push({ url: img.dataset.url, small: img.src, title: img.alt });
+  renderGifTray();
 };
 $("textInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } };
 $("threadBack").onclick = () => goBack();
