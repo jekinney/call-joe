@@ -3087,6 +3087,7 @@ async function sendText() {
   const id = threadId;
   if ((!text && !gifs.length) || !id || textBusy) return;
   const support = id === supportId;
+  const direct = !support && /^\/ai\b/i.test(text); // a direction to them, not a text: no bubble, an answer right away
   $("textInput").value = "";
   pendingGifs = [];
   renderGifTray();
@@ -3094,11 +3095,12 @@ async function sendText() {
   await ensureReady(id);
   let mine = null;
   for (const gif of gifs) mine = addBubble("me", "", undefined, { gif: { url: gif.url, title: gif.title } });
-  if (text) mine = addBubble("me", text);
+  if (text && !direct) mine = addBubble("me", text);
+  if (direct) toast(`Asked ${data.friends.find((c) => c.id === id)?.name.split(" ")[0] ?? "them"}: ${text.replace(/^\/ai\b[:\s]*/i, "")}`, 4);
   textBusy = true;
   $("textSend").disabled = true;
-  await sleep(support ? 300 : 900);
-  if (threadId === id && support) showTyping(true); // a friend's typing bubble shows when they really start replying
+  await sleep(support || direct ? 300 : 900);
+  if (threadId === id && (support || direct)) showTyping(true); // a friend's typing bubble shows when they really start replying
   const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text, gifs: gifs.map((g) => ({ url: g.url, title: g.title })) }) }).catch(() => null);
   const out = await res?.json().catch(() => ({}));
   if (threadId === id) showTyping(false);

@@ -916,6 +916,26 @@ async function supportText(sup, said) {
   return friendTexts(sup, {});
 }
 
+// ---- /ai: telling a friend what to do ----
+// A text to a friend that starts with /ai is a direction from you, not part of the conversation: "/ai send a pic of you
+// at lunch". They do it right away, in character and within all their rules (and Claude's), without arguing, asking
+// why, or turning it into a call. The /ai text itself isn't shown or remembered; what they send is.
+async function aiDirect(c, ask) {
+  const added = [];
+  let photo = null;
+  if (/\b(pics?|pictures?|photos?|selfies?|images?|snap(shot)?)\b/i.test(ask)) {
+    photo = await friendPhoto(c, ask).catch((err) => (console.error("Photo failed:", err?.message ?? err), null));
+    if (!photo) throw new Error("That picture couldn't be made right now. Try again in a bit, or describe it another way.");
+    added.push({ id: `${Date.now()}-p`, from: "them", text: "", photo, at: new Date().toISOString(), read: false });
+    writeTexts(c.id, [...readTexts(c.id), ...added]);
+  }
+  const direct = photo
+    ? `(Your buddy asked you for a photo, and you just sent it. It shows: ${photo.desc}. Text one short line to go with it, in your own style. Don't ask about it, don't argue, don't say you'll call, and don't send another photo.)`
+    : `(A direction from your buddy, who set you up, given outside the conversation: "${ask}". Your next texts must be exactly that, in your own voice and within your rules, and nothing else: not a reaction to earlier texts, not a complaint that they haven't answered, not a question about it, and not an offer to call instead.)`;
+  const out = await friendTexts(c, { direct, noPhoto: true }); // only the photo you asked for
+  return { texts: [...added, ...out.texts], call: false, reaction: null };
+}
+
 // ---- Text messages ----
 // data/contacts/<id>/texts.json: [{ id, from: "me" | "them", text, at, read, remembered }]. Friends text back short,
 // the way people really text. A long back-and-forth turns into a phone call (they text that they're calling and ring
@@ -1313,16 +1333,16 @@ function textHabit(c) {
 const textsPerDay = (c) => (TEXTS_PER_DAY[c.role] ?? 0.7) * (c.textScale ?? catalogEntry(c.id)?.textScale ?? 1);
 
 // Asks the friend for their next text(s). opener: they're texting first; about: what prompted it.
-async function friendTexts(c, { opener = false, about = null, noPhoto = false, late = null } = {}) {
+async function friendTexts(c, { opener = false, about = null, noPhoto = false, late = null, direct = null } = {}) {
   const list = readTexts(c.id);
   const thread = currentThread(list);
   const mine = thread.filter((t) => t.from === "me").length;
-  const wantsCall = !opener && !c.support && mine >= textsBeforeCall(c); // Support never rings you
-  const note = opener
+  const wantsCall = !direct && !opener && !c.support && mine >= textsBeforeCall(c); // Support never rings you
+  const note = direct ?? (opener
     ? `(You decide to text your buddy, on your own. What prompted it: ${about ?? textHabit(c)}. Text the way you would. Just the text.)`
     : wantsCall
       ? `(This text conversation has gone on a while, and you'd rather just talk. Text that you're calling, in your own style, and end with ${CALL_MARK}.)`
-      : null;
+      : null);
   const noPhotoNote = noPhoto ? "(You can't send a photo right now. Text without one, and don't say you're sending or sent one.)" : null;
   const waited = late?.since ? Date.now() - Date.parse(late.since) : 0;
   const ago = waited > 90 * 60 * 1000 ? `${Math.round(waited / 3600000)} hours` : `${Math.round(waited / 60000)} minutes`;
@@ -1340,7 +1360,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false, l
   });
   if (msg.stop_reason === "refusal") throw new Error("They couldn't text back right now.");
   let raw = untag(textOf(msg.content));
-  const call = raw.includes(CALL_MARK);
+  const call = !direct && raw.includes(CALL_MARK); // a direct /ai request never turns into a call
   raw = raw.replaceAll(CALL_MARK, "");
   // A tapback on your last text: [react: 😂]
   let reaction = null;
@@ -1355,7 +1375,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false, l
     if (ph && noPhoto) entry.text = part.replace(/\[photo:[^\]]*\]/gi, "").trim();
     else if (ph) {
       const photo = await friendPhoto(c, ph[1].trim()).catch((err) => (console.error("Photo failed:", err?.message ?? err), null));
-      if (!photo) return friendTexts(c, { opener, about, late, noPhoto: true }); // nothing sent yet: text again without it
+      if (!photo) return friendTexts(c, { opener, about, late, direct, noPhoto: true }); // nothing sent yet: text again without it
       const words = part.replace(/\[photo:[^\]]*\]/gi, "").trim();
       if (words) added.push({ ...entry, id: `${now + i}-t`, text: words });
       Object.assign(entry, { text: "", photo });
@@ -2537,6 +2557,12 @@ const server = http.createServer(async (req, res) => {
     if (!opener) {
       const said = String(text ?? "").trim().slice(0, 2000);
       if (!said && !sentGifs.length) return json(res, 400, { error: "Nothing to send." });
+      if (!c.support && /^\/ai\b/i.test(said)) {
+        const ask = said.replace(/^\/ai\b[:\s]*/i, "").trim();
+        if (!ask) return json(res, 400, { error: "Tell them what to do after /ai, like: /ai send a pic of you at lunch" });
+        noteActivity();
+        try { return json(res, 200, { ...(await aiDirect(c, ask)), direct: true }); } catch (err) { return json(res, 502, { error: err?.message ?? String(err) }); }
+      }
       const at = new Date().toISOString(), stamp = Date.now();
       const mine = sentGifs.map((g, i) => ({ id: `${stamp}-${i}`, from: "me", text: "", gif: g, at, read: true }));
       if (said) mine.push({ id: `${stamp}`, from: "me", text: said, at, read: true });
