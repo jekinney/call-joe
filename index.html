@@ -3179,16 +3179,13 @@ async function friendTextsYou(c) {
 }
 
 // ---------- Becoming official ----------
-// At your first call or text, a friend's personality and relationship are merged into one identity (once, by the
-// server). It takes a few seconds, so a "Creating…" screen covers the wait.
+// At your first call or text (and after their persona or relationship changes), a friend's personality and
+// relationship are merged into one identity by the server, in the background. Nothing waits on it: until it's
+// ready, they talk from their persona as written.
 async function ensureReady(id) {
-  const f = data.friends.find((c) => c.id === id) ?? (await refreshData(), data.friends.find((c) => c.id === id));
+  const f = data.friends.find((c) => c.id === id);
   if (!f || f.ready) return;
-  $("creatingTitle").textContent = `Creating ${f.name.split(" ")[0]}…`;
-  $("creating").hidden = false;
-  const out = await fetch(`/api/contacts/${id}?do=prepare`, { method: "POST" }).then((r) => r.json()).catch(() => ({}));
-  $("creating").hidden = true;
-  if (out.ready) f.ready = true;
+  fetch(`/api/contacts/${id}?do=prepare`, { method: "POST" }).catch(() => {});
 }
 
 // What a friend has learned about you, in their ✎ Edit.

@@ -289,6 +289,21 @@ const identityFile = (id) => contactPath(id, "identity.md");
 function identityReady(c) {
   return c.identity?.hash === identitySource(c).hash && fs.existsSync(identityFile(c.id));
 }
+// Identities are built (and rebuilt after a persona, relationship or gender change) in the background. Until the new
+// one is ready, the friend talks from their persona and relationship as written (systemPrompt's fallback), so you
+// never wait on a "Creating…" screen.
+const buildingIdentity = new Set();
+function refreshIdentity(c) {
+  if (!c || c.support || buildingIdentity.has(c.id) || identityReady(c) || !getClient()) return;
+  buildingIdentity.add(c.id);
+  buildIdentity(c)
+    .then(() => console.log(`${c.name}'s identity is ready`))
+    .catch((err) => console.error(`Building ${c.name}'s identity failed:`, err?.message ?? err))
+    .finally(() => buildingIdentity.delete(c.id));
+}
+// At startup, friends whose persona changed while the app was closed (tools/contact.py persona) get rebuilt.
+setTimeout(() => { for (const c of listContacts()) if (c.identity) refreshIdentity(c); }, 5000);
+
 async function buildIdentity(c) {
   const src = identitySource(c);
   const msg = await getClient().messages.create({
@@ -475,6 +490,7 @@ async function systemPrompt(c) {
   // Official friends use their merged identity; until then, the persona and relationship as written.
   const src = identitySource(c);
   const persona = identityReady(c) ? `${fs.readFileSync(identityFile(c.id), "utf8").trim()}\n\n${src.rules}` : null;
+  if (!persona) refreshIdentity(c); // ready for next time; this time they use the persona as written
   const memory = c.memory;
   const now = new Date().toLocaleString("en-US", {
     weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -722,6 +738,7 @@ async function proposeLifeUpdate(c, update) {
     // A private friend's Desktop kit (with the persona that "Recreate" uses) gets the update too.
     const kit = desktopFolder(fresh) && path.join(path.dirname(desktopFolder(fresh)), "persona.md");
     if (kit && fs.existsSync(kit)) fs.writeFileSync(kit, fs.readFileSync(file, "utf8"));
+    refreshIdentity(loadContact(c.id));
     return `Done. ${first} will be living with it from the next call or text.`;
   });
 }
@@ -2586,6 +2603,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.searchParams.get("do") === "prepare") {
       if (identityReady(c)) return json(res, 200, { ready: true, built: false });
       if (!getClient()) return json(res, 400, { error: "No API key yet." });
+      if (url.searchParams.get("wait") !== "1") { refreshIdentity(c); return json(res, 200, { ready: false, building: true }); }
       try {
         await buildIdentity(c);
         return json(res, 200, { ready: true, built: true });
