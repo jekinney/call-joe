@@ -993,7 +993,7 @@ const server = http.createServer(async (req, res) => {
     if (!c) return json(res, 400, { error: "No such friend." });
     // Count the missed call (worried friends call back sooner); it clears after your next real call with them.
     c.memory.missed = {
-      count: (c.memory.missed?.count ?? 0) + 1, at: new Date().toISOString(),
+      count: (c.memory.missed?.count ?? 0) + 1, at: new Date().toISOString(), atOpenMinute: config.openMinutes ?? 0,
       last: new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" }),
     };
     writeJson(contactPath(c.id, "memory.json"), c.memory);
@@ -1062,7 +1062,9 @@ const server = http.createServer(async (req, res) => {
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
       newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
-      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", missed: c.memory.missed ?? null,
+      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal",
+      // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).
+      missed: c.memory.missed ? { ...c.memory.missed, openMinutes: (config.openMinutes ?? 0) - (c.memory.missed.atOpenMinute ?? config.openMinutes ?? 0) } : null,
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }
@@ -1146,10 +1148,20 @@ const server = http.createServer(async (req, res) => {
   res.end();
 });
 
-// Shut down once the call window has been closed for a while, saving any open call first.
+// Time only counts while the app is open: config.openMinutes goes up once a minute while the page is talking to us.
+// Worried friends' call-back clocks run on it, so closing the app pauses them (see the scheduler in index.html).
+setInterval(() => {
+  if (Date.now() - lastPing > 90 * 1000) return;
+  config.openMinutes = (config.openMinutes ?? 0) + 1;
+  if (config.openMinutes % 5 === 0) writeJson(configFile, config);
+}, 60 * 1000);
+
+// Shut down once the call window has been closed for a while, saving any open call (and one on hold) first.
 setInterval(async () => {
   if (Date.now() - lastPing > IDLE_SHUTDOWN_MS) {
+    writeJson(configFile, config);
     await hangUp();
+    if (held) { call = held; held = null; await hangUp(); }
     process.exit(0);
   }
 }, 30 * 1000);
