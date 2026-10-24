@@ -506,12 +506,41 @@ async function searchGifs(q, limit = 18) {
   })).filter((g) => g.url);
 }
 
+// What a GIF shows, in words. Friends can't see pictures in texts, and GIPHY titles are often empty or odd ("GIF",
+// "Music Video Wtf"), so when you send one, Claude looks at it once and describes it; friends get that description
+// in texts, calls and memory. GIPHY's still frame (200_s.gif) is small; the animated one is the fallback.
+async function describeGif(gif) {
+  if (!getClient()) return null;
+  const still = gif.url.replace(/\/(\d+)(w?)\.gif(\?.*)?$/, "/$1$2_s.gif");
+  for (const url of [still, gif.url]) {
+    try {
+      const msg = await getClient().messages.create({
+        model: NEWS_MODEL,
+        max_tokens: 300,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "url", url } },
+            { type: "text", text: `This is a frame from a reaction GIF someone texted a friend (GIPHY's title: "${gif.title}"). In one short sentence, say what it shows and what the sender probably means by it, like "Steve Carell screaming 'no!', meaning: oh no, you've got to be kidding." Output only that sentence.` },
+          ],
+        }],
+      });
+      const text = textOf(msg.content).trim();
+      if (text && msg.stop_reason !== "refusal") return text.slice(0, 300);
+    } catch (err) {
+      console.error("Describing a GIF failed:", err?.message ?? err);
+    }
+  }
+  return null;
+}
+const gifWords = (gif) => gif.desc ?? gif.title;
+
 // Builds the conversation for the model from recent texts (alternating turns, starting and ending with the buddy).
 function textTurns(list, extra) {
   const turns = [];
   for (const t of list.slice(-40)) {
     const role = t.from === "me" ? "user" : "assistant";
-    const line = t.gif ? (t.from === "me" ? `(sends a GIF: "${t.gif.title}")` : `[gif: ${t.gif.title}]`) : t.text;
+    const line = t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
     if (turns.at(-1)?.role === role) turns.at(-1).content += `\n${line}`;
     else turns.push({ role, content: line });
   }
@@ -616,7 +645,7 @@ function takeUnrememberedTexts(c) {
   for (const t of fresh) t.remembered = true;
   writeTexts(c.id, list);
   const first = firstName(c);
-  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.gif ? `(GIF: ${t.gif.title})` : t.text}`).join("\n");
+  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
 }
 async function rememberTexts(c) {
   const transcript = takeUnrememberedTexts(c);
@@ -1607,6 +1636,10 @@ const server = http.createServer(async (req, res) => {
     if (!c) return json(res, 400, { error: "No such friend." });
     if (config.airplane) return json(res, 400, { error: "Airplane mode is on." });
     const sentGif = gif?.url && /^https:\/\/media\d*\.giphy\.com\//.test(gif.url) ? { url: gif.url, title: String(gif.title ?? "GIF").slice(0, 100) } : null;
+    if (sentGif && !config.airplane) {
+      const desc = await describeGif(sentGif);
+      if (desc) sentGif.desc = desc;
+    }
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const opener = url.pathname.endsWith("/start");
     if (!opener) {
