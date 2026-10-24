@@ -52,6 +52,15 @@
     animation: drop .18s ease-out; box-shadow: 0 16px 30px rgba(0,0,0,.5);
   }
   @keyframes drop { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .shade-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .shade-top h3 { margin: 0; }
+  .text-btn { background: none; border: 0; color: var(--accent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; padding: 6px 10px; border-radius: 16px; }
+  .text-btn:hover { background: rgba(255,255,255,.08); }
+  .note-x { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 18px; cursor: pointer; padding: 2px 6px; border-radius: 50%; }
+  .note-x:hover { color: var(--ink); background: rgba(255,255,255,.08); }
+  .choices { display: flex; flex-direction: column; gap: 12px; margin: 14px 0 4px; font-size: 15px; }
+  .choices label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+  .choices input { accent-color: var(--accent); width: 18px; height: 18px; margin: 0; }
   .shade h3, .section-title { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
   .note {
     display: flex; gap: 12px; align-items: center; width: 100%; padding: 10px 12px; margin-bottom: 8px; border-radius: 12px;
@@ -368,7 +377,7 @@
   </span>
 </div>
 <div class="shade" id="shade" hidden>
-  <h3>Notifications</h3>
+  <div class="shade-top"><h3>Notifications</h3><button class="text-btn" id="clearNotesBtn">Clear all</button></div>
   <div id="notes"></div>
 </div>
 
@@ -389,7 +398,7 @@
 
 <!-- Calls: recent calls and voicemail -->
 <main id="pageCalls" class="page" hidden>
-  <div class="page-top"><h1>Calls</h1></div>
+  <div class="page-top"><h1>Calls</h1><button class="text-btn" id="clearCallsBtn" title="Clear recent calls">Clear</button></div>
   <div class="segmented"><button data-calls="recents" class="on">Recents</button><button data-calls="voicemail">Voicemail<span id="vmSegCount"></span></button></div>
   <div class="list" id="callsList"></div>
 </main>
@@ -512,6 +521,17 @@
     <li>The buttons at the very bottom work like Android: ◁ back, ○ home, □ recent calls. Esc goes back too.</li>
   </ul>
   <div class="row"><button class="btn" id="helpClose">Got it</button></div>
+</dialog>
+
+<dialog id="clearDialog">
+  <h2>Clear recent calls?</h2>
+  <p class="hint" style="font-size:14px">This only clears the list. Your friends still remember your calls, and voicemails stay in Voicemail.</p>
+  <div class="choices">
+    <label><input type="radio" name="clearWhich" value="all" checked> All calls</label>
+    <label><input type="radio" name="clearWhich" value="incoming"> Incoming (they called, including missed)</label>
+    <label><input type="radio" name="clearWhich" value="outgoing"> Outgoing (you called)</label>
+  </div>
+  <div class="row"><button class="btn ghost" id="clearCancel">Cancel</button><button class="btn" id="clearOk">Clear</button></div>
 </dialog>
 
 <div id="toast" hidden></div>
@@ -1800,13 +1820,25 @@ setInterval(refreshViews, 60000);
 
 // ---------- Notifications (the bell) ----------
 const avatarHtml = (name, face) => `<span class="c-avatar">${face ? `<img src="/api/face?name=${encodeURIComponent(face)}" alt="">` : esc(name[0])}</span>`;
+// Notifications you dismissed (kept in this window's storage, so they stay gone).
+let dismissed = new Set();
+try { dismissed = new Set(JSON.parse(localStorage.getItem("dismissedNotes") || "[]")); } catch {}
+function dismiss(keys) {
+  for (const k of keys) {
+    if (k.startsWith("missed:")) delete missed[k.slice(7)];
+    else dismissed.add(k);
+  }
+  try { localStorage.setItem("dismissedNotes", JSON.stringify([...dismissed].slice(-200))); } catch {}
+  renderNotifications();
+  if (!$("home").hidden) showHome();
+}
 function notifications() {
   const byId = Object.fromEntries(data.friends.map((c) => [c.id, c]));
   return [
-    ...data.voicemail.filter((v) => !v.heard).map((v) => ({ go: "voicemail", name: v.name, face: v.face, title: `${v.name} left you a voicemail`, sub: v.when })),
-    ...Object.entries(missed).filter(([id]) => byId[id]).map(([id, when]) => ({ go: "recents", name: byId[id].name, face: byId[id].face, title: `Missed call from ${byId[id].name}`, sub: when })),
-    ...data.friends.filter((c) => c.active && !c.hasVoice).map((c) => ({ go: "contacts", name: c.name, face: c.face, title: `${c.name} needs a voice clip`, sub: "They can't be called until they have one." })),
-  ];
+    ...data.voicemail.filter((v) => !v.heard).map((v) => ({ key: `vm:${v.id}`, go: "voicemail", name: v.name, face: v.face, title: `${v.name} left you a voicemail`, sub: v.when })),
+    ...Object.entries(missed).filter(([id]) => byId[id]).map(([id, when]) => ({ key: `missed:${id}`, go: "recents", name: byId[id].name, face: byId[id].face, title: `Missed call from ${byId[id].name}`, sub: when })),
+    ...data.friends.filter((c) => c.active && !c.hasVoice).map((c) => ({ key: `clip:${c.id}`, go: "contacts", name: c.name, face: c.face, title: `${c.name} needs a voice clip`, sub: "They can't be called until they have one." })),
+  ].filter((n) => !dismissed.has(n.key));
 }
 function renderNotifications() {
   const notes = notifications();
@@ -1814,8 +1846,10 @@ function renderNotifications() {
   $("bellBadge").hidden = !notes.length;
   $("notes").innerHTML = notes.map((n) => `
     <button class="note" data-note="${n.go}">${avatarHtml(n.name, n.face)}
-      <span><div class="n-title">${esc(n.title)}</div><div class="n-sub">${esc(n.sub)}</div></span></button>`).join("")
+      <span><div class="n-title">${esc(n.title)}</div><div class="n-sub">${esc(n.sub)}</div></span>
+      <span class="note-x" data-dismiss="${esc(n.key)}" title="Dismiss">×</span></button>`).join("")
     || `<div class="empty">You're all caught up.</div>`;
+  $("clearNotesBtn").hidden = !notes.length;
   const fresh = data.voicemail.filter((v) => !v.heard).length + Object.keys(missed).length;
   $("tabCallsBadge").textContent = fresh;
   $("tabCallsBadge").hidden = !fresh;
@@ -1831,11 +1865,20 @@ $("statusbar").onclick = $("bell").onclick = (e) => {
   $("bell").setAttribute("aria-expanded", String(open));
 };
 $("notes").onclick = (e) => {
+  const x = e.target.closest("[data-dismiss]");
+  if (x) {
+    e.stopPropagation();
+    return dismiss([x.dataset.dismiss]);
+  }
   const n = e.target.closest("[data-note]");
   if (!n || state !== "idle") return;
   if (n.dataset.note === "contacts") return showHome();
   callsTab = n.dataset.note;
   showPage("calls");
+};
+$("clearNotesBtn").onclick = (e) => {
+  e.stopPropagation();
+  dismiss(notifications().map((n) => n.key));
 };
 document.addEventListener("click", (e) => {
   if (!$("shade").hidden && !e.target.closest("#shade")) closeShade();
@@ -1889,14 +1932,15 @@ $("favs").onclick = (e) => {
 let callsTab = "recents", listAudio = null, listPlaying = null;
 async function renderCalls() {
   document.querySelectorAll("[data-calls]").forEach((b) => b.classList.toggle("on", b.dataset.calls === callsTab));
+  $("clearCallsBtn").hidden = callsTab !== "recents";
   const fresh = data.voicemail.filter((v) => !v.heard).length;
   $("vmSegCount").textContent = fresh ? ` (${fresh})` : "";
   if (callsTab === "recents") {
     const items = await fetch("/api/recents").then((r) => r.json()).catch(() => []);
     if (page !== "calls" || callsTab !== "recents") return;
     $("callsList").innerHTML = items.map((r) => {
-      const missedCall = r.kind !== "call";
-      const what = r.kind === "call" ? "📞 Call" : r.kind === "missed" ? "Missed call · left a voicemail" : "You declined · left a voicemail";
+      const missedCall = r.kind === "missed" || r.kind === "declined";
+      const what = { incoming: "↙ Incoming", outgoing: "↗ Outgoing", missed: "↙ Missed · left a voicemail", declined: "↙ Declined · left a voicemail" }[r.kind];
       return `<button class="row-item ${missedCall ? "missed" : ""}" data-open="${esc(r.contact)}" data-active="${r.active}">
         ${avatarHtml(r.name, r.face)}<span class="txt"><div class="t1">${esc(r.name)}</div><div class="t2">${what} · ${esc(r.when)}</div></span><span class="chev">›</span></button>`;
     }).join("") || `<div class="empty">No calls yet. Pick a friend in Contacts and give them a call.</div>`;
@@ -1917,6 +1961,15 @@ document.querySelector(".segmented").onclick = (e) => {
   const b = e.target.closest("[data-calls]");
   if (!b) return;
   callsTab = b.dataset.calls;
+  renderCalls();
+};
+$("clearCallsBtn").onclick = () => $("clearDialog").showModal();
+$("clearCancel").onclick = () => $("clearDialog").close();
+$("clearOk").onclick = async () => {
+  const which = document.querySelector("input[name=clearWhich]:checked").value;
+  $("clearDialog").close();
+  await fetch("/api/recents/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ which }) });
+  toast({ all: "Recent calls cleared.", incoming: "Incoming calls cleared.", outgoing: "Outgoing calls cleared." }[which]);
   renderCalls();
 };
 $("callsList").onclick = async (e) => {

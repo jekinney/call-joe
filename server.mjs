@@ -35,6 +35,7 @@ const NEWS_MODEL = "claude-haiku-5-5"; // decides what news travels between conn
 const IDLE_SHUTDOWN_MS = 3 * 60 * 1000;
 
 const configFile = path.join(dataDir, "config.json");
+const recentsFile = path.join(dataDir, "recents.json"); // when you last cleared Recents: { cleared: { incoming, outgoing } }
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; }
@@ -433,7 +434,8 @@ async function hangUp() {
     .join("\n");
   memory.calls += 1;
   memory.lastCall = ended.started.toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
-  fs.appendFileSync(contactPath(c.id, "call-log.txt"), `\n===== Call on ${memory.lastCall} =====\n${transcript}\n`);
+  const direction = ended.incoming ? " (they called)" : "";
+  fs.appendFileSync(contactPath(c.id, "call-log.txt"), `\n===== Call on ${memory.lastCall}${direction} =====\n${transcript}\n`);
   if (transcript.trim()) {
     try {
       const msg = await getClient().messages.create({
@@ -652,7 +654,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ---- Recents: every call (from each friend's call log) plus missed or declined calls (their voicemails) ----
+  // Clearing only hides calls from this list: call logs, memory and voicemail are all kept. Shows the last 30.
+  if (req.method === "POST" && url.pathname === "/api/recents/clear") {
+    const { which } = await readBody(req);
+    if (!["all", "incoming", "outgoing"].includes(which)) return json(res, 400, { error: "Clear all, incoming or outgoing." });
+    const r = readJson(recentsFile, {});
+    const now = new Date().toISOString();
+    r.cleared = { ...(r.cleared ?? {}) };
+    if (which !== "outgoing") r.cleared.incoming = now;
+    if (which !== "incoming") r.cleared.outgoing = now;
+    writeJson(recentsFile, r);
+    return json(res, 200, { ok: true });
+  }
   if (req.method === "GET" && url.pathname === "/api/recents") {
+    const cleared = readJson(recentsFile, {}).cleared ?? {};
     const year = new Date().getFullYear();
     const items = [];
     for (const c of listContacts()) {
@@ -660,17 +675,22 @@ const server = http.createServer(async (req, res) => {
       const who = { contact: c.id, name: c.name, face, active: c.active !== false };
       let log = "";
       try { log = fs.readFileSync(contactPath(c.id, "call-log.txt"), "utf8"); } catch {}
-      // Headers look like "===== Call on Friday, October 23 at 3:02 PM =====" (no year).
-      for (const m of log.matchAll(/^===== Call on (.+?) =====$/gm)) {
+      // Headers look like "===== Call on Friday, October 23 at 3:02 PM =====" (no year), with " (they called)" when
+      // the friend rang you. Calls logged before that was added count as yours.
+      for (const m of log.matchAll(/^===== Call on (.+?)( \(they called\))? =====$/gm)) {
         const when = m[1];
         const at = Date.parse(`${when.replace(/^\w+, /, "").replace(" at ", ` ${year} `)}`);
-        if (!Number.isNaN(at)) items.push({ ...who, kind: "call", when, at: new Date(at > Date.now() + 864e5 ? at - 31536e6 : at).toISOString() });
+        if (!Number.isNaN(at)) items.push({ ...who, kind: m[2] ? "incoming" : "outgoing", when, at: new Date(at > Date.now() + 864e5 ? at - 31536e6 : at).toISOString() });
       }
       for (const v of readVoicemails(c.id)) {
         items.push({ ...who, kind: v.declined ? "declined" : "missed", when: v.when, at: v.at, voicemail: v.id, heard: v.heard });
       }
     }
-    return json(res, 200, items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100));
+    const shown = items.filter((r) => {
+      const since = cleared[r.kind === "outgoing" ? "outgoing" : "incoming"]; // missed and declined calls came in
+      return !since || r.at > since;
+    });
+    return json(res, 200, shown.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 30));
   }
 
   // ---- Voicemail ----
@@ -749,6 +769,7 @@ const server = http.createServer(async (req, res) => {
     if (call) await hangUp();
     call = {
       contactId: c.id,
+      incoming: !!incoming,
       started: new Date(),
       system: await systemPrompt(c),
       messages: [{

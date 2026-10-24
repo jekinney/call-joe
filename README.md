@@ -18,10 +18,10 @@ Open Claude Code in this folder and type `/new-contact`, then give Claude a name
 ## The phone
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:
-- **Status bar:** the time, and 🔔 notifications (new voicemails, missed calls, friends who need a voice clip). Click it to pull them down.
+- **Status bar:** the time, and 🔔 notifications (new voicemails, missed calls, friends who need a voice clip). Click it to pull them down; × dismisses one, Clear all dismisses them all.
 - **Home:** a clock, app icons (Phone, Contacts, Messages, Voicemail, Add friend, Wallpaper, Settings, Tips) and your favorite friends in the dock.
 - **Tabs, always at the bottom:** Calls, Contacts, Messages and Settings.
-  - **Calls:** Recents (every call, missed call and declined call) and Voicemail, with play buttons.
+  - **Calls:** Recents (the last 30 calls, ↙ incoming or ↗ outgoing, plus missed and declined) and Voicemail, with play buttons. **Clear** asks whether to clear all, incoming or outgoing calls. It only clears the list: friends still remember the calls, and voicemails stay.
   - **Contacts:** your active friends, the ＋ button to add one, and friends you've turned off (with Turn on).
   - **Messages:** texting your friends is coming later.
   - **Settings:** a list of settings; ☰ jumps between them. Calls (interrupt by talking), Looks, Account (your API key) and About.
