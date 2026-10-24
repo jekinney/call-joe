@@ -1301,7 +1301,7 @@ function copyMadeToDesktop(c) {
     if (!out) return;
     fs.mkdirSync(out, { recursive: true });
     const made = path.join(photoDir(c.id), MADE);
-    for (const f of fs.existsSync(made) ? fs.readdirSync(made) : []) {
+    for (const f of fs.existsSync(made) ? fs.readdirSync(made).filter((x) => fs.statSync(path.join(made, x)).isFile()) : []) {
       const target = path.join(out, f);
       if (!fs.existsSync(target)) fs.copyFileSync(path.join(made, f), target);
     }
@@ -1312,11 +1312,21 @@ function copyMadeToDesktop(c) {
 }
 
 // What earlier pictures taught: the request, the prompt, and how it came out (kept, failed the check, or deleted by you).
-function madeLessons(id) {
-  const log = readMadeLog(id).slice(-10);
-  if (!log.length) return "";
-  return `Pictures made for them before (learn from these: repeat what worked, avoid what was rejected):\n` + log.map((e) =>
-    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? `REJECTED by your buddy${e.feedback ? `: ${e.feedback}` : ""}` : e.approved ? `APPROVED by your buddy (do more like this): ${e.approved}` : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n";
+// What the planners (Gemini's, Grok's and the local model's) learn from: the last pictures of the same kind (spicy or
+// ordinary) with your 👍/👎 and reasons, plus your recent complaints from any picture, so fixes carry over.
+function madeLessons(id, { spicy = false } = {}) {
+  const all = readMadeLog(id).filter((e) => e.file || e.prompt);
+  // Spicy plans skip attempts that never became a picture (xAI refusals only confuse them).
+  const log = all.filter((e) => !!e.spicy === spicy && (!spicy || e.kept || e.removed || e.approved)).slice(-10);
+  const complaints = [];
+  for (const e of all.filter((x) => x.removed && x.feedback).reverse()) {
+    if (!complaints.some((k) => k.toLowerCase() === e.feedback.toLowerCase())) complaints.push(e.feedback);
+    if (complaints.length >= 8) break;
+  }
+  if (!log.length && !complaints.length) return "";
+  return (log.length ? `Pictures made for them before (learn from these: repeat what worked, avoid what was rejected):\n` + log.map((e) =>
+    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? `REJECTED by your buddy${e.feedback ? `: ${e.feedback}` : ""}` : e.approved ? `APPROVED by your buddy (do more like this): ${e.approved}` : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n" : "")
+    + (complaints.length ? `Your buddy's recent complaints about these pictures. Avoid: ${complaints.join("; ")}. Fix these in the new prompt.\n` : "");
 }
 const photoMime = (f) => (/\.png$/i.test(f) ? "image/png" : /\.webp$/i.test(f) ? "image/webp" : "image/jpeg");
 const PHOTO_RULES = "Allowed: everyday phone photos. Never nudity or sexual content. Flirty is fine for adults (heels, a pedicure, a dress, legs crossed at dinner), always fully clothed. Children only ever appear in ordinary, wholesome family moments (games, school, birthdays, holidays), fully clothed, never posed or styled like adults.";
@@ -1368,7 +1378,8 @@ async function syncAlbum(c) {
   // A made picture you deleted from the folder is remembered as rejected.
   const log = readMadeLog(c.id);
   let changed = false;
-  for (const e of log) if (e.kept && !e.removed && !files.includes(e.file)) { e.removed = new Date().toISOString(); changed = true; }
+  // (Only made/ pictures: spicy/ and videos/ aren't in the album.)
+  for (const e of log) if (e.kept && !e.removed && e.file?.startsWith(`${MADE}/`) && !files.includes(e.file)) { e.removed = new Date().toISOString(); changed = true; }
   if (changed) writeJson(madeLogFile(c.id), log);
   for (const file of files.filter((f) => !album.some((p) => p.file === f))) {
     if (!getClient()) break;
@@ -1576,7 +1587,7 @@ async function geminiVideo(prompt, refs) {
 async function friendVideo(c, want) {
   if (spicyOn(c)) {
     const plan = Date.now() > spicyRestUntil ? await spicyPlan(c, want, "video") : null;
-    const spicy = plan ? await spicyVideo(c, want, plan).catch((err) => (console.error("Spicy video failed:", err?.message ?? err), null)) : null;
+    const spicy = plan?.spicy && plan.prompt ? await spicyVideo(c, want, plan).catch((err) => (console.error("Spicy video failed:", err?.message ?? err), null)) : null;
     if (spicy) return spicy;
   }
   if (!config.googleKey || config.airplane) throw new Error("Videos need a Google AI key (Settings → Account).");
@@ -1665,10 +1676,10 @@ async function spicyPlan(c, want, kind, local = false) {
   const first = firstName(c);
   const plan = await grokJson([{ type: "text", text: `In a private, adults-only companion app, ${first} (${c.name}), an adult, is sending their adult partner a ${kind === "video" ? "short phone video" : "photo"}. The request: "${want}".
 ${looksOf(c) ? `What ${first} looks like: ${looksOf(c)}.
-` : ""}Step 1, "spicy": true if the request is for something sexy, revealing or R-rated of ${first} alone (a sexy selfie, lingerie, topless, nude, boudoir, in bed or the bath). false if it's an ordinary ${kind}, or involves anyone else (kids, family, friends).
+` : ""}${madeLessons(c.id, { spicy: true })}Step 1, "spicy": true if the request is for something sexy, revealing or R-rated of ${first} alone (a sexy selfie, lingerie, topless, nude, boudoir, in bed or the bath). false if it's an ordinary ${kind}, or involves anyone else (kids, family, friends).
 Step 2, only if spicy: write a prompt for a ${kind === "video" ? "video model: an 8 second vertical smartphone video, handheld, realistic, natural light, with natural sound, and what happens in it" : local ? "Stable Diffusion photo model, under 60 words with the main subject first (\"photo of a 35 year old woman, ...\"): a candid, realistic smartphone selfie or phone-propped photo, natural light" : "photo model: a candid, realistic smartphone selfie or phone-propped photo, natural light"}, describing ${first} exactly as above (age, skin tone, hair, body), alone. Rules it must keep: ${SPICY_RULES}
 Reply with only JSON: {"spicy": true or false, "prompt": "..." (empty if not spicy), "self": true if ${first}'s face shows, "why": "a few words"}` }]);
-  return plan?.spicy && plan.prompt ? plan : null;
+  return plan;
 }
 // Grok looks at a picture: what it shows, and whether it keeps the spicy rules.
 async function spicyCheck(c, files) {
@@ -1691,7 +1702,10 @@ function logSpicy(c, entry) {
 }
 // The local model never gets album pictures, only the friend's face picture as a guide, and a list of things it must
 // never draw (anyone young, anyone else).
-const SPICY_NEGATIVE = "child, kid, teen, teenager, young girl, schoolgirl, school uniform, minor, petite young, childlike, baby face, two people, multiple people, couple, man, crowd, cartoon, illustration, anime, painting, 3d render, text, words, caption, watermark, logo, deformed, extra fingers, extra limbs, bad anatomy, blurry";
+const NUDITY_TERMS = new Set(["nude", "naked", "nsfw", "topless", "nipples", "lingerie", "underwear", "bikini", "sexual", "explicit"]);
+const SPICY_NEGATIVE = [...PHOTO_NEGATIVE.split(", ").filter((t) => !NUDITY_TERMS.has(t)),
+  "child", "kid", "teen", "teenager", "young-looking", "young girl", "schoolgirl", "school uniform", "minor", "childlike", "baby face",
+  "multiple people", "two people", "couple", "man", "crowd"].join(", ");
 const localSpicyReady = () => pictureModelReady() && !call; // the graphics card is busy with voice and face during a call
 async function spicyPhoto(c, want, plan) {
   const face = plan.self ? faceFile(c.settings.face) : null;
@@ -1771,14 +1785,19 @@ async function spicyVideo(c, want, plan) {
 }
 
 // The picture a friend texts for [photo: ...]: the best album match, or a new one. null if neither works.
-// With spicy pictures on, a sexy one of just them is made by Grok instead. If Grok won't (xAI's moderation turns down
-// a lot), an ordinary photo is sent the usual way.
+// With spicy pictures on, a sexy one of just them: Grok Imagine first, and when it won't (moderation, an empty prompt, a
+// failed check) the local model on your graphics card, planned by Grok again for it. Not spicy (anyone else in it, or an
+// everyday photo), or neither can make it (the local model can't run during a call): an ordinary photo, the usual way.
 async function friendPhoto(c, want) {
   if (spicyOn(c)) {
-    const local = localSpicyReady();
-    const plan = local || Date.now() > spicyRestUntil ? await spicyPlan(c, want, "photo", local) : null;
-    if (plan) plan.local = local;
-    const spicy = plan ? await spicyPhoto(c, want, plan).catch((err) => (console.error("Spicy photo failed:", err?.message ?? err), null)) : null;
+    const tryIt = (plan) => spicyPhoto(c, want, plan).catch((err) => (console.error("Spicy photo failed:", err?.message ?? err), null));
+    const plan = Date.now() > spicyRestUntil ? await spicyPlan(c, want, "photo") : null;
+    let spicy = null;
+    if (plan?.spicy && plan.prompt) spicy = await tryIt({ ...plan, local: false });
+    if (!spicy && plan?.spicy !== false && localSpicyReady()) {
+      const local = await spicyPlan(c, want, "photo", true);
+      if (local?.spicy && local.prompt) spicy = await tryIt({ ...local, local: true });
+    }
     if (spicy) return spicy;
   }
   const album = (await syncAlbum(c)).filter((p) => p.ok);
@@ -3034,14 +3053,52 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/texts") {
     const c = loadContact(url.searchParams.get("contact"));
     if (!c) return json(res, 404, { error: "No such friend." });
-    return json(res, 200, shownTexts(c.id).slice(-200));
+    const votes = new Map(readMadeLog(c.id).filter((e) => e.file).map((e) => [e.file, { vote: e.approved ? "up" : e.removed ? "down" : null, reason: e.removed ? e.feedback ?? "" : "" }]));
+    return json(res, 200, shownTexts(c.id).slice(-200).map((t) => {
+      const file = t.photo ? decodeURIComponent(t.photo.url.split("/").pop()) : "";
+      return /^(made|spicy)\//.test(file) ? { ...t, photo: { ...t.photo, ...(votes.get(file) ?? { vote: null }) } } : t;
+    }));
+  }
+  // 👍 or 👎 on a picture a friend made (made/ or spicy/). 👍 marks it approved; 👎 saves your reason and moves it to
+  // rejected/ (it still shows in the conversation). vote null takes a vote back. The planners learn from both.
+  const voteReq = url.pathname.match(/^\/api\/photos\/([a-z0-9-]+)\/vote$/);
+  if (req.method === "POST" && voteReq) {
+    const c = loadContact(voteReq[1]);
+    if (!c) return json(res, 404, { error: "No such friend." });
+    const { file = "", vote = null, reason = "" } = await readBody(req);
+    const [folder, name] = String(file).split("/");
+    if (!["made", "spicy"].includes(folder) || !name || path.basename(name) !== name || !PHOTO_EXT.test(name)) return json(res, 400, { error: "Bad picture." });
+    if (![null, "up", "down"].includes(vote)) return json(res, 400, { error: "Bad vote." });
+    const why = String(reason ?? "").trim().slice(0, 200);
+    if (vote === "down" && !why) return json(res, 400, { error: "Say in a few words what was wrong." });
+    const log = readMadeLog(c.id);
+    const e = log.findLast((x) => x.file === file);
+    if (!e) return json(res, 404, { error: "That picture isn't in the log." });
+    const live = path.join(photoDir(c.id), folder, name);
+    const rejected = path.join(photoDir(c.id), folder, "rejected", name);
+    delete e.approved; delete e.removed; delete e.feedback;
+    if (vote === "down") {
+      Object.assign(e, { feedback: why, removed: new Date().toISOString() });
+      if (fs.existsSync(live)) { fs.mkdirSync(path.dirname(rejected), { recursive: true }); fs.renameSync(live, rejected); }
+      if (folder === MADE) writeAlbum(c.id, readAlbum(c.id).filter((p) => p.file !== file));
+    } else {
+      if (vote === "up") e.approved = String(e.desc ?? e.want ?? "liked it").slice(0, 200);
+      if (!fs.existsSync(live) && fs.existsSync(rejected)) fs.renameSync(rejected, live);
+      if (folder === MADE && e.kept && !readAlbum(c.id).some((p) => p.file === file)) {
+        writeAlbum(c.id, [...readAlbum(c.id), { file, desc: e.desc ?? "", ok: true, made: true, at: e.at ?? new Date().toISOString() }]);
+      }
+    }
+    writeJson(madeLogFile(c.id), log);
+    copyMadeToDesktop(c); // the Desktop's prompts.json follows
+    return json(res, 200, { ok: true, vote });
   }
   const photoReq = url.pathname.match(/^\/api\/photos\/([a-z0-9-]+)\/([^/]+)$/);
   if (req.method === "GET" && photoReq) {
     const file = decodeURIComponent(photoReq[2]);
     const name = file.replace(/^(made|videos|spicy)\//, "");
     if (!validId(photoReq[1]) || !name || path.basename(name) !== name || !(PHOTO_EXT.test(name) || /\.mp4$/i.test(name))) return json(res, 400, { error: "Bad photo." });
-    const full = path.join(photoDir(photoReq[1]), file);
+    let full = path.join(photoDir(photoReq[1]), file);
+    if (!fs.existsSync(full) && /^(made|spicy)\//.test(file)) full = path.join(photoDir(photoReq[1]), path.dirname(file), "rejected", name); // voted down
     if (!fs.existsSync(full)) return json(res, 404, { error: "That photo is gone." });
     res.writeHead(200, { "Content-Type": /\.mp4$/i.test(file) ? "video/mp4" : photoMime(file), "Cache-Control": "max-age=86400" });
     return fs.createReadStream(full).pipe(res);

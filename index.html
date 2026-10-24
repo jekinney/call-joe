@@ -333,6 +333,12 @@
   .bubble.gif img.photo { cursor: zoom-in; }
   .photo-full { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .92); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
   .photo-full img { max-width: 100%; max-height: 100%; }
+  /* 👍/👎 under a picture a friend made */
+  .votes { display: flex; gap: 6px; padding: 4px 2px 0; align-items: center; }
+  .votes button { border: 1px solid rgba(255,255,255,.18); background: rgba(0,0,0,.35); color: var(--ink); border-radius: 999px; font-size: 13px; line-height: 1; padding: 4px 9px; cursor: pointer; opacity: .55; }
+  .votes button:hover { opacity: .9; }
+  .votes button.on { opacity: 1; background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.5); }
+  .votes .why { font-size: 11px; opacity: .7; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bubble { position: relative; }
   .bubble .tap { position: absolute; top: -10px; left: -10px; background: #3a2f26; border: 2px solid var(--bg); border-radius: 12px; font-size: 13px; padding: 1px 5px; }
   .composer { display: flex; gap: 8px; padding: 8px 12px 10px; background: rgba(24, 19, 15, .94); }
@@ -937,7 +943,7 @@
   </select>
   <div class="hint" id="flirtHint">Never explicit. Takes effect on their next call or text.</div>
   <label class="row-item" id="spicyRow" hidden style="padding:6px 0; color:var(--ink); font-size:14px">
-    <span class="txt"><div class="t1">Spicy pictures and videos</div><div class="t2">Sexy pictures of just <span class="fn">Joe</span>, drawn privately on your graphics card (about a minute) and checked by Grok before they're sent. Never anyone else in them; anything with kids or family stays wholesome. During a call, xAI is tried instead, and its filter turns down most.</div></span>
+    <span class="txt"><div class="t1">Spicy pictures and videos</div><div class="t2">Sexy pictures of just <span class="fn">Joe</span>, made by Grok, or privately on your graphics card when Grok won't, and checked by Grok before they're sent. Never anyone else in them; anything with kids or family stays wholesome. During a call, if Grok won't, they send an ordinary photo.</div></span>
     <input type="checkbox" class="switch" id="spicyToggle" aria-label="Spicy pictures and videos">
   </label>
   <button type="button" class="btn" id="albumBtn">📷 Photo album</button>
@@ -3100,11 +3106,49 @@ function addBubble(from, text, at = new Date().toISOString(), extra = {}) {
     }
     img.onload = () => ($("bubbles").scrollTop = $("bubbles").scrollHeight);
     b.append(img);
+    if (extra.photo && from === "them") addVotes(b, extra.photo);
   } else b.textContent = text;
   if (extra.reaction) setReaction(b, extra.reaction);
   $("bubbles").append(b);
   $("bubbles").scrollTop = $("bubbles").scrollHeight;
   return b;
+}
+// 👍/👎 under a picture the friend made (made/ or spicy/; not album pictures you added). The planners learn from both;
+// 👎 asks what was wrong. Tap the lit one again to take the vote back.
+function addVotes(bubble, photo) {
+  const m = photo.url.match(/^\/api\/photos\/([a-z0-9-]+)\/([^/?]+)$/);
+  const file = m ? decodeURIComponent(m[2]) : "";
+  if (!/^(made|spicy)\//.test(file)) return;
+  const row = document.createElement("div");
+  row.className = "votes";
+  const up = Object.assign(document.createElement("button"), { textContent: "👍", title: "Good picture: make more like this" });
+  const down = Object.assign(document.createElement("button"), { textContent: "👎", title: "Something's off: say what" });
+  const why = Object.assign(document.createElement("span"), { className: "why" });
+  let vote = photo.vote ?? null;
+  const show = () => {
+    up.classList.toggle("on", vote === "up");
+    down.classList.toggle("on", vote === "down");
+    why.textContent = vote === "down" && photo.reason ? photo.reason : "";
+  };
+  const send = async (next, reason = "") => {
+    const r = await fetch(`/api/photos/${m[1]}/vote`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file, vote: next, reason }) }).catch(() => null);
+    const out = await r?.json().catch(() => ({}));
+    if (!r?.ok) return toast(out?.error ?? "Couldn't save that.");
+    vote = next;
+    photo.vote = next;
+    photo.reason = reason;
+    show();
+    toast(next === "up" ? "Noted: more like this." : next === "down" ? "Noted. The next pictures will avoid that." : "Vote taken back.");
+  };
+  up.onclick = () => send(vote === "up" ? null : "up");
+  down.onclick = () => {
+    if (vote === "down") return send(null);
+    const reason = prompt("What was off? One quick sentence, like \"legs too hairy\", \"shoes not on her feet\" or \"eyes don't match her face picture\".");
+    if (reason?.trim()) send("down", reason.trim());
+  };
+  row.append(up, down, why);
+  bubble.append(row);
+  show();
 }
 // A friend's tapback on one of your texts.
 function setReaction(bubble, emoji) {
