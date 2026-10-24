@@ -50,6 +50,7 @@ In a friend's own conversation, a text starting with `/ai` tells them what to do
 ## The phone
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:
+- **System tray:** Call Joe has an icon by the clock while it's open (`tray.ps1`, started by the shortcut). Minimizing the window hides it there instead of the taskbar; click the icon to bring it back. When a friend calls, the window pops back up by itself. Right-click the icon for Open or Quit. Windows 11 may tuck new icons under the ^ arrow: drag it onto the taskbar, or turn it on in Settings → Personalization → Taskbar → Other system tray icons.
 - **Silent mode** (🔕 tile in the pulled-down status bar, or Settings → Calls): calls and texts still come in and show on screen, without the ring or the ding. Incoming calls ring 7 times, then go to voicemail.
 - **Status bar:** the time, and 🔔 notifications (new voicemails, missed calls, friends who need a voice clip). Click it to pull them down; × dismisses one, Clear all dismisses them all.
 - **Home:** a clock, app icons (Phone, Contacts, Messages, Voicemail, Wallpaper, Settings, Tips, Support) and your favorite friends in the dock.

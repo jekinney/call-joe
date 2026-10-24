@@ -20,3 +20,6 @@ $browser = @(
   "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 Start-Process $browser "--app=$url --window-size=480,820"
+
+# The tray icon by the clock: minimizing hides the window there, and it comes back when a friend calls (tray.ps1).
+Start-Process powershell -ArgumentList "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dir\tray.ps1`"" -WindowStyle Hidden
