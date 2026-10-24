@@ -104,3 +104,9 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 
 - Family roles have a gender (`ROLE_GENDER`: mom, sister and aunt are women; dad, brother and uncle are men), so the menus only offer ones that fit the friend.
 - Before your first call or text with a friend, any fitting relationship can be picked. After that (`hasTalked`), family and spouse are locked for good (🔒), and friends can only move within the friends group: best, close, friend, distant (new role), family friend, neighbor, coworker. The server refuses anything else, and switching your own gender in Settings → You no longer changes a friend you've already talked to.
+
+## Becoming official at first contact (October 23, 2026)
+
+- A friend becomes official at your first call or text. A "Creating…" screen covers the few seconds while Opus merges their persona and their relationship to you into one identity (`data/contacts/<id>/identity.md`), about a quarter shorter, reused on every call and text so it caches well. The phone and safety rules are kept word for word. It's rebuilt (with the Creating screen again) only when the persona, the relationship or your gender changes; that's also when relationships lock (see above).
+- What they learn about you (memory notes, how you like to be treated, news from linked friends, texts not yet remembered) stays separate and is added fresh to every call. You can read it in their ✎ Edit, under "What … has learned about you".
+- Friends who reach out before your first contact use the persona and relationship as written.

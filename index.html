@@ -309,6 +309,14 @@
   .row-item.unread .t1, .row-item.unread .t2 { color: var(--ink); font-weight: 700; }
   .row-item .when { font-size: 12px; color: var(--muted); align-self: flex-start; margin-top: 3px; }
   .unread-dot { min-width: 20px; height: 20px; border-radius: 10px; background: var(--accent); color: #241a12; font-size: 11px; font-weight: 700; display: grid; place-items: center; padding: 0 5px; }
+  #creating {
+    position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; text-align: center; padding: 24px; background: rgba(10, 8, 6, .82); backdrop-filter: blur(6px); animation: drop .2s ease-out;
+  }
+  #creating h2 { margin: 6px 0 0; font-weight: 400; }
+  .spinner { width: 48px; height: 48px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .learned { white-space: pre-wrap; font-size: 13px; line-height: 1.5; color: var(--muted); background: var(--bg); border-radius: 10px; padding: 10px 12px; margin: 6px 0 0; }
   /* Android-style snackbar above the tabs */
   #toast {
     position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); background: #efe4d4; color: #241a12; width: max-content;
@@ -755,6 +763,12 @@
   <div class="row"><button class="btn ghost" id="dangerCancel">Cancel</button><button class="btn danger" id="dangerOk"></button></div>
 </dialog>
 
+<div id="creating" hidden>
+  <div class="spinner"></div>
+  <h2 id="creatingTitle">Creating…</h2>
+  <p class="hint" style="font-size:14px">Putting their personality and your relationship together. This only happens once.</p>
+</div>
+
 <div id="toast" hidden></div>
 <div id="vmPlayer" hidden>
   <div class="c-avatar" id="vmAvatar"></div>
@@ -801,6 +815,7 @@
     <span class="txt"><div class="t1">Show on your contacts</div><div class="t2">Turned off, they're hidden and won't call you. Nothing about them is lost.</div></span>
     <input type="checkbox" class="switch" id="activeToggle" aria-label="Active">
   </label>
+  <details id="learnedWrap" style="margin-top:12px"><summary style="cursor:pointer">What <span class="fn">Joe</span> has learned about you</summary><div id="learnedBox"></div></details>
   <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
   <div class="face-row">
     <select id="callsYouSelect">
@@ -1455,6 +1470,7 @@ async function startCall(video, incoming = false) {
     $("status").textContent = `Pick ${who()}'s face in ⚙ settings first.`;
     return $("settingsBtn").click();
   }
+  await ensureReady(contact.id);
   // Ask for the mic up front so the first prompt doesn't interrupt your friend.
   try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop()); }
   catch { $("status").textContent = `${who()} needs your microphone. Allow it and call again.`; return; }
@@ -1565,6 +1581,8 @@ $("settingsBtn").onclick = async () => {
   $("activeToggle").checked = contact.active !== false;
   $("callsYouSelect").value = store.get("callsYou", "never");
   $("textsYouSelect").value = store.get("textsYou", "sometimes");
+  $("learnedWrap").open = false;
+  showLearned(contact.id);
   refreshChatterbox();
   refreshFaces();
   $("settingsDialog").showModal();
@@ -2690,6 +2708,7 @@ async function sendText() {
   const id = threadId;
   if (!text || !id || textBusy) return;
   $("textInput").value = "";
+  await ensureReady(id);
   addBubble("me", text);
   textBusy = true;
   $("textSend").disabled = true;
@@ -2744,6 +2763,30 @@ async function friendTextsYou(c) {
   }
   refreshViews();
   if (page === "messages") renderThreads();
+}
+
+// ---------- Becoming official ----------
+// At your first call or text, a friend's personality and relationship are merged into one identity (once, by the
+// server). It takes a few seconds, so a "Creating…" screen covers the wait.
+async function ensureReady(id) {
+  const f = data.friends.find((c) => c.id === id) ?? (await refreshData(), data.friends.find((c) => c.id === id));
+  if (!f || f.ready) return;
+  $("creatingTitle").textContent = `Creating ${f.name.split(" ")[0]}…`;
+  $("creating").hidden = false;
+  const out = await fetch(`/api/contacts/${id}?do=prepare`, { method: "POST" }).then((r) => r.json()).catch(() => ({}));
+  $("creating").hidden = true;
+  if (out.ready) f.ready = true;
+}
+
+// What a friend has learned about you, in their ✎ Edit.
+async function showLearned(id) {
+  const l = await fetch(`/api/contacts/${id}?do=learned`).then((r) => r.json()).catch(() => null);
+  if (!l) return;
+  const block = (title, text) => text ? `<label>${title}</label><div class="learned">${esc(text)}</div>` : "";
+  $("learnedBox").innerHTML = (block("Notes about you", l.notes) + block("How you like to be treated", l.rules)
+    + l.heard.map((h) => block(`Heard from ${h.from}`, h.notes)).join("")
+    + (l.pendingTexts ? `<p class="hint">${l.pendingTexts} recent text${l.pendingTexts === 1 ? "" : "s"} will be added after your next call.</p>` : ""))
+    || `<p class="hint">Nothing yet. They'll start learning after your first call.</p>`;
 }
 
 // ---------- Dangerous things ask twice ----------

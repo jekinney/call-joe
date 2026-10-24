@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createKnowledge } from "./knowledge.mjs";
 
@@ -171,8 +172,50 @@ const chatModel = (c) => MODELS[c?.settings.model] ?? MODELS[DEFAULT_MODEL];
 
 // Built once per call and left unchanged during it, so the prompt cache keeps hitting. A friend with no role,
 // connections or knowledge settings (like Joe) gets exactly the persona, ending-the-call, memory and time sections.
-async function systemPrompt(c) {
+// ---- Becoming official: one merged identity per friend ----
+// A friend becomes official at your first call or text. Then their persona and their relationship to you are merged
+// once (by Opus) into one tight identity, saved in data/contacts/<id>/identity.md and reused on every call and text: a
+// shorter, steadier prompt that caches well. The phone-call and safety rules are kept word for word, not merged.
+// It's rebuilt only when the persona, the relationship or your gender changes. What they learn about you (memory
+// notes, rules, news) stays separate and is added fresh to each call.
+const PHONE_RULES_HEADING = "## How you talk on the phone";
+function identitySource(c) {
   const persona = fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8");
+  const i = persona.indexOf(PHONE_RULES_HEADING);
+  const character = (i >= 0 ? persona.slice(0, i) : persona).trim();
+  const rules = i >= 0 ? persona.slice(i).trim() : "";
+  const role = roleRules(c);
+  const hash = crypto.createHash("sha1").update(`${character}\n${role}\n${yourGender()}`).digest("hex").slice(0, 16);
+  return { character, rules, role, hash };
+}
+const identityFile = (id) => contactPath(id, "identity.md");
+function identityReady(c) {
+  return c.identity?.hash === identitySource(c).hash && fs.existsSync(identityFile(c.id));
+}
+async function buildIdentity(c) {
+  const src = identitySource(c);
+  const msg = await getClient().messages.create({
+    model: MEMORY_MODEL,
+    max_tokens: 6000,
+    output_config: { effort: "low" },
+    system:
+      `You write the character instructions for ${c.name}, an AI friend in a phone app. Merge the character description and how they relate to the person they talk to ("your buddy", who is ${yourGender() === "woman" ? "a woman" : "a man"}) into one tight, second-person prompt. ` +
+      `Keep every concrete fact (names, ages, places, family, job, pets, phrases, beliefs) and their voice; keep the rules about what news would and wouldn't reach them and what they do when the buddy doesn't answer. Where the two disagree about who they are to the buddy, the relationship wins. ` +
+      `Cut repetition and filler. Use short Markdown headings and bullets, starting with "# Who you are". Output only the prompt.`,
+    messages: [{ role: "user", content: `Character description:\n${src.character}\n\nTheir relationship to the buddy:\n${src.role || "A friend."}` }],
+  });
+  const text = msg.stop_reason === "refusal" ? "" : textOf(msg.content).trim();
+  if (!text.startsWith("#")) throw new Error("Couldn't put their personality together.");
+  fs.writeFileSync(identityFile(c.id), `${text}\n`);
+  const fresh = loadContact(c.id);
+  fresh.identity = { hash: src.hash, at: new Date().toISOString() };
+  saveContact(fresh);
+}
+
+async function systemPrompt(c) {
+  // Official friends use their merged identity; until then, the persona and relationship as written.
+  const src = identitySource(c);
+  const persona = identityReady(c) ? `${fs.readFileSync(identityFile(c.id), "utf8").trim()}\n\n${src.rules}` : null;
   const memory = c.memory;
   const now = new Date().toLocaleString("en-US", {
     weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
@@ -184,8 +227,7 @@ async function systemPrompt(c) {
       : "This is the first time this buddy has ever called you. You don't know their name or anything about them yet.";
   const last = memory.lastCall ? `Your last call with them was ${memory.lastCall}.` : "";
   return [
-    persona.trimEnd(),
-    roleRules(c),
+    ...(persona ? [persona.trimEnd()] : [`${src.character}\n\n${src.rules}`.trim(), src.role]),
     aboutBuddy(c),
     treatment(c),
     missedCalls(c),
@@ -1387,7 +1429,7 @@ const server = http.createServer(async (req, res) => {
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
       newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
-      roleChoices: roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)),
+      roleChoices: roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)), ready: identityReady(c),
       worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: c.settings.textsYou ?? "sometimes", textsPerDay: textsPerDay(c),
       // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).
       missed: c.memory.missed ? { ...c.memory.missed, openMinutes: (config.openMinutes ?? 0) - (c.memory.missed.atOpenMinute ?? config.openMinutes ?? 0) } : null,
@@ -1398,6 +1440,29 @@ const server = http.createServer(async (req, res) => {
   if (contactRoute) {
     const c = loadContact(contactRoute[1]);
     if (!c) return json(res, 404, { error: "No such friend." });
+    if (req.method === "POST" && url.searchParams.get("do") === "prepare") {
+      if (identityReady(c)) return json(res, 200, { ready: true, built: false });
+      if (!getClient()) return json(res, 400, { error: "No API key yet." });
+      try {
+        await buildIdentity(c);
+        return json(res, 200, { ready: true, built: true });
+      } catch (err) {
+        console.error("Building identity failed:", err?.message ?? err);
+        return json(res, 200, { ready: false, error: err?.message }); // the call still works, from the raw persona
+      }
+    }
+    if (req.method === "GET" && url.searchParams.get("do") === "learned") {
+      const texts = readTexts(c.id).filter((t) => !t.remembered).length;
+      return json(res, 200, {
+        notes: c.memory.notes ?? "", rules: c.memory.rules ?? "", calls: c.memory.calls ?? 0, lastCall: c.memory.lastCall ?? null,
+        heard: (c.links ?? []).map((l) => {
+          let h = "";
+          try { h = fs.readFileSync(heardFromPath(c.id, l.id), "utf8").trim(); } catch {}
+          return h && { from: loadContact(l.id)?.name ?? l.id, notes: h };
+        }).filter(Boolean),
+        pendingTexts: texts,
+      });
+    }
     if (req.method === "DELETE") {
       const { confirm } = await readBody(req);
       if (String(confirm ?? "").trim().toLowerCase() !== firstName(c).toLowerCase()) {
