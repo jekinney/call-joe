@@ -2,11 +2,13 @@
 // each (answer calls, text fast or slow), and how long a text reply takes. Pure functions; server.mjs keeps the data.
 //
 // A schedule (contact.json "schedule"):
-// { "textStyle": "fast" | "normal" | "slow", "tz": "America/Chicago" (optional),
+// { "textStyle": "devoted" | "fast" | "normal" | "slow", "tz": "America/Chicago" (optional),
 //   "blocks": [{ "what": "asleep", "days": "daily", "from": "22:30", "to": "06:00", "calls": "no", "texts": "none" }, ...] }
 // days: "daily", "weekdays", "weekends", or names like "mon,wed,fri". calls: "yes" | "rare" | "no".
 // texts: "fast" | "normal" | "slow" | "none". A later block wins where blocks overlap (lunch inside work).
 // Outside every block a friend is free: calls "yes", texts "normal".
+// "devoted" is someone head over heels for you: they answer within a minute or two, long waits are rare and short,
+// they sneak a text even when busy, and the first thing they do when they wake up is answer you.
 
 const DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const FREE = { what: "free", calls: "yes", texts: "normal" };
@@ -78,8 +80,13 @@ function lognormal(median, spread = 0.9) {
   return median * Math.exp(spread * z);
 }
 
-const STYLE_MEDIAN_MIN = { fast: 1.5, normal: 5, slow: 25 }; // typical minutes before a reply, by texting style
+const STYLE_MEDIAN_MIN = { devoted: 0.8, fast: 1.5, normal: 5, slow: 25 }; // typical minutes before a reply, by texting style
 const BLOCK_FACTOR = { fast: 0.4, normal: 1, slow: 5 };
+// How much replies vary (higher = more long waits), the longest wait while they can text, and how much a busy
+// ("slow") block holds them up, by texting style.
+const STYLE_SPREAD = { devoted: 0.8 };
+const STYLE_MAX_MIN = { devoted: 30 };
+const STYLE_SLOW_FACTOR = { devoted: 2 };
 
 // How long until the friend answers your text. live: you're in a quick back-and-forth with them right now.
 // learned: a multiplier learned from how you reply (see server.mjs), 1 by default.
@@ -89,11 +96,12 @@ export function replyDelayMs(schedule, { now = new Date(), live = false, learned
   if (state.texts === "none") {
     // Busy (asleep, in church): they answer a while after the block ends.
     const end = state.until?.getTime() ?? now.getTime() + 60 * 60 * 1000;
-    return end - now.getTime() + lognormal(15, 0.8) * 60 * 1000;
+    return end - now.getTime() + (style === "devoted" ? lognormal(3, 0.5) : lognormal(15, 0.8)) * 60 * 1000;
   }
   if (live && state.texts !== "slow") return (8 + Math.random() * 35) * 1000; // they're on their phone with you
-  const minutes = lognormal((STYLE_MEDIAN_MIN[style] ?? 5) * (BLOCK_FACTOR[state.texts] ?? 1) * learned);
-  return Math.min(Math.max(minutes, 0.3), 6 * 60) * 60 * 1000;
+  const block = state.texts === "slow" ? STYLE_SLOW_FACTOR[style] ?? BLOCK_FACTOR.slow : BLOCK_FACTOR[state.texts] ?? 1;
+  const minutes = lognormal((STYLE_MEDIAN_MIN[style] ?? 5) * block * learned, STYLE_SPREAD[style] ?? 0.9);
+  return Math.min(Math.max(minutes, 0.3), STYLE_MAX_MIN[style] ?? 6 * 60) * 60 * 1000;
 }
 
 // Would they pick up if you called right now? "rare" blocks answer now and then.
@@ -121,7 +129,7 @@ export function cleanSchedule(raw) {
     texts: ["fast", "normal", "slow", "none"].includes(b?.texts) ? b.texts : "normal",
   })).filter((b) => b.from && b.to).slice(0, 20);
   return {
-    textStyle: ["fast", "normal", "slow"].includes(raw.textStyle) ? raw.textStyle : "normal",
+    textStyle: ["devoted", "fast", "normal", "slow"].includes(raw.textStyle) ? raw.textStyle : "normal",
     ...(typeof raw.tz === "string" && raw.tz ? { tz: raw.tz } : {}),
     blocks,
   };

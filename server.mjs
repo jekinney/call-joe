@@ -586,7 +586,7 @@ async function draftSchedule(c) {
   const out = await askJson([{ type: "text", text: `${persona || c.name}
 
 Write ${c.name}'s typical weekly routine as time blocks, for a phone app that decides when they can answer calls and texts. Include sleep, work or school hours and what that job allows (a nurse or teacher can't use the phone on shift, an office worker can text but not take calls, a stay-at-home parent is busy at school pickup and practices), lunch, regular commitments (church, gym, kids' activities), and anything from the description above. 24-hour times. A later block overrides an earlier one where they overlap, so list lunch after work.
-Reply with only JSON: {"textStyle": "fast" | "normal" | "slow" (how quickly they usually text back), "blocks": [{"what": "asleep", "days": "daily" | "weekdays" | "weekends" | "mon,wed", "from": "22:30", "to": "06:00", "calls": "yes" | "rare" | "no", "texts": "fast" | "normal" | "slow" | "none"}]}` }], MEMORY_MODEL);
+Reply with only JSON: {"textStyle": "devoted" | "fast" | "normal" | "slow" (how quickly they usually text back; "devoted" for someone head over heels in love with your buddy), "blocks": [{"what": "asleep", "days": "daily" | "weekdays" | "weekends" | "mon,wed", "from": "22:30", "to": "06:00", "calls": "yes" | "rare" | "no", "texts": "fast" | "normal" | "slow" | "none"}]}` }], MEMORY_MODEL);
   return cleanSchedule(out);
 }
 // Friends without a schedule get one drafted (at startup and hourly, so newly installed friends get one too).

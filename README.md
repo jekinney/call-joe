@@ -28,7 +28,7 @@ Your API key is never deleted by anything, not even Reset phone. **Airplane mode
 Every friend has a weekly routine (`availability.mjs`; `schedule` in their `data/contacts/<id>/contact.json`), drafted once by Claude from their persona: asleep, at work and what the job allows, lunch, school pickup, practices, church. It decides:
 
 - **Calls:** asleep or at work, your call rings out, or they decline, and they text about it later ("sorry I missed you, was at work").
-- **Text replies:** seconds in a live back-and-forth; otherwise a few minutes to an hour (now and then longer), slower when they're busy, and after they wake up if they're asleep. Waiting replies are kept in `pending.json` and arrive when they're due, or when you next open the app.
+- **Text replies:** seconds in a live back-and-forth; otherwise a few minutes to an hour (now and then longer), slower when they're busy, and after they wake up if they're asleep. A friend who's head over heels for you (texting style "devoted", like Savannah) answers within a minute or two, rarely makes you wait more than a few minutes, sneaks a text even when busy, and answers first thing when they wake up. Waiting replies are kept in `pending.json` and arrive when they're due, or when you next open the app.
 - **Reaching out:** they only call or text when they're free.
 
 Your own hours (text Support `/quiet 10pm-7am`, `/work weekdays 9-5`; quiet defaults to 9 PM to 8 AM) keep friends from calling then. `data/activity.json` learns which hours you usually text and answer, so they reach out more then. When a friend mentions a lasting change to their routine ("I start night shifts"), their schedule updates and you get a notice.
