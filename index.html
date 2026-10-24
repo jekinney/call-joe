@@ -2424,6 +2424,7 @@ const APPS = [
   { go: "help", ic: "❓", name: "Tips", bg: "#3c5a78" },
   { go: "support", ic: "🎧", name: "Support", bg: "#2c6e6a" },
 ];
+let favOrder = null;
 async function renderHome() {
   tickClock();
   const draw = () => {
@@ -2434,7 +2435,11 @@ async function renderHome() {
         ${a.go === "voicemail" && fresh ? `<span class="badge">${fresh}</span>` : ""}
         ${a.go === "messages" && unreadTexts() ? `<span class="badge">${unreadTexts()}</span>` : ""}
       </button>`).join("");
-    const favs = data.friends.filter((c) => c.active).slice(0, 8);
+    // Favorites: your top 4 by calls. Ties (and friends you haven't called yet) come in a random order, picked once
+    // per app open so the dock doesn't shuffle while you look at it.
+    favOrder ??= Object.fromEntries(data.friends.map((c) => [c.id, Math.random()]));
+    const favs = data.friends.filter((c) => c.active)
+      .sort((a, b) => (b.calls ?? 0) - (a.calls ?? 0) || (favOrder[a.id] ?? 1) - (favOrder[b.id] ?? 1)).slice(0, 4);
     $("favsWrap").hidden = !favs.length;
     $("favs").innerHTML = favs.map((c) => `<button class="fav" data-fav="${esc(c.id)}">${avatarHtml(c.name, c.face)}${esc(c.name.split(" ")[0])}</button>`).join("");
   };
