@@ -429,12 +429,12 @@ async function afterSupportCall(transcript) {
   }
 }
 
-// Cussing: off unless you allow it for this friend (when installing, or in their âœŽ Edit). contacts/_language/.
+// Cussing: off unless you allow it for this friend (when installing, or in their ✎ Edit). contacts/_language/.
 const languageRules = (c) => {
   try { return fs.readFileSync(path.join(personasDir, "_language", c.cussing ? "cussing.md" : "clean.md"), "utf8").trim(); } catch { return ""; }
 };
 
-// Flirting: off unless you set it (âœŽ Edit), except a romantic interest, who flirts romantically by default. PG-13 at
+// Flirting: off unless you set it (✎ Edit), except a romantic interest, who flirts romantically by default. PG-13 at
 // most: contacts/_flirting/ keeps it suggestive, never explicit.
 const FLIRTING = ["off", "playful", "romantic"];
 const flirtingOf = (c) => (FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
@@ -454,9 +454,9 @@ const speaksRules = (c) => {
   const lang = LANGS[c.speaks];
   if (!lang) return "";
   const t = c.speaks;
-  const example = t === "es" ? ` Like: "<es>Â¡Ay, Dios mÃ­o!</es> You won't believe it, <es>mijo</es>. <es>Gracias a Dios</es> it's Friday."` : "";
+  const example = t === "es" ? ` Like: "<es>¡Ay, Dios mío!</es> You won't believe it, <es>mijo</es>. <es>Gracias a Dios</es> it's Friday."` : "";
   return `# Speaking ${lang}
-Whenever you say a word or phrase in ${lang}, wrap it in <${t}>â€¦</${t}> so your voice pronounces it right. That includes single words and nicknames, every time.${example} Wrap only the ${lang} words, never English ones, and spell them properly with their accents. The tags are a signal for your voice, not something you say, and your buddy never sees them.`;
+Whenever you say a word or phrase in ${lang}, wrap it in <${t}>…</${t}> so your voice pronounces it right. That includes single words and nicknames, every time.${example} Wrap only the ${lang} words, never English ones, and spell them properly with their accents. The tags are a signal for your voice, not something you say, and your buddy never sees them.`;
 };
 // Loads the multilingual voice in the background when a call with such a friend starts, so their first words aren't held up.
 async function warmLanguages(c) {
@@ -534,11 +534,11 @@ const textWhen = (iso) => new Date(iso).toLocaleString("en-US", { weekday: "shor
 const TEXTING = `# Right now you're texting, not on the phone
 Your buddy and you are texting. Text back like a real person on their phone: short and casual, the way you'd really text. Younger or easygoing people use lowercase, abbreviations and an emoji now and then; older people text in fuller sentences, maybe with an odd emoji. Each text is a sentence or two at most, usually under 20 words. Usually one text, sometimes two or three quick ones in a row. Put a line with only --- between separate texts. Never write paragraphs, never put times or dates in brackets, and never use the hang-up marker.
 If something is serious, upsetting, or easier said out loud, you can say you'll call instead, and end with ${CALL_MARK}.
-You can react to your buddy's last text like a tapback by starting your reply with [react: one emoji], like [react: ðŸ˜‚], when that's what you'd do; you can still text after it, or not. Now and then, when it really fits, you can send a GIF instead of words: a line with only [gif: a few search words]. When your buddy sends a GIF, react to what it shows.`;
+You can react to your buddy's last text like a tapback by starting your reply with [react: one emoji], like [react: 😂], when that's what you'd do; you can still text after it, or not. Now and then, when it really fits, you can send a GIF instead of words: a line with only [gif: a few search words]. When your buddy sends a GIF, react to what it shows.`;
 
 // ---- GIFs (GIPHY): needs a free GIPHY API key, saved in Settings -> Account ----
 async function searchGifs(q, limit = 18) {
-  if (!config.giphyKey) throw new Error("Add a GIPHY key in Settings â†’ Account to send GIFs.");
+  if (!config.giphyKey) throw new Error("Add a GIPHY key in Settings → Account to send GIFs.");
   const kind = q ? "search" : "trending";
   const u = new URL(`https://api.giphy.com/v1/gifs/${kind}`);
   u.search = new URLSearchParams({ api_key: config.giphyKey, limit: String(limit), rating: "pg-13", ...(q ? { q } : {}) });
@@ -888,7 +888,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false } 
   let raw = untag(textOf(msg.content));
   const call = raw.includes(CALL_MARK);
   raw = raw.replaceAll(CALL_MARK, "");
-  // A tapback on your last text: [react: ðŸ˜‚]
+  // A tapback on your last text: [react: 😂]
   let reaction = null;
   raw = raw.replace(/\[react:\s*([^\]]{1,16})\]\s*/i, (_, e) => { reaction = e.trim(); return ""; });
   const parts = raw.replace(/\[(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\]]*\]\s*/g, "").split(/^\s*---\s*$/m).map((t) => t.trim()).filter(Boolean).slice(0, 3);
@@ -1551,7 +1551,7 @@ async function learnRules(c, memory, transcript) {
       if (fresh) {
         fresh.settings.callsYou = out.callsYou;
         saveContact(fresh);
-        addNotice(`${first} now calls you: ${CALL_FREQ[out.callsYou].label.toLowerCase()}${out.why ? ` (${out.why})` : ""}. Change it in their âœŽ Edit.`, c.id);
+        addNotice(`${first} now calls you: ${CALL_FREQ[out.callsYou].label.toLowerCase()}${out.why ? ` (${out.why})` : ""}. Change it in their ✎ Edit.`, c.id);
       }
     }
   } catch (err) {
@@ -1826,7 +1826,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/tts") {
     const { text, voice } = await readBody(req);
     const file = voiceFile(voice);
-    if (!file) return json(res, 400, { error: "This friend needs a voice clip. Add one in their âš™ settings." });
+    if (!file) return json(res, 400, { error: "This friend needs a voice clip. Add one in their ⚙ settings." });
     // If Chatterbox is still loading (about 20 s after it starts), wait for it rather than failing the sentence.
     await chatterbox.start();
     for (let i = 0; i < 90 && !(await chatterbox.status()).ready; i++) await new Promise((r) => setTimeout(r, 1000));
@@ -1886,7 +1886,7 @@ const server = http.createServer(async (req, res) => {
       last: new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" }),
     };
     writeJson(contactPath(c.id, "memory.json"), c.memory);
-    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings â†’ Account to call." });
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     try {
       return json(res, 200, await leaveVoicemail(c, declined));
@@ -1902,7 +1902,7 @@ const server = http.createServer(async (req, res) => {
       const last = list.at(-1);
       return last && {
         contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
-        last: last.photo ? "ðŸ“· Photo" : last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
+        last: last.photo ? "📷 Photo" : last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
       };
     }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at)));
   }
@@ -2159,7 +2159,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/call") {
-    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings â†’ Account to call." });
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const { contact: contactId, incoming } = await readBody(req);
     const c = loadContact(contactId);
