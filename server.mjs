@@ -1046,7 +1046,7 @@ function madeLessons(id) {
   const log = readMadeLog(id).slice(-10);
   if (!log.length) return "";
   return `Pictures made for them before (learn from these: repeat what worked, avoid what was rejected):\n` + log.map((e) =>
-    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? `REJECTED by your buddy${e.feedback ? `: ${e.feedback}` : ""}` : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n";
+    `- asked for "${e.want}" -> prompt: "${e.prompt}" -> ${e.removed ? `REJECTED by your buddy${e.feedback ? `: ${e.feedback}` : ""}` : e.approved ? `APPROVED by your buddy (do more like this): ${e.approved}` : e.kept ? `kept, came out as: ${e.desc}` : `discarded (${e.why ?? "failed"})`}`).join("\n") + "\n";
 }
 const photoMime = (f) => (/\.png$/i.test(f) ? "image/png" : /\.webp$/i.test(f) ? "image/webp" : "image/jpeg");
 const PHOTO_RULES = "Allowed: everyday phone photos. Never nudity or sexual content. Flirty is fine for adults (heels, a pedicure, a dress, legs crossed at dinner), always fully clothed. Children only ever appear in ordinary, wholesome family moments (games, school, birthdays, holidays), fully clothed, never posed or styled like adults.";
