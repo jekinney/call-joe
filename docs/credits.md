@@ -9,6 +9,7 @@ Voice clips, pictures and other material used for friends, with their sources an
 | Joe Tucker | "cowboy.wav", a cowboy-style male voice recorded for a video game (the first 20 seconds, cleaned up) | shawshank73 | https://freesound.org/people/shawshank73/sounds/125667/ | [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/) |
 | Rosa Walker | "Female Vocals.m4a", a female voice singing a chorus (cleaned up) | TheScarlettWitch89 | https://freesound.org/s/419330/ | [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/) |
 | George Walker | "Pine Meadows-Speech Version 2025", a baritone mock-news narration recorded by the uploader (the first 20 seconds, cleaned up) | balloonhead (Richard Wroblewski) | https://freesound.org/s/785958/ | [Creative Commons 0](https://creativecommons.org/publicdomain/zero/1.0/) (no credit required, given anyway) |
+| Elena Rodriguez | "Voice", the uploader recording her own voice in different voice-over styles (the first 20 seconds) | irenecantur | https://freesound.org/s/822337/ | [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/) |
 
 ## Faces
 
@@ -17,6 +18,7 @@ Voice clips, pictures and other material used for friends, with their sources an
 | Joe Tucker | Made-up portrait of a man in a trucker cap and flannel | AI-generated, provided by the user |
 | Rosa Walker | Made-up portrait of a smiling woman with gray curls and glasses | AI-generated, provided by the user |
 | George Walker | Made-up portrait of an older man in a Vietnam Veteran cap and flannel | AI-generated with Gemini, provided by the user |
+| Elena Rodriguez | Made-up portrait of a smiling woman with long dark hair and hoop earrings | AI-generated with Gemini, provided by the user |
 
 ## Software
 
