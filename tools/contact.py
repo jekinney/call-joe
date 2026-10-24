@@ -36,6 +36,8 @@ Commands:
     activate <id> / deactivate <id>       show or hide a friend on the friends list (hidden friends never
                                           call you; nothing else about them changes)
     remove <id>                           archive a friend to data/removed/ (never deletes memory)
+    speaks <id> es|fr|it|de|pt|off       a second language the friend mixes in (like Elena's Spanish), spoken
+                                          with a real accent by Chatterbox's multilingual model
     flirting <id> off|playful|romantic    how flirty the friend is with you (romantic interests default to
                                           romantic); PG-13 at most, from contacts/_flirting/
     cussing <id> on|off                   let the friend swear the way they naturally would, or keep it clean
@@ -418,6 +420,21 @@ def cmd_cussing(args):
     print(f'{info["name"]} {"can cuss" if args.state == "on" else "keeps it clean"} from their next call or text.')
 
 
+SPEAKS = {"es": "Spanish", "fr": "French", "it": "Italian", "de": "German", "pt": "Portuguese"}  # must match LANGS in server.mjs
+
+
+def cmd_speaks(args):
+    info = load(args.id)
+    if args.lang == "off":
+        info.pop("speaks", None)
+        print(f'{info["name"]} speaks English only from their next call.')
+    else:
+        info["speaks"] = args.lang
+        print(f'{info["name"]} will say their {SPEAKS[args.lang]} words with a real accent from their next call '
+              f'(Chatterbox multilingual model, about 3.5 GB of graphics memory).')
+    save(args.id, info)
+
+
 def cmd_flirting(args):
     info = load(args.id)
     info["flirting"] = args.level
@@ -465,6 +482,8 @@ def cmd_import(args):
         cmd_cussing(ns(id=cid, state="on"))
     if kit.get("flirting") in ("playful", "romantic"):
         cmd_flirting(ns(id=cid, level=kit["flirting"]))
+    if kit.get("speaks") in SPEAKS:
+        cmd_speaks(ns(id=cid, lang=kit["speaks"]))
     if kit.get("callsYou"):
         info = load(cid)
         info["settings"]["callsYou"] = kit["callsYou"]
@@ -497,6 +516,7 @@ def cmd_publish(args):
         **({"callsYou": s["callsYou"]} if s.get("callsYou") and s["callsYou"] != "never" else {}),
         **({"cussing": True} if info.get("cussing") else {}),
         **({"flirting": info["flirting"]} if info.get("flirting") in ("playful", "romantic") else {}),
+        **({"speaks": info["speaks"]} if info.get("speaks") else {}),
         "roles": {"man": args.role_man, "woman": args.role_woman},
         **({"knows": info["knows"]} if info.get("knows") else {}),
         **({"links": info["links"]} if info.get("links") else {}),
@@ -534,6 +554,7 @@ def main():
     s = sub.add_parser("deactivate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=False)
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
     s = sub.add_parser("cussing"); s.add_argument("id"); s.add_argument("state", choices=["on", "off"]); s.set_defaults(fn=cmd_cussing)
+    s = sub.add_parser("speaks"); s.add_argument("id"); s.add_argument("lang", choices=["off", *SPEAKS]); s.set_defaults(fn=cmd_speaks)
     s = sub.add_parser("flirting"); s.add_argument("id"); s.add_argument("level", choices=["off", "playful", "romantic"]); s.set_defaults(fn=cmd_flirting)
     s = sub.add_parser("import"); s.add_argument("folder"); s.set_defaults(fn=cmd_import)
     s = sub.add_parser("publish"); s.add_argument("id"); s.add_argument("--gender", choices=["man", "woman"], required=True)

@@ -1,23 +1,35 @@
 """Local Chatterbox voice server for Joe. Joe's Node server starts it and sends it text to speak.
 
 POST /tts  {"text": ..., "voice_path": ...}  ->  audio/wav
+POST /warm                                                          ->  starts loading the multilingual model
 GET  /health                                                        ->  {"ready": true, ...}
+
+Words a friend says in another language come wrapped in tags, like "<es>¡Ay, Dios mío!</es>". A sentence with
+tags is spoken by Chatterbox's multilingual model, each piece in its own language, in the same cloned voice, so
+the Spanish has a real accent. Sentences without tags use the faster English model.
 """
 import io
 import json
+import re
 import sys
 import threading
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import numpy as np
 import torch
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 5175
 
-state = {"ready": False, "error": None, "device": None, "model": None}
+state = {"ready": False, "error": None, "device": None, "model": None, "multilingual": "off"}
 model = None
+mtl_model = None
 gpu_lock = threading.Lock()  # one GPU, so one sentence at a time
+mtl_lock = threading.Lock()  # load the multilingual model only once
 current_voice = {"key": None}
+mtl_voice = {"key": None}
+LANG_TAG = re.compile(r"<(/?)([a-z]{2})>")
+GAP_SECONDS = 0.06  # pause between an English piece and a Spanish piece of the same sentence
 
 
 def load_model():
@@ -42,20 +54,79 @@ def load_model():
         print("Chatterbox failed to load:", state["error"], flush=True)
 
 
+def load_multilingual():
+    """Loads the multilingual model (about 3.5 GB of graphics memory) the first time a friend needs it."""
+    global mtl_model
+    with mtl_lock:
+        if mtl_model is not None:
+            return mtl_model
+        state["multilingual"] = "loading"
+        try:
+            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
+            mtl_model = ChatterboxMultilingualTTS.from_pretrained("cuda" if torch.cuda.is_available() else "cpu")
+            state["multilingual"] = "ready"
+            print("Chatterbox multilingual ready", flush=True)
+        except Exception as exc:
+            state["multilingual"] = f"failed: {type(exc).__name__}: {exc}"
+            print("Chatterbox multilingual failed to load:", state["multilingual"], flush=True)
+        return mtl_model
+
+
+def segments(text):
+    """Splits a sentence into (language, words) pieces. The page cuts replies into sentences, so a tag can be
+    left open at the end of one sentence or closed at the start of the next; both still work."""
+    tags = list(LANG_TAG.finditer(text))
+    lang = tags[0].group(2) if tags and tags[0].group(1) else "en"  # starts inside a tag opened last sentence
+    pieces, at = [], 0
+    for tag in tags:
+        pieces.append((lang, text[at:tag.start()]))
+        lang = "en" if tag.group(1) else tag.group(2)
+        at = tag.end()
+    pieces.append((lang, text[at:]))
+    out = []
+    for lang, words in pieces:
+        words = words.strip()
+        if not words:
+            continue
+        if not re.search(r"\w", words) and out:  # stray punctuation belongs to the piece before it
+            out[-1] = (out[-1][0], out[-1][1] + words)
+        elif out and out[-1][0] == lang:
+            out[-1] = (lang, out[-1][1] + " " + words)
+        else:
+            out.append((lang, words))
+    return out
+
+
 def synthesize(text, voice_path):
+    pieces = segments(text)
+    multilingual = any(lang != "en" for lang, _ in pieces) and load_multilingual() is not None
     with gpu_lock:
-        # Reuse the voice's conditioning between sentences instead of re-reading the clip each time.
-        if current_voice["key"] != voice_path:
-            model.prepare_conditionals(voice_path)
-            current_voice["key"] = voice_path
-        wav = model.generate(text)
-    samples = wav.squeeze().detach().cpu().clamp(-1, 1).numpy()
-    pcm = (samples * 32767).astype("<i2").tobytes()
+        if multilingual:
+            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES
+
+            if mtl_voice["key"] != voice_path:
+                mtl_model.prepare_conditionals(voice_path)
+                mtl_voice["key"] = voice_path
+            gap = np.zeros(int(mtl_model.sr * GAP_SECONDS), dtype=np.float32)
+            parts = []
+            for lang, words in pieces:
+                wav = mtl_model.generate(words, language_id=lang if lang in SUPPORTED_LANGUAGES else "en")
+                parts += [wav.squeeze().detach().cpu().numpy().astype(np.float32), gap]
+            samples, sr = np.concatenate(parts[:-1]), mtl_model.sr
+        else:
+            # Reuse the voice's conditioning between sentences instead of re-reading the clip each time.
+            if current_voice["key"] != voice_path:
+                model.prepare_conditionals(voice_path)
+                current_voice["key"] = voice_path
+            wav = model.generate(LANG_TAG.sub("", text))
+            samples, sr = wav.squeeze().detach().cpu().numpy(), model.sr
+    pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(model.sr)
+        w.setframerate(sr)
         w.writeframes(pcm)
     return buf.getvalue()
 
@@ -78,6 +149,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/warm":
+            if state["multilingual"] == "off":
+                threading.Thread(target=load_multilingual, daemon=True).start()
+            return self.send_json(200, state)
         if self.path != "/tts":
             return self.send_json(404, {"error": "not found"})
         if not state["ready"]:

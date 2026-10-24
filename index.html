@@ -1091,8 +1091,9 @@ function ring(seconds = 2) {
 const cleanForSpeech = (t) => t
   .replace(/\*[^*]*\*/g, " ")
   .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
-  .replace(/[#_`>]/g, "")
+  .replace(/[#_`]|(?<!<\/?[a-z]{2})>/g, "") // keeps language tags like <es>…</es> for the voice
   .trim();
+const untag = (t) => t.replace(/<\/?[a-z]{2}>/g, "");
 
 let currentAudio = null, noticeTimer = null;
 const hasVoice = () => !!store.get("cbVoice");
@@ -1139,7 +1140,7 @@ function prepareSpeech(text) {
   // If the voice can't be made, show the sentence instead and give time to read it.
   const fallback = (err) => {
     const seconds = Math.max(3, clean.split(/\s+/).length * 0.35);
-    notify(`⚠ ${err.message}\n${who()}: "${clean}"`, seconds + 2);
+    notify(`⚠ ${err.message}\n${who()}: "${untag(clean)}"`, seconds + 2);
     return new Promise((r) => setTimeout(r, seconds * 1000));
   };
   if (!videoMode || !faceName()) return () => audio.then(playUrl, fallback);
@@ -1341,7 +1342,7 @@ async function joeTurn(url, body, gate = Promise.resolve()) {
       pending += chunk;
       if (myTurn === turnId) {
         line ??= addLine("joe", "");
-        line.textContent = cleanForSpeech(full);
+        line.textContent = untag(cleanForSpeech(full));
         $("captions").scrollTop = $("captions").scrollHeight;
       }
       // Speak each finished sentence as soon as it arrives.

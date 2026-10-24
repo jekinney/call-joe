@@ -438,6 +438,30 @@ const flirtingRules = (c) => {
   try { return fs.readFileSync(path.join(personasDir, "_flirting", `${level}.md`), "utf8").trim(); } catch { return ""; }
 };
 
+// A friend who mixes in another language (contact.json "speaks", like "es"; tools/contact.py speaks) wraps those
+// words in tags, so Chatterbox's multilingual model says them with a real accent (voice/chatterbox_server.py).
+// Tags are stripped from everything you see: captions, texts, voicemail transcripts and memory.
+const LANGS = { es: "Spanish", fr: "French", it: "Italian", de: "German", pt: "Portuguese" };
+const LANG_TAGS = /<\/?[a-z]{2}>/g;
+const untag = (t) => t.replaceAll(HANGUP, "").replace(LANG_TAGS, "");
+const speaksRules = (c) => {
+  const lang = LANGS[c.speaks];
+  if (!lang) return "";
+  const t = c.speaks;
+  const example = t === "es" ? ` Like: "<es>¡Ay, Dios mío!</es> You won't believe it, <es>mijo</es>. <es>Gracias a Dios</es> it's Friday."` : "";
+  return `# Speaking ${lang}
+Whenever you say a word or phrase in ${lang}, wrap it in <${t}>…</${t}> so your voice pronounces it right. That includes single words and nicknames, every time.${example} Wrap only the ${lang} words, never English ones, and spell them properly with their accents. The tags are a signal for your voice, not something you say, and your buddy never sees them.`;
+};
+// Loads the multilingual voice in the background when a call with such a friend starts, so their first words aren't held up.
+async function warmLanguages(c) {
+  if (!LANGS[c.speaks]) return;
+  await chatterbox.start();
+  for (let i = 0; i < 30; i++) {
+    if (await fetch(`${chatterbox.url}/warm`, { method: "POST" }).then((r) => r.ok, () => false)) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 async function systemPrompt(c) {
   if (c.support) return supportPrompt(c);
   // Official friends use their merged identity; until then, the persona and relationship as written.
@@ -459,6 +483,7 @@ async function systemPrompt(c) {
     treatment(c),
     languageRules(c),
     flirtingRules(c),
+    speaksRules(c),
     reachingOut(c),
     missedCalls(c),
     ENDING_THE_CALL,
@@ -622,7 +647,7 @@ async function friendTexts(c, { opener = false, about = null } = {}) {
     messages: textTurns(list, note),
   });
   if (msg.stop_reason === "refusal") throw new Error("They couldn't text back right now.");
-  let raw = textOf(msg.content).replaceAll(HANGUP, "");
+  let raw = untag(textOf(msg.content));
   const call = raw.includes(CALL_MARK);
   raw = raw.replaceAll(CALL_MARK, "");
   // A tapback on your last text: [react: 😂]
@@ -715,7 +740,8 @@ async function leaveVoicemail(c, declined) {
     }],
   });
   if (msg.stop_reason === "refusal") throw new Error("They couldn't leave a message this time.");
-  const text = textOf(msg.content).replaceAll(HANGUP, "").replace(/\s+/g, " ").trim();
+  const spoken = textOf(msg.content).replaceAll(HANGUP, "").replace(/\s+/g, " ").trim();
+  const text = untag(spoken);
   if (!text) throw new Error("The voicemail came out empty.");
 
   const file = voiceFile(c.settings.cbVoice);
@@ -724,7 +750,7 @@ async function leaveVoicemail(c, declined) {
   const r = await fetch(`${chatterbox.url}/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: text.slice(0, 1000), voice_path: file }),
+    body: JSON.stringify({ text: spoken.slice(0, 1000), voice_path: file }),
   });
   if (!r.ok) throw new Error(`Couldn't record the voicemail (voice engine answered ${r.status}).`);
   const audio = Buffer.from(await r.arrayBuffer());
@@ -930,7 +956,7 @@ function installFriend(id, role, cussing = false) {
   fs.mkdirSync(path.join(contactsDir, id), { recursive: true });
   writeJson(contactPath(id, "contact.json"), {
     name: f.name, created: new Date().toISOString(), gender: f.gender, settings,
-    role: resolveRole(role, f.gender), ...(cussing ? { cussing: true } : {}), ...(FLIRTING.includes(f.flirting) && f.flirting !== "off" ? { flirting: f.flirting } : {}), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
+    role: resolveRole(role, f.gender), ...(cussing ? { cussing: true } : {}), ...(FLIRTING.includes(f.flirting) && f.flirting !== "off" ? { flirting: f.flirting } : {}), ...(LANGS[f.speaks] ? { speaks: f.speaks } : {}), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
   });
   for (const l of links) {
     const other = loadContact(l.id);
@@ -1188,7 +1214,7 @@ async function hangUp() {
   const c = loadContact(ended.contactId);
   if (!c) return;
   if (c.support) {
-    const said = ended.messages.slice(1).map((m) => `${m.role === "user" ? "Caller" : firstName(c)}: ${textOf(m.content).replaceAll(HANGUP, "").trim()}`).join("\n");
+    const said = ended.messages.slice(1).map((m) => `${m.role === "user" ? "Caller" : firstName(c)}: ${untag(textOf(m.content)).trim()}`).join("\n");
     fs.appendFileSync(path.join(dataDir, "support-calls.txt"), `\n===== Support call with ${firstName(c)}, ${ended.started.toLocaleString("en-US")} =====\n${said}\n`);
     if (said.trim()) await afterSupportCall(said);
     return;
@@ -1198,7 +1224,7 @@ async function hangUp() {
   const memoryFile = contactPath(c.id, "memory.json");
   let transcript = ended.messages
     .slice(1)
-    .map((m) => `${m.role === "user" ? "Buddy" : first}: ${textOf(m.content).replaceAll(HANGUP, "").trim()}`)
+    .map((m) => `${m.role === "user" ? "Buddy" : first}: ${untag(textOf(m.content)).trim()}`)
     .join("\n");
   memory.calls += 1;
   memory.lastCall = ended.started.toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -1822,7 +1848,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === "PUT") {
-      const { settings = {}, active, role, cussing, flirting } = await readBody(req);
+      const { settings = {}, active, role, cussing, flirting, speaks } = await readBody(req);
+      if (speaks === "" || LANGS[speaks]) c.speaks = speaks || undefined;
       if (FLIRTING.includes(flirting)) c.flirting = flirting;
       const bad = (k) => (k === "callsYou" && !CALL_FREQ[settings[k]]) || (k === "textsYou" && !TEXT_FREQ[settings[k]]);
       for (const k of SETTING_KEYS) if (k in settings && !bad(k)) c.settings[k] = settings[k];
@@ -1850,7 +1877,7 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 200, {
       id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy, role: shownRole(c.role ?? "friend"),
-      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall, cussing: !!c.cussing, flirting: flirtingOf(c),
+      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall, cussing: !!c.cussing, flirting: flirtingOf(c), speaks: LANGS[c.speaks] ? c.speaks : "",
     });
   }
 
@@ -1860,6 +1887,7 @@ const server = http.createServer(async (req, res) => {
     const { contact: contactId, incoming } = await readBody(req);
     const c = loadContact(contactId);
     if (!c) return json(res, 400, { error: "No such friend." });
+    warmLanguages(c).catch(() => {});
     if (call) await hangUp();
     call = {
       contactId: c.id,
