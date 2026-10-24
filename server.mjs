@@ -1442,7 +1442,8 @@ const writeVoicemails = (id, list) => writeJson(path.join(voicemailDir(id), "ind
 
 function voicemailsLeft(c) {
   const week = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recent = keptVoicemails(c.id).filter((v) => Date.parse(v.at) > week).slice(-3);
+  // Deleted ones count too: deleting removes the audio from your phone, not what they said.
+  const recent = readVoicemails(c.id).filter((v) => v.text && Date.parse(v.at) > week).slice(-3);
   if (!recent.length) return "";
   return `\n\n# Voicemails you left your buddy\n` + recent.map((v) =>
     `- ${v.when} (${v.heard ? "they've listened to it" : "they haven't listened yet"}): "${v.text}"`).join("\n");
@@ -2660,8 +2661,9 @@ const server = http.createServer(async (req, res) => {
     const list = readVoicemails(contact);
     const v = list.find((x) => x.id === id);
     if (!v) return json(res, 404, { error: "No such voicemail." });
+    // Deleting removes the audio and hides it from your voicemail list; the words stay in index.json so your friend
+    // remembers what they said, and so it can still teach them about you.
     fs.rmSync(path.join(voicemailDir(contact), `${id}.wav`), { force: true });
-    delete v.text;
     v.deleted = true;
     v.heard = true;
     writeVoicemails(contact, list);
