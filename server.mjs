@@ -643,11 +643,12 @@ function recentTexts(c) {
 // remember the last few they left, and whether you've listened.
 const voicemailDir = (id) => path.join(contactsDir, id, "voicemail");
 const readVoicemails = (id) => readJson(path.join(voicemailDir(id), "index.json"), []);
+const keptVoicemails = (id) => readVoicemails(id).filter((v) => !v.deleted); // ones you haven't deleted
 const writeVoicemails = (id, list) => writeJson(path.join(voicemailDir(id), "index.json"), list);
 
 function voicemailsLeft(c) {
   const week = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recent = readVoicemails(c.id).filter((v) => Date.parse(v.at) > week).slice(-3);
+  const recent = keptVoicemails(c.id).filter((v) => Date.parse(v.at) > week).slice(-3);
   if (!recent.length) return "";
   return `\n\n# Voicemails you left your buddy\n` + recent.map((v) =>
     `- ${v.when} (${v.heard ? "they've listened to it" : "they haven't listened yet"}): "${v.text}"`).join("\n");
@@ -1545,7 +1546,7 @@ const server = http.createServer(async (req, res) => {
       const who = { contact: c.id, name: c.name, face, active: c.active !== false };
       for (const e of callLogEntries(c.id)) items.push({ ...who, kind: e.incoming ? "incoming" : "outgoing", when: e.when, at: e.at });
       for (const v of readVoicemails(c.id)) {
-        items.push({ ...who, kind: v.declined ? "declined" : "missed", when: v.when, at: v.at, voicemail: v.id, heard: v.heard });
+        items.push({ ...who, kind: v.declined ? "declined" : "missed", when: v.when, at: v.at, voicemail: v.deleted ? null : v.id, heard: v.heard || !!v.deleted });
       }
     }
     const shown = items.filter((r) => {
@@ -1664,7 +1665,7 @@ const server = http.createServer(async (req, res) => {
     return streamReply(res);
   }
   if (req.method === "GET" && url.pathname === "/api/voicemail") {
-    const all = listContacts().flatMap((c) => readVoicemails(c.id).map((v) => ({
+    const all = listContacts().flatMap((c) => keptVoicemails(c.id).map((v) => ({
       ...v, contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
     })));
     return json(res, 200, all.sort((a, b) => b.at.localeCompare(a.at)));
@@ -1677,6 +1678,19 @@ const server = http.createServer(async (req, res) => {
     if (!fs.existsSync(file)) return json(res, 404, { error: "No such voicemail." });
     res.writeHead(200, { "Content-Type": "audio/wav" });
     return fs.createReadStream(file).pipe(res);
+  }
+  if (req.method === "POST" && url.pathname === "/api/voicemail/delete") {
+    const { contact, id } = await readBody(req);
+    if (!validId(contact) || !/^[\w-]+$/.test(String(id ?? ""))) return json(res, 400, { error: "Bad voicemail." });
+    const list = readVoicemails(contact);
+    const v = list.find((x) => x.id === id);
+    if (!v) return json(res, 404, { error: "No such voicemail." });
+    fs.rmSync(path.join(voicemailDir(contact), `${id}.wav`), { force: true });
+    delete v.text;
+    v.deleted = true;
+    v.heard = true;
+    writeVoicemails(contact, list);
+    return json(res, 200, { ok: true });
   }
   if (req.method === "POST" && url.pathname === "/api/voicemail/heard") {
     const { contact, id } = await readBody(req);
@@ -1695,7 +1709,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: callsYouOf(c), callOdds: CALL_FREQ[callsYouOf(c)].odds,
-      newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
+      newVoicemail: keptVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
       roleChoices: roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)), ready: identityReady(c),
       worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: textsYouOf(c), textScale: TEXT_FREQ[textsYouOf(c)].scale, textsPerDay: textsPerDay(c),
       // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).

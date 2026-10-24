@@ -147,6 +147,10 @@
   .new-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
   .play { width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer; flex: none; background: var(--accent); color: #1d1712; font-size: 14px; display: grid; place-items: center; }
   .play.playing { background: var(--line); color: var(--ink); }
+  .vm-del { width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer; flex: none; background: none; color: var(--muted); font-size: 16px; }
+  .vm-del:hover { background: rgba(255,255,255,.08); color: #ff8a80; }
+  .vm-row { cursor: pointer; }
+  .vm-row .tap { font-size: 12px; color: var(--muted); margin-top: 5px; }
   .off-friends { width: min(520px, calc(100% - 32px)); margin-top: 18px; }
   .off-friends summary { cursor: pointer; color: var(--muted); font-size: 14px; padding: 6px 2px; }
   .soon-card { width: min(420px, calc(100% - 32px)); text-align: center; margin-top: 8vh; padding: 28px 20px; border-radius: 18px; background: rgba(24, 18, 13, .86); border: 1px solid var(--line); }
@@ -2500,6 +2504,7 @@ $("favs").onclick = (e) => {
 
 // ---------- Calls: recents and voicemail ----------
 let callsTab = "recents", listAudio = null, listPlaying = null;
+const vmOpen = new Set(); // voicemails whose words you've opened
 async function renderCalls() {
   document.querySelectorAll("[data-calls]").forEach((b) => b.classList.toggle("on", b.dataset.calls === callsTab));
   $("clearCallsBtn").hidden = callsTab !== "recents";
@@ -2521,13 +2526,15 @@ async function renderCalls() {
   } else {
     await refreshData();
     if (page !== "calls" || callsTab !== "voicemail") return;
+    // The words stay hidden until you tap the message (or play it), like a phone's voicemail.
     $("callsList").innerHTML = data.voicemail.map((v) => `
-      <div class="row-item ${v.heard ? "heard" : ""}" style="cursor:default; align-items:flex-start">
+      <div class="row-item vm-row ${v.heard ? "heard" : ""}" style="align-items:flex-start" data-vm-open="${esc(v.id)}">
         ${avatarHtml(v.name, v.face)}
         <span class="txt"><div class="t1">${v.heard ? "" : `<span class="new-dot"></span>`}${esc(v.name)}</div>
           <div class="t2">${esc(v.when)}${v.declined ? " · you declined" : " · missed call"}</div>
-          <div class="words">${esc(v.text)}</div></span>
+          ${vmOpen.has(v.id) ? `<div class="words">${esc(v.text)}</div>` : `<div class="tap">Tap to read</div>`}</span>
         <button class="play ${listPlaying === v.id ? "playing" : ""}" data-vm="${esc(v.id)}" data-contact="${esc(v.contact)}" title="${listPlaying === v.id ? "Stop" : "Play"}">${listPlaying === v.id ? "■" : "▶"}</button>
+        <button class="vm-del" data-vm-del="${esc(v.id)}" data-contact="${esc(v.contact)}" data-name="${esc(v.name)}" title="Delete">🗑</button>
       </div>`).join("") || `<div class="empty">No voicemail yet. When a friend calls and you miss it, their message shows up here.</div>`;
   }
 }
@@ -2552,8 +2559,27 @@ $("callsList").onclick = async (e) => {
     if (open.dataset.active === "false") return toast("That friend is turned off. Turn them on in Contacts.");
     return openContact(open.dataset.open);
   }
+  const del = e.target.closest("[data-vm-del]");
+  if (del) {
+    const first = del.dataset.name.split(" ")[0];
+    const sure = await danger({ title: "Delete this voicemail?", text: `${esc(first)}'s message will be gone for good.`, button: "Delete" });
+    if (!sure) return;
+    if (listPlaying === del.dataset.vmDel) { listAudio?.pause(); listAudio = null; listPlaying = null; }
+    await fetch("/api/voicemail/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: del.dataset.contact, id: del.dataset.vmDel }) });
+    toast("Voicemail deleted.");
+    if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
+    return refreshViews();
+  }
   const b = e.target.closest("button[data-vm]");
-  if (!b) return;
+  if (!b) {
+    const row = e.target.closest("[data-vm-open]");
+    if (!row) return;
+    const id = row.dataset.vmOpen;
+    if (vmOpen.has(id)) vmOpen.delete(id);
+    else vmOpen.add(id);
+    return renderCalls();
+  }
+  vmOpen.add(b.dataset.vm); // playing it shows the words too
   const wasPlaying = listPlaying === b.dataset.vm;
   listAudio?.pause();
   listAudio = null;
