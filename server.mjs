@@ -489,6 +489,39 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/alive") return json(res, 200, { ok: true });
   lastPing = Date.now();
 
+  if (req.method === "GET" && url.pathname === "/theme.js") {
+    res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
+    return res.end(fs.readFileSync(path.join(dir, "theme.js")));
+  }
+
+  // ---- Looks: wallpaper and call-screen style (see theme.js) ----
+  if (url.pathname === "/api/appearance") {
+    const a = { wallpaper: "classic", callStyle: "classic", v: 0, ...(config.appearance ?? {}) };
+    if (req.method === "PUT") {
+      const { wallpaper, callStyle } = await readBody(req);
+      if (/^(custom|[a-z-]{1,30})$/.test(String(wallpaper ?? ""))) a.wallpaper = wallpaper;
+      if (["classic", "photo"].includes(callStyle)) a.callStyle = callStyle;
+      config.appearance = a;
+      writeJson(configFile, config);
+    }
+    return json(res, 200, a);
+  }
+  const wallpaperFile = path.join(dataDir, "wallpaper.jpg");
+  if (url.pathname === "/api/wallpaper") {
+    if (req.method === "POST") {
+      const img = await readRaw(req, 15 * 1024 * 1024).catch(() => null);
+      // JPEG files start with FF D8.
+      if (!img || img[0] !== 0xff || img[1] !== 0xd8) return json(res, 400, { error: "That picture didn't come through. Try again." });
+      fs.writeFileSync(wallpaperFile, img);
+      config.appearance = { wallpaper: "classic", callStyle: "classic", ...(config.appearance ?? {}), wallpaper: "custom", v: Date.now() };
+      writeJson(configFile, config);
+      return json(res, 200, config.appearance);
+    }
+    if (!fs.existsSync(wallpaperFile)) return json(res, 404, { error: "No wallpaper picture." });
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=31536000" });
+    return fs.createReadStream(wallpaperFile).pipe(res);
+  }
+
   if (req.method === "GET" && (url.pathname === "/settings" || url.pathname === "/settings.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     return res.end(fs.readFileSync(path.join(dir, "settings.html")));

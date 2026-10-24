@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Call Joe</title>
+<script src="/theme.js"></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
 <style>
   :root {
@@ -40,6 +41,15 @@
   }
   #incoming .avatar { animation: shake .5s ease-in-out infinite; }
   #incoming h1 { font-size: 30px; }
+
+  /* Photo call style (Settings > Looks): the friend's picture fills the screen, with just their name across it. */
+  body.photo-call .who .avatar, #incoming.photo-call .avatar { display: none; }
+  body.photo-call .who { margin-top: 6vh; }
+  body.photo-call #friendName, #incoming.photo-call h1 {
+    font-size: clamp(40px, 9vw, 76px); letter-spacing: .03em; line-height: 1.05; text-shadow: 0 3px 18px rgba(0,0,0,.85);
+  }
+  body.photo-call #status, body.photo-call #timer, #incoming.photo-call .hint { color: var(--ink); text-shadow: 0 2px 8px rgba(0,0,0,.9); }
+  #incoming.photo-call { justify-content: space-between; padding: 12vh 16px 8vh; }
   #incoming .controls { padding-bottom: 0; }
   #declineBtn { background: var(--red); transform: rotate(135deg); }
   #answerBtn { background: var(--green); }
@@ -334,9 +344,27 @@ const who = () => contact?.firstName ?? "your friend";
 let state = "idle"; // idle | ringing | speaking | listening | thinking
 let callStart = 0, timerId = null, muted = false;
 
+// ---------- Looks (Settings > Looks, shared with the Settings window through theme.js) ----------
+const Theme = window.CallJoeTheme;
+let lastBackground = "";
+// Photo style applies on a voice call screen when the friend has a picture.
+const photoCall = () => Theme.get().callStyle === "photo" && !videoMode && !$("callScreen").hidden && !!contact?.settings?.face;
+function applyLooks() {
+  const bg = photoCall() ? Theme.photoCss(contact.settings.face) : Theme.wallpaperCss();
+  if (bg !== lastBackground) {
+    document.body.style.background = bg;
+    lastBackground = bg;
+  }
+  document.body.classList.toggle("photo-call", photoCall());
+  const caller = ringingIn?.c;
+  const photoIncoming = Theme.get().callStyle === "photo" && !!caller?.face;
+  $("incoming").style.background = photoIncoming ? Theme.photoCss(caller.face) : "";
+  $("incoming").classList.toggle("photo-call", photoIncoming);
+}
+
 function setState(s, text) {
   state = s;
-  document.body.className = s + (videoMode ? " video" : "");
+  document.body.className = s + (videoMode ? " video" : "") + (photoCall() ? " photo-call" : "");
   $("status").textContent = text;
   const inCall = s !== "idle";
   $("callCtl").hidden = inCall;
@@ -347,6 +375,7 @@ function setState(s, text) {
   $("backBtn").hidden = inCall || $("callScreen").hidden;
   $("hushCtl").hidden = s !== "speaking";
   $("stage").hidden = !videoMode;
+  applyLooks();
 }
 
 function addLine(who, text, cls = "") {
@@ -552,6 +581,7 @@ function startIdle() {
 }
 
 async function enterVideo() {
+  queueMicrotask(applyLooks);
   videoMode = true;
   document.body.classList.add("video");
   $("stage").hidden = false;
@@ -570,6 +600,7 @@ async function enterVideo() {
 }
 
 function leaveVideo() {
+  queueMicrotask(applyLooks);
   videoMode = false;
   document.body.classList.remove("video");
   $("stage").hidden = true;
@@ -1146,6 +1177,7 @@ const LEGACY_KEYS = ["cbVoice", "face"];
 const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 
 async function showHome() {
+  queueMicrotask(applyLooks);
   contact = null;
   idle?.stop();
   idle = null;
@@ -1218,6 +1250,7 @@ async function openContact(id, startWith, incoming = false) {
   $("captions").innerHTML = "";
   $("home").hidden = true;
   $("callScreen").hidden = false;
+  applyLooks();
   idle = null;
   setState("idle", c.calls ? `Ready when you are · ${c.calls} call${c.calls === 1 ? "" : "s"} so far` : "Ready when you are");
   if (startWith) startCall(startWith === "video", incoming);
@@ -1235,6 +1268,7 @@ function openSettingsWindow() {
 if ("BroadcastChannel" in window) {
   new BroadcastChannel("calljoe").onmessage = (e) => {
     if (["contacts-changed", "voicemail-changed"].includes(e.data?.type) && !$("home").hidden) showHome();
+    if (e.data?.type === "appearance-changed") Theme.load().then(applyLooks);
   };
 }
 
@@ -1271,6 +1305,7 @@ async function ringYou(id) {
   $("inName").textContent = c.name;
   $("inAvatar").innerHTML = c.face ? `<img src="/api/face?name=${encodeURIComponent(c.face)}" alt="">` : esc(c.name[0]);
   $("answerVideoCtl").hidden = !c.face;
+  applyLooks();
   $("incoming").hidden = false;
   const title = document.title;
   document.title = `📞 ${c.name} is calling…`;
@@ -1371,6 +1406,7 @@ $("answerVideoBtn").onclick = () => answer(true);
 $("declineBtn").onclick = () => { if (ringingIn) { ringingIn.declined = true; ringingIn.stop = true; } };
 
 showHome();
+Theme.load().then(applyLooks); // your wallpaper and call-screen style, saved on the server
 </script>
 </body>
 </html>

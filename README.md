@@ -17,9 +17,11 @@ Open Claude Code in this folder and type `/new-contact`, then give Claude a name
 
 ## Settings (⚙ on the friends list)
 
-Opens in its own tablet-style window (`settings.html`):
+Opens in its own tablet-style window (`settings.html`), laid out like a phone: a clock and 🔔 notifications at the top (new voicemails, friends who need a voice clip), and tabs at the bottom:
 - **Friends:** every friend, with an Active switch. Only active friends show on the friends list and call you; turning a friend off keeps their memory. Each friend's own page will go here later.
+- **Voicemail:** messages friends left when you missed or declined their call, with play buttons.
 - **Calls:** interrupt by talking, on or off.
+- **Looks:** a wallpaper (presets, or your own picture) for Call Joe and Settings, and the call screen style: Classic (the default) or Photo, where the friend's picture fills the screen with their name across it.
 - **Account:** change your Anthropic API key.
 
 Changes show up in the main window right away.
