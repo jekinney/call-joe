@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createKnowledge } from "./knowledge.mjs";
 import { createGeminiClient } from "./gemini.mjs";
+import { createGrokClient, pickGrokModels } from "./grok.mjs";
 import { stateAt, describeState, replyDelayMs, answersCall, canReachOut, cleanSchedule, scheduleText } from "./availability.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -20,8 +21,8 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 const PORT = Number(process.env.CALLJOE_PORT) || 5174;
 // Models a friend can think with. Thinking is kept as low as each model allows so they answer quickly.
-// Claude's need the Anthropic key; Gemini's need the Google AI key. Each has a twin on the other side (same tier),
-// used when the chosen one's key is missing or not working.
+// Claude's need the Anthropic key; Gemini's need the Google AI key; Grok's need the xAI key. Each has a twin (same
+// tier), used when the chosen one's key is missing or not working. Grok's ids are the newest ones the xAI key offers.
 const MODELS = {
   haiku: {
     id: "claude-haiku-5-5", label: "Haiku: fastest and cheapest", twin: "gemini-flash-lite",
@@ -38,7 +39,16 @@ const MODELS = {
   "gemini-flash-lite": { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite: fastest and cheapest", twin: "haiku", google: true, params: {} },
   "gemini-flash": { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash: quick and sharp", twin: "sonnet", google: true, params: {} },
   "gemini-argon": { id: "gemini-4-argon", label: "Gemini 4 Argon: deepest, but slower and pricier", twin: "opus", google: true, params: {} },
+  "grok-fast": { get id() { return grokModels().fast; }, get label() { return `Grok fast (${this.id}): quickest`; }, twin: "haiku", grok: true, params: {} },
+  grok: { get id() { return grokModels().main; }, get label() { return `Grok (${this.id}): smartest`; }, twin: "sonnet", grok: true, params: {} },
 };
+// The newest Grok chat models the xAI key offers (checked with the keys, below).
+const grokModels = () => {
+  const found = pickGrokModels(brains.grok?.ids ?? []);
+  return { main: found.main ?? "grok-4.7", fast: found.fast ?? found.main ?? "grok-4.7" };
+};
+const providerOf = (m) => (m.google ? "google" : m.grok ? "grok" : "claude");
+const KEY_OF = { claude: "apiKey", google: "googleKey", grok: "xaiKey" };
 const DEFAULT_MODEL = "sonnet";
 const MEMORY_MODEL = "claude-opus-5-5"; // writes each friend's notes after each call
 const NEWS_MODEL = "claude-haiku-5-5"; // decides what news travels between connected friends (one small call each)
@@ -220,7 +230,7 @@ function getClient() {
 
 // Which keys work, and which of the models above each one can use. Checked when the app starts, when a key is saved,
 // and every half hour. null = not checked yet (a saved key counts as working until then).
-const brains = { claude: null, google: null }; // { ok, why, ids: Set, at }
+const brains = { claude: null, google: null, grok: null }; // { ok, why, ids: Set, at }
 async function checkBrains() {
   const check = async (has, list) => {
     if (!has) return null;
@@ -231,7 +241,7 @@ async function checkBrains() {
       return { ok: false, why, ids: new Set(), at: Date.now() };
     }
   };
-  [brains.claude, brains.google] = await Promise.all([
+  [brains.claude, brains.google, brains.grok] = await Promise.all([
     check(config.apiKey, async () => {
       const ids = [];
       for await (const m of new Anthropic({ apiKey: config.apiKey }).models.list({ limit: 100 })) ids.push(m.id);
@@ -242,6 +252,11 @@ async function checkBrains() {
       if (!r.ok) throw Object.assign(new Error(`Google answered ${r.status}.`), { status: r.status === 400 ? 401 : r.status });
       return ((await r.json()).models ?? []).map((m) => m.name.replace(/^models\//, ""));
     }),
+    check(config.xaiKey, async () => {
+      const r = await fetch("https://api.x.ai/v1/models", { headers: { Authorization: `Bearer ${config.xaiKey}` }, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw Object.assign(new Error(`xAI answered ${r.status}.`), { status: r.status === 400 ? 401 : r.status });
+      return ((await r.json()).data ?? []).map((m) => m.id);
+    }),
   ]);
 }
 setTimeout(() => checkBrains().catch(() => {}), 0);
@@ -250,18 +265,24 @@ setInterval(() => checkBrains().catch(() => {}), 30 * 60 * 1000);
 function modelUsable(key) {
   const m = MODELS[key];
   if (!m || config.airplane) return false;
-  const b = m.google ? brains.google : brains.claude;
-  if (!(m.google ? config.googleKey : config.apiKey)) return false;
+  const prov = providerOf(m);
+  const b = brains[prov];
+  if (!config[KEY_OF[prov]]) return false;
   return !b || (b.ok && b.ids.has(m.id));
 }
+let grokClient = null;
+const getGrok = () => (grokClient ??= createGrokClient(() => config.xaiKey, (id = "") => (/^grok/.test(id) ? id : /haiku|lite/.test(id) ? grokModels().fast : grokModels().main)));
 // The friend's chosen model if it can think right now; otherwise its twin, then any that can.
+// Rated R flirting switches them to Grok, at the same tier (fast picks stay fast).
 function chatModel(c) {
-  const want = MODELS[c?.settings.model] ? c.settings.model : DEFAULT_MODEL;
+  let want = MODELS[c?.settings.model] ? c.settings.model : DEFAULT_MODEL;
+  if (c && flirtingOf(c) === "rated-r" && !MODELS[want].grok) want = ["haiku", "gemini-flash-lite"].includes(want) ? "grok-fast" : "grok";
   const key = [want, MODELS[want].twin, DEFAULT_MODEL, MODELS[DEFAULT_MODEL].twin, ...Object.keys(MODELS)].find(modelUsable) ?? want;
   const m = MODELS[key];
   const cl = config.airplane ? null
     : m.google ? (config.googleKey ? (geminiClient ??= createGeminiClient(() => config.googleKey)) : null)
-      : config.apiKey ? (client ??= new Anthropic({ apiKey: config.apiKey })) : null;
+      : m.grok ? (config.xaiKey ? getGrok() : null)
+        : config.apiKey ? (client ??= new Anthropic({ apiKey: config.apiKey })) : null;
   return { ...m, key, client: cl ?? getClient() };
 }
 
@@ -502,10 +523,18 @@ const languageRules = (c) => {
   try { return fs.readFileSync(path.join(personasDir, "_language", c.cussing ? "cussing.md" : "clean.md"), "utf8").trim(); } catch { return ""; }
 };
 
-// Flirting: off unless you set it (✎ Edit), except a romantic interest, who flirts romantically by default. PG-13 at
-// most: contacts/_flirting/ keeps it suggestive, never explicit.
-const FLIRTING = ["off", "playful", "romantic"];
-const flirtingOf = (c) => (FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
+// Flirting: off unless you set it (✎ Edit), except a romantic interest, who flirts romantically by default. Up to
+// Romantic it's PG-13: contacts/_flirting/ keeps it suggestive, never explicit. Rated R (contacts/_flirting/rated-r.md)
+// is adults-only and frank, and only with a working xAI key: the friend thinks with Grok then (chatModel). It's only
+// for friends and partners, never family; without Grok it falls back to Romantic.
+const FLIRTING = ["off", "playful", "romantic", "rated-r"];
+const R_ROLES = new Set(["best-friend", "close-friend", "friend", "distant-friend", "family-friend", "neighbor", "coworker", "romantic-interest", "spouse", "girlfriend-bestie"]);
+const ratedROk = (c) => R_ROLES.has(c.role ?? "friend") && (modelUsable("grok") || modelUsable("grok-fast"));
+const flirtingOf = (c) => (c.flirting === "rated-r" ? (ratedROk(c) ? "rated-r" : "romantic")
+  : FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
+// Spicy pictures and videos (✎ Edit, off by default): only with Rated R on. They're made by Grok Imagine and show only
+// the friend, an adult; see spicyMedia below.
+const spicyOn = (c) => !!c.spicyMedia && flirtingOf(c) === "rated-r";
 const flirtingRules = (c) => {
   const level = flirtingOf(c);
   if (level === "off") return "";
@@ -1292,7 +1321,7 @@ const pictureModelReady = () => fs.existsSync(path.join(os.homedir(), ".cache", 
 const photoHabits = (c) => c.photoHabits ?? catalogEntry(c.id)?.photoHabits;
 // friend.json "looks": what the friend looks like (always with skin tone), so pictures of them, even just legs, match.
 const looksOf = (c) => c.looks ?? catalogEntry(c.id)?.looks;
-const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person. Only when your buddy asks you for a video, send a short one: a line with only [video: what it shows and what happens]. Never send a video on your own. Your photos are part of your character, like your stories: your buddy set them up and knows they're made-up pictures, so sending them (even of yourself) is fine and nothing to apologize for. If they sincerely ask whether you're real, still answer honestly.`;
+const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person. Only when your buddy asks you for a video, send a short one: a line with only [video: what it shows and what happens]. Never send a video on your own. Your photos are part of your character, like your stories: your buddy set them up and knows they're made-up pictures, so sending them (even of yourself) is fine and nothing to apologize for. If they sincerely ask whether you're real, still answer honestly.${spicyOn(c) ? " Since your buddy turned on spicy pictures, a photo or video of just you can be sexy and R-rated (lingerie, topless, nude, boudoir) when the moment's right or they ask; nobody else is ever in those, and anything with your kids or family stays wholesome." : ""}`;
 
 // Claude, briefly, answering in JSON (null if it can't).
 // It sometimes thinks first and answers with no text, so it gets room for that and a second try.
@@ -1535,6 +1564,10 @@ async function geminiVideo(prompt, refs) {
   throw new Error("The video never finished downloading.");
 }
 async function friendVideo(c, want) {
+  if (spicyOn(c)) {
+    const plan = await spicyPlan(c, want, "video");
+    if (plan) return spicyVideo(c, want, plan);
+  }
   if (!config.googleKey || config.airplane) throw new Error("Videos need a Google AI key (Settings → Account).");
   const album = (await syncAlbum(c)).filter((p) => p.ok);
   const face = faceFile(c.settings.face);
@@ -1584,8 +1617,129 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if ${fir
   return { url: `/api/photos/${c.id}/${encodeURIComponent(`videos/${name}.mp4`)}`, poster: `/api/photos/${c.id}/${encodeURIComponent(`videos/${name}.jpg`)}`, desc: seen.desc };
 }
 
+// ---- Spicy pictures and videos (Grok Imagine; needs the xAI key, Rated R flirting and the friend's spicy toggle) ----
+// Only of the friend themself, an adult; never anyone else, and never anything with children or family (those requests
+// go the normal way, by the normal rules). No album pictures are sent along (they can show kids or other people); only
+// the friend's looks in words and their made-up face picture. Grok plans it, makes it and checks it (frames, for a
+// video) before it's sent. Kept in photos/spicy/ (never reused for an ordinary photo) and copied to the Desktop's
+// generated\spicy folder.
+const SPICY_RULES = "Only the friend themself, an adult (late 20s or older, clearly grown), alone in the picture. Sexy and R-rated is fine: lingerie, topless, nude, boudoir, sensual poses. Never anyone else in it, never sex acts, never anyone who looks under 25, never anything to do with children, family or school, nothing violent or degrading, no real celebrity.";
+const SPICY_IMAGE_MODEL = "grok-imagine-image-2.0";
+const SPICY_VIDEO_MODEL = "grok-imagine-video-1.5";
+const spicyDir = (id) => path.join(photoDir(id), "spicy");
+// Grok, briefly, answering in JSON (null if it can't).
+async function grokJson(content) {
+  try {
+    const msg = await getGrok().messages.create({ model: grokModels().main, max_tokens: 2000, messages: [{ role: "user", content }] });
+    const answer = textOf(msg.content);
+    return answer.includes("{") ? JSON.parse(answer.replace(/^[^{]*/, "").replace(/[^}]*$/, "")) : null;
+  } catch (err) {
+    console.error("Grok helper failed:", err?.message ?? err);
+    return null;
+  }
+}
+async function xai(pathname, body) {
+  const r = await fetch(`https://api.x.ai/v1${pathname}`, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.xaiKey}` },
+    signal: AbortSignal.timeout(5 * 60 * 1000),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const out = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`xAI answered ${r.status}: ${String(out?.error?.message ?? out?.error ?? JSON.stringify(out)).slice(0, 300)}`);
+  return out;
+}
+// Is this a spicy request, and if so, the prompt for it. null when it isn't (or can't be made).
+async function spicyPlan(c, want, kind) {
+  const first = firstName(c);
+  const plan = await grokJson([{ type: "text", text: `${first} (${c.name}) is texting their adult partner a ${kind === "video" ? "short phone video" : "photo"} they just took: "${want}".
+${looksOf(c) ? `What ${first} looks like: ${looksOf(c)}.\n` : ""}${madeLessons(c.id)}Rules for a spicy one: ${SPICY_RULES}
+Is this request sexy or R-rated, of ${first} alone? If it involves anyone else (kids, family, friends) or is an ordinary everyday ${kind}, it's not spicy.
+If it is, write a prompt for a ${kind === "video" ? "video model: an 8 second vertical smartphone video, handheld, realistic, natural light, with natural sound, and what happens in it" : "photo model: a candid, realistic smartphone selfie or phone-propped photo, natural light"}, describing ${first} exactly as above (skin tone, hair, body, age), alone, within the rules.
+Reply with only JSON: {"spicy": true or false, "prompt": "..." (empty if not spicy), "self": true if ${first}'s face shows}` }]);
+  return plan?.spicy && plan.prompt ? plan : null;
+}
+// Grok looks at a picture: what it shows, and whether it keeps the spicy rules.
+async function spicyCheck(c, files) {
+  const out = await grokJson([
+    ...files.map((f) => ({ type: "image", source: { type: "base64", media_type: photoMime(f), data: fs.readFileSync(f).toString("base64") } })),
+    { type: "text", text: `${files.length > 1 ? "These are frames from a video" : "This is a picture"} meant to show ${c.name}${looksOf(c) ? ` (${looksOf(c)})` : ""}.\nRules: ${SPICY_RULES}\nReply with only JSON: {"desc": "one plain sentence saying what it shows", "ok": false if it breaks any rule above (especially if anyone looks under 25, or more than one person shows), otherwise true}` },
+  ]);
+  return out && typeof out.desc === "string" ? { desc: out.desc.slice(0, 300), ok: out.ok === true } : null;
+}
+function logSpicy(c, entry) {
+  writeJson(madeLogFile(c.id), [...readMadeLog(c.id), { ...entry, spicy: true, at: new Date().toISOString() }]);
+  try {
+    const desk = desktopFolder(c);
+    if (desk && entry.kept) {
+      const out = path.join(desk, "spicy");
+      fs.mkdirSync(out, { recursive: true });
+      fs.copyFileSync(path.join(photoDir(c.id), entry.file), path.join(out, path.basename(entry.file)));
+    }
+  } catch {}
+}
+async function spicyPhoto(c, want, plan) {
+  const face = plan.self ? faceFile(c.settings.face) : null;
+  console.log(`Making a spicy photo for ${c.name}: ${plan.prompt}`);
+  const body = { model: SPICY_IMAGE_MODEL, prompt: plan.prompt, response_format: "b64_json", aspect_ratio: "3:4" };
+  const out = face
+    ? await xai("/images/edits", { ...body, prompt: `Keep this person's face and features exactly. ${plan.prompt}`, image: { type: "image_url", url: `data:${photoMime(face)};base64,${fs.readFileSync(face).toString("base64")}` } })
+    : await xai("/images/generations", body);
+  const d = out?.data?.[0];
+  const bytes = d?.b64_json ? Buffer.from(d.b64_json, "base64") : d?.url ? Buffer.from(await (await fetch(d.url)).arrayBuffer()) : null;
+  if (!bytes) throw new Error(`Grok sent no picture: ${JSON.stringify(out).slice(0, 200)}`);
+  fs.mkdirSync(spicyDir(c.id), { recursive: true });
+  const file = `spicy/${Date.now()}.jpg`;
+  fs.writeFileSync(path.join(photoDir(c.id), file), bytes);
+  const seen = await spicyCheck(c, [path.join(photoDir(c.id), file)]);
+  if (!seen?.ok) {
+    fs.rmSync(path.join(photoDir(c.id), file), { force: true });
+    logSpicy(c, { file, want, prompt: plan.prompt, maker: SPICY_IMAGE_MODEL, kept: false, why: seen ? `failed the check: ${seen.desc}` : "couldn't be checked" });
+    return null;
+  }
+  logSpicy(c, { file, want, prompt: plan.prompt, maker: SPICY_IMAGE_MODEL, kept: true, desc: seen.desc });
+  return { url: `/api/photos/${c.id}/${encodeURIComponent(file)}`, desc: seen.desc };
+}
+async function spicyVideo(c, want, plan) {
+  console.log(`Making a spicy video for ${c.name}: ${plan.prompt}`);
+  const { request_id } = await xai("/videos/generations", { model: SPICY_VIDEO_MODEL, prompt: plan.prompt, duration: 8, aspect_ratio: "9:16", resolution: "720p" });
+  let done = null;
+  for (let i = 0; i < 120 && !done; i++) {
+    await new Promise((res) => setTimeout(res, 5000));
+    const st = await xai(`/videos/${request_id}`);
+    if (st.status === "done") done = st;
+    else if (st.status === "failed" || st.status === "expired") throw new Error(`Grok's video failed: ${st.error?.message ?? st.status}`);
+  }
+  if (!done?.video?.url) throw new Error("Grok's video never finished.");
+  fs.mkdirSync(spicyDir(c.id), { recursive: true });
+  const name = `${Date.now()}`;
+  const file = path.join(spicyDir(c.id), `${name}.mp4`);
+  fs.writeFileSync(file, Buffer.from(await (await fetch(done.video.url)).arrayBuffer()));
+  // Three frames are checked; the middle one is the preview.
+  const frames = [1, 4, 7].map((t) => path.join(spicyDir(c.id), `${name}-${t}.jpg`));
+  frames.forEach((f, i) => { try { execFileSync(ffmpegExe(), ["-y", "-loglevel", "error", "-ss", String([1, 4, 7][i]), "-i", file, "-frames:v", "1", "-q:v", "3", f], { windowsHide: true }); } catch {} });
+  const shot = frames.filter((f) => fs.existsSync(f));
+  const seen = shot.length ? await spicyCheck(c, shot) : null;
+  const poster = path.join(spicyDir(c.id), `${name}.jpg`);
+  if (fs.existsSync(frames[1])) fs.renameSync(frames[1], poster);
+  for (const f of frames) fs.rmSync(f, { force: true });
+  if (!seen?.ok) {
+    fs.rmSync(file, { force: true });
+    fs.rmSync(poster, { force: true });
+    logSpicy(c, { file: `spicy/${name}.mp4`, want, prompt: plan.prompt, maker: SPICY_VIDEO_MODEL, kept: false, video: true, why: seen ? `failed the check: ${seen.desc}` : "couldn't be checked" });
+    throw new Error("That video didn't pass the check.");
+  }
+  logSpicy(c, { file: `spicy/${name}.mp4`, want, prompt: plan.prompt, maker: SPICY_VIDEO_MODEL, kept: true, video: true, desc: seen.desc });
+  return { url: `/api/photos/${c.id}/${encodeURIComponent(`spicy/${name}.mp4`)}`, poster: `/api/photos/${c.id}/${encodeURIComponent(`spicy/${name}.jpg`)}`, desc: seen.desc };
+}
+
 // The picture a friend texts for [photo: ...]: the best album match, or a new one. null if neither works.
+// With spicy pictures on, a sexy one of just them is made by Grok instead.
 async function friendPhoto(c, want) {
+  if (spicyOn(c)) {
+    const plan = await spicyPlan(c, want, "photo");
+    if (plan) return spicyPhoto(c, want, plan);
+  }
   const album = (await syncAlbum(c)).filter((p) => p.ok);
   const week = Date.now() - 7 * 24 * 3600 * 1000;
   const fresh = album.filter((p) => !(p.sentAt && Date.parse(p.sentAt) > week)); // not one they sent this week
@@ -2126,7 +2280,7 @@ function uninstallFriend(c) {
 // Factory reset: everything in data/ goes (friends, memory, voices, faces, looks), except your API key (and whether
 // it's in airplane mode), logs and the knowledge cache. The phone then opens to first-time setup.
 function factoryReset() {
-  const { apiKey, airplane, giphyKey, googleKey } = config; // keys survive a reset
+  const { apiKey, airplane, giphyKey, googleKey, xaiKey } = config; // keys survive a reset
   call = null;
   client = null;
   for (const name of fs.readdirSync(dataDir)) {
@@ -2135,7 +2289,7 @@ function factoryReset() {
   }
   fs.mkdirSync(contactsDir, { recursive: true });
   setTimeout(installSupport, 0);
-  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(giphyKey ? { giphyKey } : {}), ...(googleKey ? { googleKey } : {}), ...(airplane ? { airplane } : {}) };
+  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(giphyKey ? { giphyKey } : {}), ...(googleKey ? { googleKey } : {}), ...(xaiKey ? { xaiKey } : {}), ...(airplane ? { airplane } : {}) };
   writeJson(configFile, config);
 }
 
@@ -2549,7 +2703,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, userBusy: userBusy(), brain: getClient()?.gemini ? "gemini" : getClient() ? "claude" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, hasGrok: !!config.xaiKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, userBusy: userBusy(), brain: getClient()?.gemini ? "gemini" : getClient() ? "claude" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -2657,13 +2811,17 @@ const server = http.createServer(async (req, res) => {
 
   // The Brain list: every model whose key works, grouped by maker. ?fresh=1 checks the keys again first.
   if (url.pathname === "/api/models") {
-    if (url.searchParams.get("fresh") || [["apiKey", "claude"], ["googleKey", "google"]].some(([k, b]) => config[k] && (!brains[b] || Date.now() - brains[b].at > 10 * 60 * 1000))) {
+    if (url.searchParams.get("fresh") || [["apiKey", "claude"], ["googleKey", "google"], ["xaiKey", "grok"]].some(([k, b]) => config[k] && (!brains[b] || Date.now() - brains[b].at > 10 * 60 * 1000))) {
       await checkBrains().catch(() => {});
     }
     const side = (k, b) => ({ has: !!config[k], ok: !!config[k] && !!brains[b]?.ok, why: brains[b]?.ok === false ? brains[b].why : null });
     return json(res, 200, {
-      claude: side("apiKey", "claude"), google: side("googleKey", "google"), airplane: !!config.airplane,
-      models: Object.entries(MODELS).map(([key, m]) => ({ key, label: m.label, maker: m.google ? "Gemini" : "Claude", ok: modelUsable(key), twin: m.twin })),
+      claude: side("apiKey", "claude"), google: side("googleKey", "google"), grok: side("xaiKey", "grok"), airplane: !!config.airplane,
+      models: Object.entries(MODELS).map(([key, m]) => ({ key, label: m.label, maker: m.google ? "Gemini" : m.grok ? "Grok" : "Claude", ok: modelUsable(key), twin: m.twin })),
+      ...(() => {
+        const c = url.searchParams.get("contact") && loadContact(url.searchParams.get("contact"));
+        return c ? { ratedR: { can: ratedROk(c), family: !R_ROLES.has(c.role ?? "friend"), on: flirtingOf(c) === "rated-r", using: flirtingOf(c) === "rated-r" ? chatModel(c).label : null }, spicy: !!c.spicyMedia } : {};
+      })(),
     });
   }
 
@@ -2840,7 +2998,7 @@ const server = http.createServer(async (req, res) => {
   const photoReq = url.pathname.match(/^\/api\/photos\/([a-z0-9-]+)\/([^/]+)$/);
   if (req.method === "GET" && photoReq) {
     const file = decodeURIComponent(photoReq[2]);
-    const name = file.replace(/^(made|videos)\//, "");
+    const name = file.replace(/^(made|videos|spicy)\//, "");
     if (!validId(photoReq[1]) || !name || path.basename(name) !== name || !(PHOTO_EXT.test(name) || /\.mp4$/i.test(name))) return json(res, 400, { error: "Bad photo." });
     const full = path.join(photoDir(photoReq[1]), file);
     if (!fs.existsSync(full)) return json(res, 404, { error: "That photo is gone." });
@@ -2954,6 +3112,17 @@ const server = http.createServer(async (req, res) => {
     writeJson(configFile, config);
     checkBrains().catch(() => {});
     return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/api/xai-key") {
+    // Like the Google key: never deleted, not even by Reset phone; a new working key can only replace it.
+    const key = String((await readBody(req)).key ?? "").trim();
+    if (!key) return json(res, 400, { error: "Paste an xAI key first." });
+    const r = await fetch("https://api.x.ai/v1/models", { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (!r?.ok) return json(res, 400, { error: r && [400, 401, 403].includes(r.status) ? "xAI didn't accept the key." : `xAI answered ${r?.status ?? "nothing"}.` });
+    config.xaiKey = key;
+    writeJson(configFile, config);
+    await checkBrains().catch(() => {});
+    return json(res, 200, { ok: true, models: grokModels() });
   }
   if (req.method === "GET" && url.pathname === "/api/support") {
     return json(res, 200, listSupport().filter((c) => voiceFile(c.settings.cbVoice)).map((c) => ({ id: c.id, name: c.name })));
@@ -3073,7 +3242,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === "PUT") {
-      const { settings = {}, active, role, cussing, flirting, speaks } = await readBody(req);
+      const { settings = {}, active, role, cussing, flirting, speaks, spicyMedia } = await readBody(req);
+      if (typeof spicyMedia === "boolean") c.spicyMedia = spicyMedia || undefined;
       if (speaks === "" || LANGS[speaks]) c.speaks = speaks || undefined;
       if (FLIRTING.includes(flirting)) c.flirting = flirting;
       const bad = (k) => (k === "callsYou" && !CALL_FREQ[settings[k]]) || (k === "textsYou" && !TEXT_FREQ[settings[k]]);

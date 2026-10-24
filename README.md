@@ -43,6 +43,8 @@ In a friend's own conversation, a text starting with `/ai` tells them what to do
 
 **Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. You can also pick a Gemini model as any friend's brain. And if there's no Anthropic key, or it stops working, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as a working Anthropic key is saved.
 
+**xAI key (optional, Grok).** Settings → Account also takes an xAI key from [console.x.ai](https://console.x.ai). With it, the newest Grok models (`grok.mjs`, picked from what your key offers) join each friend's Brain list, and **Rated R** flirting becomes available (see below).
+
 ## The phone
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:
@@ -61,6 +63,7 @@ Call Joe looks and works like an Android phone, inside a thin phone outline:
 
 - **Show on your contacts:** turn a friend off to hide them and stop their calls. Their memory is kept.
 - **Flirting:** Off, Playful (a little teasing and charm) or Romantic (openly into you). Never explicit: Claude keeps it suggestive at most and fades to black in character. The **Romantic interest** relationship flirts romantically by default; a friendship can turn romantic and back.
+- **Rated R** (with a working xAI key, for friends and partners, never family; asks first): adults-only and sexually frank (`contacts/_flirting/rated-r.md`). The friend switches to Grok at the same level (a fast pick stays fast) while it's on, with the same persona and memory notes; their notes are still written by Opus. If the xAI key stops working they fall back to Romantic. **Spicy pictures and videos** (a separate switch under it, off by default): sexy, R-rated pictures and 8-second videos of just that friend, made by Grok Imagine from their looks and face picture (never their album, which can show kids or other people). Grok checks each one (three frames of a video) before it's sent: one person, clearly an adult, nothing with kids or family. They're saved in `photos/spicy/`, never reused as ordinary photos, and copied to the Desktop's `generatedspicy` folder.
 - **Cussing:** let them swear the way they naturally would, or keep it clean (the default). It's also a checkbox when you install a friend; it starts checked for friends who swear by nature, like George.
 
 - **Calls you:** how often this friend rings you while the app is open: never, rarely (every few days), about once a day, now and then (every few hours), often (about hourly) or constantly (a few times an hour). The "Try it" button makes them call in a few seconds.

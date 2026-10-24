@@ -617,6 +617,10 @@
         <button class="btn ghost" id="googleHelpBtn">How to get one</button></div>
       <div class="field"><input id="googleInput" type="password" placeholder="Paste your Google AI key" autocomplete="off"><button class="btn" id="googleSave">Save</button></div>
       <div class="msg" id="googleMsg"></div>
+      <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">xAI key (Grok)</div><div class="t2" id="xaiState">Adds Grok to each friend's brain list, and Rated R flirting (with spicy pictures and videos if you turn them on).</div></span>
+        <button class="btn ghost" id="xaiOpen">Get one</button></div>
+      <div class="field"><input id="xaiInput" type="password" placeholder="Paste your xAI API key" autocomplete="off"><button class="btn" id="xaiSave">Save</button></div>
+      <div class="msg" id="xaiMsg"></div>
     </div>
     <p class="hint" style="font-size:13px" id="removeKeyHint">To remove your key, turn on airplane mode first. Nothing else ever removes it, not even Reset phone.</p>
     <p class="hint" style="font-size:13px">Your friends think with Claude, using your own key. It's saved only on this computer. Manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
@@ -931,7 +935,11 @@
     <option value="playful">Playful (a little teasing and charm)</option>
     <option value="romantic">Romantic (openly into you, PG-13)</option>
   </select>
-  <div class="hint">Never explicit. Takes effect on their next call or text.</div>
+  <div class="hint" id="flirtHint">Never explicit. Takes effect on their next call or text.</div>
+  <label class="row-item" id="spicyRow" hidden style="padding:6px 0; color:var(--ink); font-size:14px">
+    <span class="txt"><div class="t1">Spicy pictures and videos</div><div class="t2">Sexy, R-rated pictures and videos of just <span class="fn">Joe</span>, made by Grok. Never anyone else in them; anything with kids or family stays wholesome. Off, their pictures stay fully clothed.</div></span>
+    <input type="checkbox" class="switch" id="spicyToggle" aria-label="Spicy pictures and videos">
+  </label>
   <button type="button" class="btn" id="albumBtn">📷 Photo album</button>
   <div class="hint">Pictures they can text you. Add your own (name them by who's in them, like "Mateo soccer.jpg"); new ones they make are saved here too.</div>
   <details id="learnedWrap" style="margin-top:12px"><summary style="cursor:pointer">What <span class="fn">Joe</span> has learned about you</summary><div id="learnedBox"></div></details>
@@ -1804,7 +1812,6 @@ $("settingsBtn").onclick = async () => {
   await fillModels(store.get("model", "sonnet"));
   $("activeToggle").checked = contact.active !== false;
   $("cussToggle").checked = !!contact.cussing;
-  $("flirtSelect").value = contact.flirting ?? "off";
   $("callsYouSelect").value = store.get("callsYou", "never");
   $("textsYouSelect").value = store.get("textsYou", "sometimes");
   $("learnedWrap").open = false;
@@ -1821,12 +1828,12 @@ async function fillModels(current) {
   const sel = $("modelSelect");
   const fn = contact.firstName ?? contact.name.split(" ")[0];
   let info;
-  try { info = await (await fetch("/api/models")).json(); } catch { sel.value = current; return; }
+  try { info = await (await fetch(`/api/models?contact=${encodeURIComponent(contact.id)}`)).json(); } catch { sel.value = current; return; }
   const byKey = Object.fromEntries(info.models.map((m) => [m.key, m]));
   const pick = byKey[current] ? current : "sonnet";
   const standIn = (m) => [m.twin, "sonnet", "gemini-flash", ...info.models.map((x) => x.key)].map((k) => byKey[k]).find((x) => x?.ok);
   sel.innerHTML = "";
-  for (const maker of ["Claude", "Gemini"]) {
+  for (const maker of ["Claude", "Gemini", "Grok"]) {
     const list = info.models.filter((m) => m.maker === maker && (m.ok || m.key === pick));
     if (!list.length) continue;
     const g = document.createElement("optgroup");
@@ -1841,9 +1848,19 @@ async function fillModels(current) {
   }
   sel.value = pick;
   const side = (s, name, where) => !s.has ? `No ${name} key (${where}).` : s.ok ? "" : `Your ${name} key isn't working${s.why ? `: ${s.why}` : "."}`;
-  const notes = [side(info.claude, "Claude", "add one in Settings → Account to use Claude"), side(info.google, "Google AI", "add one in Settings → Account to use Gemini")].filter(Boolean);
+  const notes = [side(info.claude, "Claude", "add one in Settings → Account to use Claude"), side(info.google, "Google AI", "add one in Settings → Account to use Gemini"), side(info.grok, "xAI", "add one in Settings → Account to use Grok")].filter(Boolean);
   const writer = info.claude.ok ? "Opus" : info.google.ok ? "Gemini 4 Argon" : "Opus";
-  $("modelHint").textContent = `Takes effect on ${fn}'s next reply. Their notes about you are always written by ${writer}.${info.airplane ? " Airplane mode is on." : ""}${notes.length ? " " + notes.join(" ") : ""}`;
+  const r = info.ratedR ?? {};
+  $("modelHint").textContent = `${r.on ? `Rated R is on, so ${fn} thinks with ${r.using?.split(":")[0]} for now. ` : ""}Takes effect on ${fn}'s next reply. Their notes about you are always written by ${writer}.${info.airplane ? " Airplane mode is on." : ""}${notes.length ? " " + notes.join(" ") : ""}`;
+  // Rated R is offered only with a working xAI key, and never for family.
+  const flirt = $("flirtSelect");
+  flirt.querySelector('option[value="rated-r"]')?.remove();
+  if (r.can || r.on) flirt.append(Object.assign(document.createElement("option"), { value: "rated-r", textContent: "Rated R (adults only, uses Grok)" }));
+  flirt.value = contact.flirting ?? "off";
+  $("flirtHint").textContent = r.on ? `Adults only and frank, thinking with Grok. Pictures stay fully clothed unless you turn on spicy ones below. Takes effect on their next call or text.`
+    : `Never explicit. Takes effect on their next call or text.${r.family ? "" : !info.grok.ok ? " Rated R needs an xAI key (Settings → Account)." : ""}`;
+  $("spicyRow").hidden = !r.on;
+  $("spicyToggle").checked = !!info.spicy;
 }
 $("callsYouSelect").onchange = (e) => {
   store.set("callsYou", e.target.value);
@@ -2813,7 +2830,7 @@ function showSetting(id) {
   if (id === "looks") renderLooks();
   if (id === "account") {
     loadKeyState();
-    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; if (st.hasGoogle) $("googleState").textContent = st.googleProblem ? `⚠ ${st.googleProblem} Until then, photos are made on this computer.` : "A Google AI key is saved. Friends' new photos are made by Google."; }).catch(() => {});
+    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; if (st.hasGrok) $("xaiState").textContent = "An xAI key is saved. Grok and Rated R flirting are available."; if (st.hasGoogle) $("googleState").textContent = st.googleProblem ? `⚠ ${st.googleProblem} Until then, photos are made on this computer.` : "A Google AI key is saved. Friends' new photos are made by Google."; }).catch(() => {});
   }
   if (id === "you") loadYou();
   if (id === "friends") renderFriends();
@@ -2956,9 +2973,16 @@ $("albumBtn").onclick = async () => {
 };
 $("flirtSelect").onchange = async (e) => {
   if (!contact) return;
+  if (e.target.value === "rated-r" && !confirm(`Rated R: ${contact.name} gets sexually frank with you, as an adult with an adult, and thinks with Grok instead of their current brain. Turn it on?`)) { e.target.value = contact.flirting ?? "off"; return; }
   await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ flirting: e.target.value }) });
   contact.flirting = e.target.value;
-  toast({ off: `${contact.name} won't flirt.`, playful: `${contact.name} will flirt a little.`, romantic: `${contact.name} is into you now.` }[e.target.value]);
+  toast({ off: `${contact.name} won't flirt.`, playful: `${contact.name} will flirt a little.`, romantic: `${contact.name} is into you now.`, "rated-r": `${contact.name} is Rated R now, thinking with Grok.` }[e.target.value]);
+  fillModels(store.get("model", "sonnet"));
+};
+$("spicyToggle").onchange = async (e) => {
+  if (!contact) return;
+  await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spicyMedia: e.target.checked }) });
+  toast(e.target.checked ? `${contact.name} can send spicy pictures and videos.` : `${contact.name}'s pictures stay fully clothed.`);
 };
 $("cussToggle").onchange = async (e) => {
   if (!contact) return;
@@ -3183,6 +3207,16 @@ $("textSend").onclick = () => sendText();
 $("googleHelpBtn").onclick = () => $("googleHelp").showModal();
 $("googleHelpClose").onclick = () => $("googleHelp").close();
 $("googleOpen").onclick = () => window.open("https://aistudio.google.com/apikey", "_blank");
+$("xaiOpen").onclick = () => window.open("https://console.x.ai", "_blank");
+$("xaiSave").onclick = async () => {
+  $("xaiMsg").className = "msg";
+  $("xaiMsg").textContent = "Checking…";
+  const r = await fetch("/api/xai-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: $("xaiInput").value }) });
+  const out = await r.json().catch(() => ({}));
+  $("xaiMsg").className = r.ok ? "msg ok" : "msg err";
+  $("xaiMsg").textContent = r.ok ? `Saved. Grok (${out.models?.main}) is in each friend's brain list, and Rated R flirting is available.` : out.error;
+  if (r.ok) { $("xaiInput").value = ""; $("xaiState").textContent = "An xAI key is saved. Grok and Rated R flirting are available."; }
+};
 $("googleSave").onclick = async () => {
   $("googleMsg").className = "msg";
   $("googleMsg").textContent = "Checking…";
