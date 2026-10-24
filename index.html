@@ -2669,7 +2669,7 @@ function showSetting(id) {
   if (id === "looks") renderLooks();
   if (id === "account") {
     loadKeyState();
-    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; if (st.hasGoogle) $("googleState").textContent = "A Google AI key is saved. Friends' new photos are made by Google."; }).catch(() => {});
+    fetch("/api/status").then((r) => r.json()).then((st) => { if (st.hasGiphy) $("giphyState").textContent = "A GIPHY key is saved. GIFs are on."; if (st.hasGoogle) $("googleState").textContent = st.googleProblem ? `⚠ ${st.googleProblem} Until then, photos are made on this computer.` : "A Google AI key is saved. Friends' new photos are made by Google."; }).catch(() => {});
   }
   if (id === "you") loadYou();
   if (id === "friends") renderFriends();

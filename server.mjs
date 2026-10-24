@@ -663,7 +663,9 @@ async function syncAlbum(c) {
 // the same far better than the local model. The prompt and reference pictures go to Google; the result is still
 // checked by Claude before it's sent. Without a key (or in airplane mode) the local picture server is used.
 const GEMINI_IMAGE_MODEL = "gemini-nano-banana-2.1";
-const geminiReady = () => !!config.googleKey && !config.airplane;
+// When Google refuses (no billing on the key, over the limit), it rests for a while and the local model fills in.
+let geminiProblem = null; // { until, message }
+const geminiReady = () => !!config.googleKey && !config.airplane && !(geminiProblem && Date.now() < geminiProblem.until);
 async function geminiCheckKey(key) {
   const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error(r.status === 400 || r.status === 401 || r.status === 403 ? "Google didn't accept the key." : `Google answered ${r.status}.`);
@@ -700,7 +702,16 @@ async function geminiPicture(prompt, refs) {
     }),
   });
   const out = await r.json().catch(() => null);
-  if (!r.ok) throw new Error(`Google answered ${r.status}: ${JSON.stringify(out?.error ?? out).slice(0, 300)}`);
+  if (!r.ok) {
+    const why = String(out?.error?.message ?? out?.message ?? JSON.stringify(out)).slice(0, 300);
+    if ([400, 401, 403, 429].includes(r.status)) {
+      geminiProblem = {
+        until: Date.now() + 30 * 60 * 1000,
+        message: /free tier|limit: 0|billing/i.test(why) ? "Google won't make pictures on a free key: turn on billing for it in Google AI Studio." : `Google refused (${r.status}): ${why.slice(0, 120)}`,
+      };
+    }
+    throw new Error(`Google answered ${r.status}: ${why}`);
+  }
   const img = findImage(out);
   if (!img) throw new Error(`Google sent no picture: ${JSON.stringify(out).slice(0, 300)}`);
   return img;
@@ -730,8 +741,9 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their
   const refs = (plan.refs ?? []).map((n) => usable[n - 1]).filter(Boolean).map((p) => path.join(photoDir(c.id), p.file));
   if (plan.self && face) refs.unshift(face);
   let file = `${MADE}/${Date.now()}.jpg`;
+  let maker = gemini ? GEMINI_IMAGE_MODEL : "local RealVisXL";
   const logIt = (extra) => writeJson(madeLogFile(c.id), [...readMadeLog(c.id), {
-    file, want, prompt: plan.prompt, guides: refs.map((f) => path.basename(f)), maker: gemini ? GEMINI_IMAGE_MODEL : "local RealVisXL", at: new Date().toISOString(), ...extra,
+    file, want, prompt: plan.prompt, guides: refs.map((f) => path.basename(f)), maker, at: new Date().toISOString(), ...extra,
   }]);
   if (gemini) {
     try {
@@ -741,9 +753,12 @@ Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their
     } catch (err) {
       console.error("Gemini picture failed:", err?.message ?? err);
       logIt({ kept: false, why: String(err?.message ?? err).slice(0, 200) });
-      return null;
+      // The graphics card takes over, unless it's busy with a call or not set up.
+      if (!pictureModelReady() || call) return null;
+      maker = "local RealVisXL";
+      file = `${MADE}/${Date.now()}.jpg`;
     }
-    return keepMadePhoto(c, file, logIt);
+    if (maker === GEMINI_IMAGE_MODEL) return keepMadePhoto(c, file, logIt);
   }
   // Make room: the voice engine lets go of its multilingual model (it reloads when a friend next speaks Spanish).
   await fetch(`${chatterbox.url}/rest`, { method: "POST" }).catch(() => null);
@@ -845,7 +860,7 @@ function textHabit(c) {
 const textsPerDay = (c) => (TEXTS_PER_DAY[c.role] ?? 0.7) * (c.textScale ?? catalogEntry(c.id)?.textScale ?? 1);
 
 // Asks the friend for their next text(s). opener: they're texting first; about: what prompted it.
-async function friendTexts(c, { opener = false, about = null } = {}) {
+async function friendTexts(c, { opener = false, about = null, noPhoto = false } = {}) {
   const list = readTexts(c.id);
   const thread = currentThread(list);
   const mine = thread.filter((t) => t.from === "me").length;
@@ -855,14 +870,15 @@ async function friendTexts(c, { opener = false, about = null } = {}) {
     : wantsCall
       ? `(This text conversation has gone on a while, and you'd rather just talk. Text that you're calling, in your own style, and end with ${CALL_MARK}.)`
       : null;
+  const noPhotoNote = noPhoto ? "(You can't send a photo right now. Text without one, and don't say you're sending or sent one.)" : null;
   const model = chatModel(c);
   const msg = await getClient().beta.messages.create({
     model: model.id,
     max_tokens: 1500,
     output_config: { effort: "low" },
     ...model.params,
-    system: `${await systemPrompt(c)}\n\n${TEXTING}${photoRules(c)}`,
-    messages: textTurns(list, note),
+    system: `${await systemPrompt(c)}\n\n${TEXTING}${noPhoto ? "" : photoRules(c)}`,
+    messages: textTurns(list, [note, noPhotoNote].filter(Boolean).join("\n\n") || null),
   });
   if (msg.stop_reason === "refusal") throw new Error("They couldn't text back right now.");
   let raw = untag(textOf(msg.content));
@@ -877,12 +893,16 @@ async function friendTexts(c, { opener = false, about = null } = {}) {
   for (const [i, part] of parts.entries()) {
     const entry = { id: `${now + i}`, from: "them", text: part, at: new Date(now + i).toISOString(), read: false };
     // A GIF they send: [gif: search words] on its own line, looked up on GIPHY (dropped without a key).
-    const ph = part.match(/^\[photo:\s*([^\]]+)\]$/i);
-    if (ph) {
+    const ph = part.match(/\[photo:\s*([^\]]+)\]/i);
+    if (ph && noPhoto) entry.text = part.replace(/\[photo:[^\]]*\]/gi, "").trim();
+    else if (ph) {
       const photo = await friendPhoto(c, ph[1].trim()).catch((err) => (console.error("Photo failed:", err?.message ?? err), null));
-      if (!photo) continue;
+      if (!photo) return friendTexts(c, { opener, about, noPhoto: true }); // nothing sent yet: text again without it
+      const words = part.replace(/\[photo:[^\]]*\]/gi, "").trim();
+      if (words) added.push({ ...entry, id: `${now + i}-t`, text: words });
       Object.assign(entry, { text: "", photo });
     }
+    if (!entry.text && !entry.photo && !part.match(/^\[gif:/i)) continue;
     const g = part.match(/^\[gif:\s*([^\]]+)\]$/i);
     if (g) {
       const found = await searchGifs(g[1].trim(), 5).catch(() => []);
@@ -1618,7 +1638,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, hasKey: !!config.apiKey, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
