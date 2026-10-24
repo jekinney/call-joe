@@ -2123,6 +2123,7 @@ async function receiveVoicemail(c, declined) {
     n.onclick = () => { window.focus(); n.close(); };
   }
   if (!$("home").hidden) showHome();
+  refreshViews();
   if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
 }
 
@@ -2149,6 +2150,7 @@ async function playVoicemails(id) {
       audio.play().catch(() => resolve(false));
     });
     if (finished) {
+      delete missed[v.contact];
       await fetch("/api/voicemail/heard", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: v.contact, id: v.id }),
       }).catch(() => {});
@@ -2160,6 +2162,7 @@ async function playVoicemails(id) {
   $("vmPlayer").hidden = true;
   if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
   if (!$("home").hidden) showHome();
+  refreshViews();
 }
 
 function stopVoicemail() {
@@ -2470,6 +2473,10 @@ async function renderCalls() {
   const fresh = data.voicemail.filter((v) => !v.heard).length;
   $("vmSegCount").textContent = fresh ? ` (${fresh})` : "";
   if (callsTab === "recents") {
+    if (Object.keys(missed).length) {
+      for (const id of Object.keys(missed)) delete missed[id];
+      renderNotifications();
+    }
     const items = await fetch("/api/recents").then((r) => r.json()).catch(() => []);
     if (page !== "calls" || callsTab !== "recents") return;
     $("callsList").innerHTML = items.map((r) => {
@@ -2524,6 +2531,7 @@ $("callsList").onclick = async (e) => {
   listPlaying = vm;
   audio.onended = async () => {
     listPlaying = null;
+    delete missed[who]; // you've heard why they called
     await fetch("/api/voicemail/heard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: who, id: vm }) }).catch(() => {});
     if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
     refreshViews();
