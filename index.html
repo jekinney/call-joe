@@ -2809,9 +2809,24 @@ async function renderThreads() {
     <button class="row-item ${t.unread ? "unread" : ""}" data-thread="${esc(t.contact)}">${avatarHtml(t.name, t.face)}
       <span class="txt"><div class="t1">${esc(t.name)}</div><div class="t2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.lastFrom === "me" ? "You: " : ""}${esc(t.last)}</div></span>
       <span style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><span class="when">${shortWhen(t.at)}</span>${t.unread ? `<span class="unread-dot">${t.unread}</span>` : ""}</span>
+      <span class="vm-del" role="button" data-del-thread="${esc(t.contact)}" data-name="${esc(t.name)}" title="Delete conversation" style="display:grid;place-items:center">🗑</span>
     </button>`).join("") || `<div class="empty">No messages yet. Tap ✎ to text a friend.</div>`;
 }
-$("threadList").onclick = (e) => {
+$("threadList").onclick = async (e) => {
+  // Deleting hides the conversation here; the friend still remembers what you texted about.
+  const del = e.target.closest("[data-del-thread]");
+  if (del) {
+    const first = del.dataset.name.split(" ")[0];
+    const sure = await danger({
+      title: `Delete your conversation with ${first}?`,
+      text: `The texts disappear from Messages. ${esc(first)} still remembers what you talked about.`,
+      button: "Delete",
+    });
+    if (!sure) return;
+    await fetch("/api/texts/hide", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: del.dataset.delThread }) });
+    toast("Conversation deleted.");
+    return renderThreads();
+  }
   const t = e.target.closest("[data-thread]");
   if (t) openThread(t.dataset.thread);
 };

@@ -477,6 +477,8 @@ async function systemPrompt(c) {
 const textsFile = (id) => contactPath(id, "texts.json");
 const readTexts = (id) => readJson(textsFile(id), []);
 const writeTexts = (id, list) => writeJson(textsFile(id), list.slice(-500));
+// Deleting a conversation in Messages only hides it ("hidden"): the friend still remembers it and keeps the context.
+const shownTexts = (id) => readTexts(id).filter((t) => !t.hidden);
 const CALL_MARK = "<call>";
 // How many of your texts in one conversation before they'd rather call. Moms, grandparents and neighbors call sooner;
 // best friends and siblings will text for ages. friend.json "texting": "calls" (prefers calling) cuts it, "texts" stretches it.
@@ -1622,7 +1624,7 @@ const server = http.createServer(async (req, res) => {
   // ---- Texts ----
   if (req.method === "GET" && url.pathname === "/api/texts/threads") {
     return json(res, 200, listContacts().map((c) => {
-      const list = readTexts(c.id);
+      const list = shownTexts(c.id);
       const last = list.at(-1);
       return last && {
         contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
@@ -1633,7 +1635,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/api/texts") {
     const c = loadContact(url.searchParams.get("contact"));
     if (!c) return json(res, 404, { error: "No such friend." });
-    return json(res, 200, readTexts(c.id).slice(-200));
+    return json(res, 200, shownTexts(c.id).slice(-200));
+  }
+  if (req.method === "POST" && url.pathname === "/api/texts/hide") {
+    const { contact } = await readBody(req);
+    const c = loadContact(contact);
+    if (!c) return json(res, 404, { error: "No such friend." });
+    const list = readTexts(c.id);
+    for (const t of list) {
+      t.hidden = true;
+      t.read = true;
+    }
+    writeTexts(c.id, list);
+    return json(res, 200, { ok: true });
   }
   if (req.method === "POST" && url.pathname === "/api/texts/read") {
     const { contact } = await readBody(req);
