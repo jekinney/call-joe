@@ -97,7 +97,7 @@ Contacts → the friend → ✎ Edit → **Show on your contacts**.
 
 - Friends with a `contacts/<id>/friend.json` (made by `tools\contact.py publish`) can be installed in first-time setup or in Settings → Friends, with a relationship you pick.
 - **Delete** (Settings → Friends) removes a friend for good: memory, call log, voicemail and news. Two warnings come first, and the second asks you to type their first name. They go back to "Ready to install", brand new.
-- **Reset phone** (Settings → System) wipes everything in `data/` except logs and the weather and sports cache, including your API key, then opens first-time setup. Two warnings first; the second asks you to type RESET.
+- **Reset phone** (Settings → System) wipes everything in `data/` except your API key, logs and the weather and sports cache, then opens first-time setup. Two warnings first; the second asks you to type RESET.
 
 ## Tweaking a friend later
 

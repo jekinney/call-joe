@@ -52,6 +52,12 @@
     animation: drop .18s ease-out; box-shadow: 0 16px 30px rgba(0,0,0,.5);
   }
   @keyframes drop { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+  /* Quick settings tiles at the top of the notification shade */
+  .tiles { display: flex; gap: 10px; margin-bottom: 14px; }
+  .tile { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 22px; border: 0; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; }
+  .tile .ti { font-size: 17px; }
+  .tile[aria-pressed="true"] { background: var(--accent); color: #241a12; font-weight: 600; }
+  #airIcon { font-size: 14px; }
   .shade-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .shade-top h3 { margin: 0; }
   .text-btn { background: none; border: 0; color: var(--accent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; padding: 6px 10px; border-radius: 16px; }
@@ -402,11 +408,13 @@
   <span class="cam"></span>
   <span class="clock" id="clock"></span>
   <span class="icons">
+    <span id="airIcon" title="Airplane mode is on" hidden>✈</span>
     <button class="bell" id="bell" title="Notifications" aria-expanded="false">🔔<span class="badge" id="bellBadge" hidden></span></button>
     <span class="battery"></span>
   </span>
 </div>
 <div class="shade" id="shade" hidden>
+  <div class="tiles"><button class="tile" id="airTile" aria-pressed="false"><span class="ti">✈</span><span>Airplane mode</span></button></div>
   <div class="shade-top"><h3>Notifications</h3><button class="text-btn" id="clearNotesBtn">Clear all</button></div>
   <div id="notes"></div>
 </div>
@@ -475,9 +483,15 @@
   <div id="set-account" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
     <div class="list" style="width:100%">
       <div class="row-item" style="cursor:default"><span class="txt"><div class="t1">Anthropic API key</div><div class="t2" id="keyState">Checking…</div></span></div>
+      <label class="row-item" style="cursor:pointer">
+        <span class="txt"><div class="t1">✈ Airplane mode</div><div class="t2">Turns your key off: no calls, friends don't call you, and nothing updates. Everything stays saved on this computer.</div></span>
+        <input type="checkbox" class="switch" id="airToggle" aria-label="Airplane mode">
+      </label>
       <div class="field"><input id="newKeyInput" type="password" placeholder="Paste a new key: sk-ant-..." autocomplete="off"><button class="btn" id="newKeySave">Save key</button></div>
       <div class="msg" id="newKeyMsg"></div>
     </div>
+    <div class="row" style="justify-content:flex-start"><button class="btn warn" id="removeKeyBtn">Remove key…</button></div>
+    <p class="hint" style="font-size:13px" id="removeKeyHint">To remove your key, turn on airplane mode first. Nothing else ever removes it, not even Reset phone.</p>
     <p class="hint" style="font-size:13px">Your friends think with Claude, using your own key. It's saved only on this computer. Manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
   </div>
 
@@ -507,7 +521,7 @@
   <div id="set-system" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
     <div class="list" style="width:100%; padding: 16px">
       <div class="t1" style="font-weight:600">Reset phone</div>
-      <p class="hint" style="font-size:14px">Puts Call Joe back the way it came, brand new. Every friend and everything they've learned about you is deleted, with your call history, voicemail, voices, pictures, looks and API key. Then you set up the phone again.</p>
+      <p class="hint" style="font-size:14px">Puts Call Joe back the way it came, brand new. Every friend and everything they've learned about you is deleted, with your call history, voicemail, voices, pictures and looks. Your API key stays. Then you set up the phone again.</p>
       <div class="row" style="justify-content:flex-start"><button class="btn warn" id="resetBtn">Reset phone…</button></div>
     </div>
   </div>
@@ -1350,6 +1364,7 @@ async function videoReady() {
 
 async function startCall(video, incoming = false) {
   const status = await fetch("/api/status").then((r) => r.json());
+  if (status.airplane) return toast("Airplane mode is on. Turn it off to call: pull down the status bar, or Settings → Account.");
   if (!status.hasKey) return $("keyDialog").showModal();
   if (!hasVoice()) {
     $("status").textContent = `${who()} needs a voice clip first. Add one in ⚙ settings, or ask Claude.`;
@@ -1743,7 +1758,7 @@ if ("BroadcastChannel" in window) {
 
 fetch("/api/status").then((r) => r.json()).then((s) => {
   if (!s.setupDone) return showSetup();
-  if (!s.hasKey) $("keyDialog").showModal();
+  if (!s.hasKey && !s.airplane) $("keyDialog").showModal();
 });
 // ---------- Friends who call you ----------
 // While the app is open and you're not on a call, each friend set to call you rolls the dice once a minute.
@@ -1760,7 +1775,7 @@ function quietHours() {
 }
 
 setInterval(async () => {
-  if (state !== "idle" || ringingIn || quietHours() || Date.now() - lastCallEnded < 45 * 60 * 1000) return;
+  if (airplane || state !== "idle" || ringingIn || quietHours() || Date.now() - lastCallEnded < 45 * 60 * 1000) return;
   const list = await fetch("/api/contacts").then((r) => r.json()).catch(() => []);
   for (const c of list) {
     if (c.active && c.hasVoice && Math.random() < (CALL_ODDS[c.callsYou] ?? 0)) return ringYou(c.id);
@@ -1938,7 +1953,48 @@ document.addEventListener("keydown", (e) => {
 });
 document.addEventListener("mouseup", (e) => { if (e.button === 3) goBack(); }); // a mouse's side back button
 
+// ---------- Airplane mode: your key turned off, friends paused, nothing updating ----------
+let airplane = false;
+function showAirplane(on) {
+  airplane = on;
+  $("airIcon").hidden = !on;
+  $("airTile").setAttribute("aria-pressed", String(on));
+  $("airToggle").checked = on;
+  $("removeKeyBtn").disabled = !on;
+}
+async function setAirplane(on) {
+  if (state !== "idle") return toast("Hang up first.");
+  const res = await fetch("/api/airplane", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) return toast(out.error || "That didn't work.");
+  showAirplane(out.airplane);
+  toast(out.airplane ? "Airplane mode on. Your friends are paused, and everything stays saved." : "Airplane mode off. Your friends are back.");
+  if (page === "settings" && !$("set-account").hidden) loadKeyState();
+}
+$("airTile").onclick = (e) => { e.stopPropagation(); setAirplane(!airplane); };
+$("airToggle").onchange = (e) => setAirplane(e.target.checked);
+$("removeKeyBtn").onclick = async () => {
+  if (!airplane) return toast("Turn on airplane mode first.");
+  const sure = await danger({
+    title: "Remove your API key?",
+    text: "Your friends can't talk to you without it. Everything they know about you stays, but nobody can call or be called until you add a key again.",
+    button: "Continue",
+  });
+  if (!sure) return;
+  const really = await danger({
+    title: "Remove it from this computer?",
+    text: "The key is deleted from Call Joe. It still exists in your Anthropic account, where you can see it or turn it off.",
+    button: "Remove key",
+    typeWord: "REMOVE",
+  });
+  if (!really) return;
+  const res = await fetch("/api/key", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "REMOVE" }) });
+  toast(res.ok ? "Your API key was removed." : (await res.json().catch(() => ({}))).error || "That didn't work.");
+  loadKeyState();
+};
+
 async function refreshData() {
+  fetch("/api/status").then((r) => r.json()).then((st) => showAirplane(!!st.airplane)).catch(() => {});
   const [friends, voicemail] = await Promise.all([
     fetch("/api/contacts").then((r) => r.json()).catch(() => data.friends),
     fetch("/api/voicemail").then((r) => r.json()).catch(() => data.voicemail),
@@ -2263,7 +2319,12 @@ document.querySelector(".styles").onclick = async (e) => {
 // Account: your API key.
 async function loadKeyState() {
   const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
-  $("keyState").textContent = st.hasKey ? "A key is saved. Paste a new one below to replace it." : "No key yet. Paste one below.";
+  showAirplane(!!st.airplane);
+  $("keyState").textContent = !st.hasKey ? "No key yet. Paste one below."
+    : st.airplane ? "Saved, and turned off (airplane mode)." : "Saved and on. Paste a new one below to replace it.";
+  $("removeKeyBtn").hidden = !st.hasKey;
+  $("removeKeyHint").hidden = !st.hasKey;
+  $("removeKeyBtn").disabled = !st.airplane;
 }
 $("newKeySave").onclick = async () => {
   const key = $("newKeyInput").value.trim();
@@ -2443,7 +2504,7 @@ $("youSave").onclick = async () => {
 $("resetBtn").onclick = async () => {
   const sure = await danger({
     title: "Reset your phone?",
-    text: "This puts Call Joe back the way it came, brand new. <b>Every friend and everything they've learned about you will be deleted</b>, along with your call history, voicemail, voices, pictures, wallpaper and your API key.<br><br>This can't be undone.",
+    text: "This puts Call Joe back the way it came, brand new. <b>Every friend and everything they've learned about you will be deleted</b>, along with your call history, voicemail, voices, pictures and wallpaper. Your API key stays.<br><br>This can't be undone.",
     button: "Continue",
   });
   if (!sure) return;

@@ -154,10 +154,13 @@ if (config.setupDone === undefined) {
 
 // Live facts for friends who follow a team or have a hometown (see knowledge.mjs); refreshed while the app is open.
 const knowledge = createKnowledge(dataDir);
-knowledge.startRefreshing(() => listContacts());
+knowledge.startRefreshing(() => (config.airplane ? [] : listContacts()));
 
+// Your API key is never deleted by anything except you (Settings -> Account -> Remove key, only in airplane mode).
+// Airplane mode (config.airplane) turns the key off: no calls, no friends calling, no news, no live-knowledge
+// updates. Everything already saved stays on this computer.
 function getClient() {
-  if (!config.apiKey) return null;
+  if (!config.apiKey || config.airplane) return null;
   client ??= new Anthropic({ apiKey: config.apiKey });
   return client;
 }
@@ -352,9 +355,10 @@ function uninstallFriend(c) {
   }
 }
 
-// Factory reset: everything in data/ goes (friends, memory, voices, faces, your key, looks), except logs and the
-// knowledge cache. The phone then opens to first-time setup.
+// Factory reset: everything in data/ goes (friends, memory, voices, faces, looks), except your API key (and whether
+// it's in airplane mode), logs and the knowledge cache. The phone then opens to first-time setup.
 function factoryReset() {
+  const { apiKey, airplane } = config;
   call = null;
   client = null;
   for (const name of fs.readdirSync(dataDir)) {
@@ -362,7 +366,7 @@ function factoryReset() {
     fs.rmSync(path.join(dataDir, name), { recursive: true, force: true });
   }
   fs.mkdirSync(contactsDir, { recursive: true });
-  config = { setupDone: false };
+  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(airplane ? { airplane } : {}) };
   writeJson(configFile, config);
 }
 
@@ -451,6 +455,7 @@ function connectionNews(c) {
 // After a call with `sender`, works out what news about the buddy would naturally reach each connected friend, given
 // how they're connected and the receiver's role, and merges it into what that friend has heard.
 async function passNews(sender, transcript, onlyTo = null) {
+  if (!getClient()) return; // airplane mode, or no key
   for (const { id } of sender.links ?? []) {
     if (onlyTo && id !== onlyTo) continue;
     const receiver = loadContact(id);
@@ -682,7 +687,10 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(dir, "index.html")));
   }
   if (url.pathname === "/api/status") {
-    return json(res, 200, { hasKey: !!config.apiKey, inCall: call?.contactId ?? null, setupDone: config.setupDone !== false, user: config.user ?? null });
+    return json(res, 200, {
+      hasKey: !!config.apiKey, airplane: !!config.airplane, inCall: call?.contactId ?? null,
+      setupDone: config.setupDone !== false, user: config.user ?? null,
+    });
   }
   if (url.pathname === "/api/ping") return json(res, 200, { ok: true });
 
@@ -703,6 +711,35 @@ const server = http.createServer(async (req, res) => {
     }
     writeJson(configFile, config);
     return json(res, 200, config.user);
+  }
+  if (req.method === "POST" && url.pathname === "/api/airplane") {
+    const { on } = await readBody(req);
+    if (on && call) return json(res, 400, { error: "Hang up first." });
+    config.airplane = !!on;
+    if (!config.airplane) delete config.airplane;
+    client = null;
+    writeJson(configFile, config);
+    // Friends turned back on while in airplane mode catch up now.
+    if (getClient()) {
+      for (const c of listContacts().filter((x) => x.catchUpSince)) {
+        const since = c.catchUpSince;
+        delete c.catchUpSince;
+        saveContact(c);
+        catchUp(c, since).catch((err) => console.error("Catch-up failed:", err?.message ?? err));
+      }
+    }
+    return json(res, 200, { airplane: !!config.airplane });
+  }
+  // Removing your key: only you, only in airplane mode, and the app asks twice first.
+  if (req.method === "DELETE" && url.pathname === "/api/key") {
+    const { confirm } = await readBody(req);
+    if (!config.airplane) return json(res, 400, { error: "Turn on airplane mode before removing your key." });
+    if (confirm !== "REMOVE") return json(res, 400, { error: "Type REMOVE to confirm." });
+    delete config.apiKey;
+    delete config.airplane;
+    client = null;
+    writeJson(configFile, config);
+    return json(res, 200, { ok: true });
   }
   if (req.method === "POST" && url.pathname === "/api/setup/done") {
     config.setupDone = true;
@@ -889,6 +926,7 @@ const server = http.createServer(async (req, res) => {
     const { contact, declined } = await readBody(req);
     const c = loadContact(contact);
     if (!c) return json(res, 400, { error: "No such friend." });
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     try {
       return json(res, 200, await leaveVoicemail(c, declined));
@@ -958,6 +996,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (typeof active === "boolean") c.active = active;
       if (caughtUpSince && getClient()) setTimeout(() => catchUp(loadContact(c.id), caughtUpSince).catch((err) => console.error("Catch-up failed:", err?.message ?? err)), 0);
+      else if (caughtUpSince) c.catchUpSince = caughtUpSince; // in airplane mode: catch up when it's turned off
       if (c.settings.model && !MODELS[c.settings.model]) c.settings.model = DEFAULT_MODEL;
       if (Object.keys(settings).length) delete c.legacy;
       saveContact(c);
@@ -969,6 +1008,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/call") {
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const { contact: contactId, incoming } = await readBody(req);
     const c = loadContact(contactId);
