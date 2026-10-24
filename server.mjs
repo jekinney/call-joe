@@ -455,7 +455,7 @@ function spouseDates(sp) {
 }
 function aboutSpouse(c) {
   const sp = config.user?.spouse;
-  if (!sp?.name) return "";
+  if (!sp?.name || sp.married === false) return "";
   const role = sp.gender === "man" ? "husband" : "wife";
   let text = `\n\nYour buddy is married to ${sp.name}, their ${role}${ageNow(sp) ? ` (${ageNow(sp)})` : ""}.`;
   if (!KNOWS_SPOUSE_WELL.has(c?.role)) return text;
@@ -488,7 +488,7 @@ setInterval(() => {
     }
   }
   const sp = config.user?.spouse;
-  if (!sp?.name || hour < 9 || hour >= 20 || Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
+  if (!sp?.name || sp.married === false || hour < 9 || hour >= 20 || Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   for (const d of spouseDates(sp)) {
@@ -865,7 +865,7 @@ async function mergeMemory(c, memory, transcript, label) {
 const CALLS_YOU = ["never", "sometimes", "daily", "often"];
 async function learnRules(c, memory, transcript) {
   const first = firstName(c);
-  const sp = config.user?.spouse?.name ? config.user.spouse : null;
+  const sp = config.user?.spouse?.name && config.user.spouse.married !== false ? config.user.spouse : null;
   try {
     const msg = await getClient().messages.create({
       model: MEMORY_MODEL,
@@ -1007,19 +1007,29 @@ const server = http.createServer(async (req, res) => {
     const before = yourGender();
     const age = (v) => { const n = Math.round(Number(v)); return n >= 13 && n <= 120 ? n : null; };
     const md = (v) => (/^\d{2}-\d{2}$/.test(String(v ?? "")) ? v : "");
-    const old = config.user?.spouse;
-    const spouse = b.spouse?.name ? {
-      // What you tell friends about them in setup; notes and dates learned from your calls and texts are kept.
-      name: clean(b.spouse.name), gender: b.spouse.gender === "man" ? "man" : "woman",
-      birthday: md(b.spouse.birthday), anniversary: md(b.spouse.anniversary), about: String(b.spouse.about ?? "").trim().slice(0, 2000),
-      age: age(b.spouse.age), ageYear: new Date().getFullYear(),
-      notes: old?.notes ?? "", dates: old?.dates ?? [], reminded: old?.reminded ?? {},
-    } : null;
-    config.user = { first: clean(b.first), last: clean(b.last), gender: b.gender === "woman" ? "woman" : "man", home: clean(b.home),
-      // Ages are saved with the year they were given (a year older each year after). A birthday is optional; one you
-      // mention on a call or in a text is saved too.
-      age: age(b.age), ageYear: new Date().getFullYear(), birthday: md(b.birthday) || config.user?.birthday || "",
-      greeted: config.user?.greeted ?? {}, ...(spouse ? { spouse } : {}) };
+    // What you and your spouse told the phone, and what friends learned, only ever goes away with a factory reset.
+    // Saving merges: a blank field keeps what was there. "Not married" just stops friends bringing them up; their
+    // notes and dates are kept in case you switch it back.
+    const prev = config.user ?? {};
+    const keep = (v, was) => (clean(v) || was || "");
+    // Ages are saved with the year they were given (a year older each year after). An unchanged age keeps its year.
+    const ageOf = (v, p) => { const n = age(v); return n === null ? { age: p?.age ?? null, ageYear: p?.ageYear } : n === ageNow(p) ? { age: p.age, ageYear: p.ageYear } : { age: n, ageYear: new Date().getFullYear() }; };
+    const old = prev.spouse;
+    let spouse = old;
+    if (b.spouse?.married === false && old) spouse = { ...old, married: false };
+    else if (b.spouse?.name) {
+      spouse = {
+        ...(old ?? {}), married: true,
+        name: clean(b.spouse.name), gender: b.spouse.gender === "man" ? "man" : "woman",
+        birthday: md(b.spouse.birthday) || old?.birthday || "", anniversary: md(b.spouse.anniversary) || old?.anniversary || "",
+        about: String(b.spouse.about ?? "").trim().slice(0, 2000) || old?.about || "", ...ageOf(b.spouse.age, old),
+        notes: old?.notes ?? "", dates: old?.dates ?? [], reminded: old?.reminded ?? {},
+      };
+    }
+    config.user = { ...prev, first: keep(b.first, prev.first), last: keep(b.last, prev.last),
+      gender: b.gender === "woman" ? "woman" : b.gender === "man" ? "man" : prev.gender ?? "man", home: keep(b.home, prev.home),
+      ...ageOf(b.age, prev), birthday: md(b.birthday) || prev.birthday || "", greeted: prev.greeted ?? {},
+      ...(spouse ? { spouse } : {}) };
     // Switching between man and woman moves friends still on their default relationship to the default for the other.
     if (yourGender() !== before) {
       for (const c of listContacts()) {

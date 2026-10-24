@@ -96,6 +96,6 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 
 ## You, your spouse, ages and birthdays (October 23, 2026)
 
-- Setup and Settings → You take your age and (optionally) your birthday, and whether you're married: your spouse's name, man or woman, age, birthday, anniversary, and a description for your friends. Ages are saved with the year and grow each year. A birthday you mention on a call or in a text is saved too.
+- Your info and your spouse's are only ever erased by Reset phone: saving merges (a blank field keeps what was there), and "not married" just stops friends mentioning them, keeping their notes and dates. Setup and Settings → You take your age and (optionally) your birthday, and whether you're married: your spouse's name, man or woman, age, birthday, anniversary, and a description for your friends. Ages are saved with the year and grow each year. A birthday you mention on a call or in a text is saved too.
 - Family and close friends (`KNOWS_SPOUSE_WELL`) know your spouse well: the description, everything you've mentioned about them (`config.user.spouse.notes`, learned after each call alongside the rules), and their dates. Everyone else knows only the name.
 - Reminders: a week before (with a gift idea), the day before, and the day of your spouse's birthday, your anniversary, or another date you mentioned, the closest friend who'd do it texts you (sister first, then mom, best friends). On your own birthday, family and close friends text happy birthday, one at a time.
