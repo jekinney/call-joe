@@ -97,6 +97,18 @@ Contacts → the friend → ✎ Edit → **Show on your contacts**.
 
 Off by default: friends keep it clean (`contacts/_language/clean.md`). Allowed, they swear the way they naturally would (`contacts/_language/cussing.md`). Set it with the checkbox when installing, the Cussing switch in the friend's ✎ Edit, or `tools\contact.py cussing <id> on|off`. `publish` saves it as the friend's default, so the install checkbox starts checked.
 
+## A second language
+
+`tools\contact.py speaks <id> es` (or fr, it, de, pt; `off` to stop) has the friend tag the words they say in that language, so Chatterbox's multilingual model speaks them with a real accent in the same cloned voice. Sentences without them stay on the faster English model. Elena speaks Spanish. The tags never show in captions, texts or memory.
+
+## Photos they text you
+
+Every friend has a photo album, `data/contacts/<id>/photos/` (private, never committed). Open it from the friend's ✎ Edit → 📷 Photo album and drop pictures in, named by who or what is in them ("Mateo soccer.jpg"). Claude looks at each picture once and notes what it shows.
+
+When a friend texts `[photo: …]`, the closest album picture is sent, unless they sent it in the last week. If nothing fits, a new picture is made on the graphics card (`pictures/picture_server.py`: RealVisXL 5.0 with IP-Adapter, run with the voice engine's Python), guided by up to two album pictures and the friend's face picture. Claude checks it before it's sent, and it's added to the album, so the kids and things keep looking the same. Delete any picture you don't like from the folder.
+
+Photos stay everyday: never nudity or sexual content, flirty only for adults and always clothed, and children only in ordinary, wholesome family moments. `photoHabits` in friend.json says what a friend tends to photograph.
+
 ## Friend kits (rebuild a friend from a folder)
 
 A friend kit is a folder anywhere (like the Desktop) with a `friend-kit.json` and the files it names:

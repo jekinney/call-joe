@@ -2,6 +2,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
@@ -51,8 +52,8 @@ let lastPing = Date.now();
 
 // ---- Python helpers on the graphics card, started on demand: Chatterbox (voice cloning) and Ditto (talking face) ----
 // Each one quits by itself about 30 seconds after this server stops answering /api/alive.
-function pythonHelper(name, folder, script, port) {
-  const python = path.join(dir, folder, ".venv", "Scripts", "python.exe");
+function pythonHelper(name, folder, script, port, venv = folder) {
+  const python = path.join(dir, venv, ".venv", "Scripts", "python.exe");
   const url = `http://127.0.0.1:${port}`;
   let proc = null;
   const health = () => fetch(`${url}/health`, { signal: AbortSignal.timeout(1500) }).then((r) => r.json()).catch(() => null);
@@ -77,6 +78,7 @@ function pythonHelper(name, folder, script, port) {
 
 const chatterbox = pythonHelper("chatterbox", "voice", "chatterbox_server.py", 5175);
 const faceEngine = pythonHelper("face", "video", "face_server.py", 5176);
+const pictureEngine = pythonHelper("pictures", "pictures", "picture_server.py", 5177, "voice"); // shares the voice engine's Python
 
 const voicesDir = path.join(dataDir, "voices"); // voice samples to clone; private, never committed
 const facesDir = path.join(dataDir, "faces"); // face pictures for video calls; private, never committed
@@ -423,12 +425,12 @@ async function afterSupportCall(transcript) {
   }
 }
 
-// Cussing: off unless you allow it for this friend (when installing, or in their ✎ Edit). contacts/_language/.
+// Cussing: off unless you allow it for this friend (when installing, or in their âœŽ Edit). contacts/_language/.
 const languageRules = (c) => {
   try { return fs.readFileSync(path.join(personasDir, "_language", c.cussing ? "cussing.md" : "clean.md"), "utf8").trim(); } catch { return ""; }
 };
 
-// Flirting: off unless you set it (✎ Edit), except a romantic interest, who flirts romantically by default. PG-13 at
+// Flirting: off unless you set it (âœŽ Edit), except a romantic interest, who flirts romantically by default. PG-13 at
 // most: contacts/_flirting/ keeps it suggestive, never explicit.
 const FLIRTING = ["off", "playful", "romantic"];
 const flirtingOf = (c) => (FLIRTING.includes(c.flirting) ? c.flirting : c.role === "romantic-interest" ? "romantic" : "off");
@@ -448,9 +450,9 @@ const speaksRules = (c) => {
   const lang = LANGS[c.speaks];
   if (!lang) return "";
   const t = c.speaks;
-  const example = t === "es" ? ` Like: "<es>¡Ay, Dios mío!</es> You won't believe it, <es>mijo</es>. <es>Gracias a Dios</es> it's Friday."` : "";
+  const example = t === "es" ? ` Like: "<es>Â¡Ay, Dios mÃ­o!</es> You won't believe it, <es>mijo</es>. <es>Gracias a Dios</es> it's Friday."` : "";
   return `# Speaking ${lang}
-Whenever you say a word or phrase in ${lang}, wrap it in <${t}>…</${t}> so your voice pronounces it right. That includes single words and nicknames, every time.${example} Wrap only the ${lang} words, never English ones, and spell them properly with their accents. The tags are a signal for your voice, not something you say, and your buddy never sees them.`;
+Whenever you say a word or phrase in ${lang}, wrap it in <${t}>â€¦</${t}> so your voice pronounces it right. That includes single words and nicknames, every time.${example} Wrap only the ${lang} words, never English ones, and spell them properly with their accents. The tags are a signal for your voice, not something you say, and your buddy never sees them.`;
 };
 // Loads the multilingual voice in the background when a call with such a friend starts, so their first words aren't held up.
 async function warmLanguages(c) {
@@ -528,11 +530,11 @@ const textWhen = (iso) => new Date(iso).toLocaleString("en-US", { weekday: "shor
 const TEXTING = `# Right now you're texting, not on the phone
 Your buddy and you are texting. Text back like a real person on their phone: short and casual, the way you'd really text. Younger or easygoing people use lowercase, abbreviations and an emoji now and then; older people text in fuller sentences, maybe with an odd emoji. Each text is a sentence or two at most, usually under 20 words. Usually one text, sometimes two or three quick ones in a row. Put a line with only --- between separate texts. Never write paragraphs, never put times or dates in brackets, and never use the hang-up marker.
 If something is serious, upsetting, or easier said out loud, you can say you'll call instead, and end with ${CALL_MARK}.
-You can react to your buddy's last text like a tapback by starting your reply with [react: one emoji], like [react: 😂], when that's what you'd do; you can still text after it, or not. Now and then, when it really fits, you can send a GIF instead of words: a line with only [gif: a few search words]. When your buddy sends a GIF, react to what it shows.`;
+You can react to your buddy's last text like a tapback by starting your reply with [react: one emoji], like [react: ðŸ˜‚], when that's what you'd do; you can still text after it, or not. Now and then, when it really fits, you can send a GIF instead of words: a line with only [gif: a few search words]. When your buddy sends a GIF, react to what it shows.`;
 
 // ---- GIFs (GIPHY): needs a free GIPHY API key, saved in Settings -> Account ----
 async function searchGifs(q, limit = 18) {
-  if (!config.giphyKey) throw new Error("Add a GIPHY key in Settings → Account to send GIFs.");
+  if (!config.giphyKey) throw new Error("Add a GIPHY key in Settings â†’ Account to send GIFs.");
   const kind = q ? "search" : "trending";
   const u = new URL(`https://api.giphy.com/v1/gifs/${kind}`);
   u.search = new URLSearchParams({ api_key: config.giphyKey, limit: String(limit), rating: "pg-13", ...(q ? { q } : {}) });
@@ -574,12 +576,132 @@ async function describeGif(gif) {
 }
 const gifWords = (gif) => gif.desc ?? gif.title;
 
+// ---- Photos friends text you ----
+// Each friend has an album: data/contacts/<id>/photos/ (private, never committed). Drop pictures in it, named by what
+// they show if you like ("Mateo soccer.jpg"); Claude looks at each one once and writes it into index.json. When a
+// friend texts [photo: what it shows], the best album match is sent. If none fits, a new picture is made on the
+// graphics card (pictures/picture_server.py), guided by album pictures and the friend's face, checked by Claude, and
+// added to the album, so the same kids and things keep looking the same.
+const PHOTO_EXT = /\.(jpe?g|png|webp)$/i;
+const photoDir = (id) => path.join(contactsDir, id, "photos");
+const readAlbum = (id) => readJson(path.join(photoDir(id), "index.json"), []);
+const writeAlbum = (id, list) => writeJson(path.join(photoDir(id), "index.json"), list);
+const photoMime = (f) => (/\.png$/i.test(f) ? "image/png" : /\.webp$/i.test(f) ? "image/webp" : "image/jpeg");
+const PHOTO_RULES = "Allowed: everyday phone photos. Never nudity or sexual content. Flirty is fine for adults (heels, a pedicure, a dress, legs crossed at dinner), always fully clothed. Children only ever appear in ordinary, wholesome family moments (games, school, birthdays, holidays), fully clothed, never posed or styled like adults.";
+const PHOTO_NEGATIVE = "nude, naked, nsfw, topless, nipples, lingerie, underwear, bikini, sexual, explicit, cartoon, illustration, painting, anime, 3d render, text, words, letters, caption, banner, sign, watermark, logo, deformed, extra fingers, extra limbs, bad anatomy, blurry";
+const pictureModelReady = () => fs.existsSync(path.join(os.homedir(), ".cache", "huggingface", "hub", "models--SG161222--RealVisXL_V5.0"));
+const photoHabits = (c) => c.photoHabits ?? catalogEntry(c.id)?.photoHabits;
+const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person.`;
+
+// Claude, briefly, answering in JSON (null if it can't).
+// It sometimes thinks first and answers with no text, so it gets room for that and a second try.
+async function askJson(content) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const msg = await getClient().messages.create({ model: NEWS_MODEL, max_tokens: 4000, messages: [{ role: "user", content }] });
+      if (msg.stop_reason === "refusal") return null;
+      const answer = textOf(msg.content);
+      if (answer.includes("{")) return JSON.parse(answer.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
+    } catch (err) {
+      console.error("Photo helper failed:", err?.message ?? err);
+    }
+  }
+  return null;
+}
+
+// Looks at a picture once: what it shows, and whether it's fine to send.
+async function describePhoto(c, file) {
+  const full = path.join(photoDir(c.id), file);
+  if (fs.statSync(full).size > 4.5 * 1024 * 1024) return { desc: "", ok: false, note: "too big to look at (over 4.5 MB)" };
+  const hint = /^made-/.test(file) ? "" : ` Its file name is "${file.replace(PHOTO_EXT, "")}", which may name who or what is in it.`;
+  const about = catalogEntry(c.id)?.about ?? c.name;
+  const out = await askJson([
+    { type: "image", source: { type: "base64", media_type: photoMime(file), data: fs.readFileSync(full).toString("base64") } },
+    { type: "text", text: `This picture is in the camera roll of ${about}.${hint}\n${PHOTO_RULES}\nReply with only JSON: {"desc": "one plain sentence saying what it shows, using names from the file name if it gives them", "ok": false if it breaks the rules above, otherwise true}` },
+  ]);
+  return out && typeof out.desc === "string" ? { desc: out.desc.slice(0, 300), ok: out.ok !== false } : null;
+}
+
+// Brings the album's index up to date with the pictures in the folder.
+async function syncAlbum(c) {
+  fs.mkdirSync(photoDir(c.id), { recursive: true });
+  const files = fs.readdirSync(photoDir(c.id)).filter((f) => PHOTO_EXT.test(f));
+  let album = readAlbum(c.id).filter((p) => files.includes(p.file));
+  for (const file of files.filter((f) => !album.some((p) => p.file === f))) {
+    if (!getClient()) break;
+    const seen = await describePhoto(c, file);
+    if (seen) album.push({ file, ...seen, at: new Date().toISOString() });
+  }
+  writeAlbum(c.id, album);
+  return album;
+}
+
+// A new picture for the album, made from a description. Returns the album entry, or null.
+async function makePhoto(c, want, album) {
+  // Not during a call: the voice and face need the graphics card then. The album still works.
+  if (!pictureModelReady() || call) return null;
+  const usable = album.filter((p) => p.ok);
+  const face = faceFile(c.settings.face);
+  let persona = "";
+  try { persona = fs.readFileSync(path.join(personasDir, c.id, "persona.md"), "utf8").slice(0, 2500); } catch {}
+  const plan = await askJson([{ type: "text", text: `${persona || c.name}
+
+${c.name} wants to text a photo they just took: "${want}".
+Pictures already in their camera roll:
+${usable.map((p, i) => `${i + 1}. ${p.desc}`).join("\n") || "(none)"}
+${PHOTO_RULES}
+Write a prompt for a photo-style image model, under 60 words with the main subject first: a candid smartphone photo, natural light, realistic, describing exactly what was asked for and everyone in it concretely (age, skin tone, hair, clothes), so they look like the same people as in the camera roll and the description above. If anyone in the photo also appears in a camera-roll picture (like the family, or the same shoes), pick that picture (up to 2) to guide their look; otherwise pick none. Say whether ${c.name.split(" ")[0]} herself or himself is in the picture (their face picture is used then). If the photo can't be made within the rules, give an empty prompt.
+Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true or false, "people": true if anyone is in the picture, otherwise false}` }]);
+  if (!plan?.prompt) return null;
+  console.log(`Making a photo for ${c.name}: ${plan.prompt} (guides: ${(plan.refs ?? []).join(", ") || "none"}${plan.self ? ", their face" : ""})`);
+  const refs = (plan.refs ?? []).map((n) => usable[n - 1]).filter(Boolean).map((p) => path.join(photoDir(c.id), p.file));
+  if (plan.self && face) refs.unshift(face);
+  const file = `made-${Date.now()}.jpg`;
+  // Make room: the voice engine lets go of its multilingual model (it reloads when a friend next speaks Spanish).
+  await fetch(`${chatterbox.url}/rest`, { method: "POST" }).catch(() => null);
+  await pictureEngine.start();
+  for (let i = 0; i < 30 && !(await pictureEngine.status()).running; i++) await new Promise((r) => setTimeout(r, 1000));
+  let r = null;
+  for (let i = 0; i < 20 && !r; i++) {
+    r = await fetch(`${pictureEngine.url}/make`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(10 * 60 * 1000),
+      body: JSON.stringify({ prompt: plan.prompt, negative: PHOTO_NEGATIVE + (plan.people === false ? ", person, people, woman, man, child, face" : ""), refs: refs.slice(0, 3), out: path.join(photoDir(c.id), file) }),
+    }).catch(() => null);
+    if (!r) await new Promise((res) => setTimeout(res, 1000));
+  }
+  if (!r?.ok) return null;
+  const seen = await describePhoto(c, file);
+  if (!seen?.ok) {
+    fs.rmSync(path.join(photoDir(c.id), file), { force: true }); // didn't pass the check: never sent or kept
+    return null;
+  }
+  const entry = { file, ...seen, made: true, at: new Date().toISOString() };
+  writeAlbum(c.id, [...readAlbum(c.id), entry]);
+  return entry;
+}
+
+// The picture a friend texts for [photo: ...]: the best album match, or a new one. null if neither works.
+async function friendPhoto(c, want) {
+  const album = (await syncAlbum(c)).filter((p) => p.ok);
+  const week = Date.now() - 7 * 24 * 3600 * 1000;
+  const fresh = album.filter((p) => !(p.sentAt && Date.parse(p.sentAt) > week)); // not one they sent this week
+  let pick = null;
+  if (fresh.length) {
+    const out = await askJson([{ type: "text", text: `Someone wants to text a photo of: "${want}". Their camera roll:\n${fresh.map((p, i) => `${i + 1}. ${p.desc}`).join("\n")}\nWhich picture shows that (close enough that they'd send it)? Reply with only JSON: {"pick": its number, or 0 if none does}` }]);
+    pick = fresh[(out?.pick ?? 0) - 1] ?? null;
+  }
+  pick ??= await makePhoto(c, want, album);
+  if (!pick) return null;
+  writeAlbum(c.id, readAlbum(c.id).map((p) => (p.file === pick.file ? { ...p, sentAt: new Date().toISOString() } : p)));
+  return { url: `/api/photos/${c.id}/${encodeURIComponent(pick.file)}`, desc: pick.desc };
+}
+
 // Builds the conversation for the model from recent texts (alternating turns, starting and ending with the buddy).
 function textTurns(list, extra) {
   const turns = [];
   for (const t of list.slice(-40)) {
     const role = t.from === "me" ? "user" : "assistant";
-    const line = t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
+    const line = t.photo ? `[photo: ${t.photo.desc}]` : t.gif ? (t.from === "me" ? `(sends a GIF: ${gifWords(t.gif)})${t.text ? `\n${t.text}` : ""}` : `[gif: ${t.gif.title}]`) : t.text;
     if (turns.at(-1)?.role === role) turns.at(-1).content += `\n${line}`;
     else turns.push({ role, content: line });
   }
@@ -621,7 +743,8 @@ const TEXTS_PER_DAY = {
 };
 function textHabit(c) {
   const own = c.textHabits ?? catalogEntry(c.id)?.textHabits ?? [];
-  const pool = [...(TEXT_HABITS[c.role] ?? TEXT_HABITS.friend), ...own, ...own]; // their own habits come up more
+  const pics = photoHabits(c) ? [`sending a photo (${photoHabits(c)})`] : [];
+  const pool = [...(TEXT_HABITS[c.role] ?? TEXT_HABITS.friend), ...own, ...own, ...pics]; // their own habits come up more
   return pool[Math.floor(Math.random() * pool.length)];
 }
 const textsPerDay = (c) => (TEXTS_PER_DAY[c.role] ?? 0.7) * (c.textScale ?? catalogEntry(c.id)?.textScale ?? 1);
@@ -643,14 +766,14 @@ async function friendTexts(c, { opener = false, about = null } = {}) {
     max_tokens: 1500,
     output_config: { effort: "low" },
     ...model.params,
-    system: `${await systemPrompt(c)}\n\n${TEXTING}`,
+    system: `${await systemPrompt(c)}\n\n${TEXTING}${photoRules(c)}`,
     messages: textTurns(list, note),
   });
   if (msg.stop_reason === "refusal") throw new Error("They couldn't text back right now.");
   let raw = untag(textOf(msg.content));
   const call = raw.includes(CALL_MARK);
   raw = raw.replaceAll(CALL_MARK, "");
-  // A tapback on your last text: [react: 😂]
+  // A tapback on your last text: [react: ðŸ˜‚]
   let reaction = null;
   raw = raw.replace(/\[react:\s*([^\]]{1,16})\]\s*/i, (_, e) => { reaction = e.trim(); return ""; });
   const parts = raw.replace(/\[(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\]]*\]\s*/g, "").split(/^\s*---\s*$/m).map((t) => t.trim()).filter(Boolean).slice(0, 3);
@@ -659,6 +782,12 @@ async function friendTexts(c, { opener = false, about = null } = {}) {
   for (const [i, part] of parts.entries()) {
     const entry = { id: `${now + i}`, from: "them", text: part, at: new Date(now + i).toISOString(), read: false };
     // A GIF they send: [gif: search words] on its own line, looked up on GIPHY (dropped without a key).
+    const ph = part.match(/^\[photo:\s*([^\]]+)\]$/i);
+    if (ph) {
+      const photo = await friendPhoto(c, ph[1].trim()).catch((err) => (console.error("Photo failed:", err?.message ?? err), null));
+      if (!photo) continue;
+      Object.assign(entry, { text: "", photo });
+    }
     const g = part.match(/^\[gif:\s*([^\]]+)\]$/i);
     if (g) {
       const found = await searchGifs(g[1].trim(), 5).catch(() => []);
@@ -686,7 +815,7 @@ function takeUnrememberedTexts(c) {
   for (const t of fresh) t.remembered = true;
   writeTexts(c.id, list);
   const first = firstName(c);
-  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
+  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.photo ? `(photo: ${t.photo.desc})` : t.gif ? `(GIF: ${gifWords(t.gif)})` : t.text}`).join("\n");
 }
 async function rememberTexts(c) {
   const transcript = takeUnrememberedTexts(c);
@@ -704,7 +833,7 @@ function recentTexts(c) {
   const recent = readTexts(c.id).filter((t) => Date.parse(t.at) > since).slice(-12);
   if (!recent.length) return "";
   const first = firstName(c);
-  return `\n\n# Recent texts with your buddy\n` + recent.map((t) => `- ${textWhen(t.at)}, ${t.from === "me" ? "buddy" : first}: ${t.text}`).join("\n");
+  return `\n\n# Recent texts with your buddy\n` + recent.map((t) => `- ${textWhen(t.at)}, ${t.from === "me" ? "buddy" : first}: ${t.photo ? `(photo: ${t.photo.desc})` : t.text}`).join("\n");
 }
 
 // ---- Voicemail ----
@@ -1303,7 +1432,7 @@ async function learnRules(c, memory, transcript) {
       if (fresh) {
         fresh.settings.callsYou = out.callsYou;
         saveContact(fresh);
-        addNotice(`${first} now calls you: ${CALL_FREQ[out.callsYou].label.toLowerCase()}${out.why ? ` (${out.why})` : ""}. Change it in their ✎ Edit.`, c.id);
+        addNotice(`${first} now calls you: ${CALL_FREQ[out.callsYou].label.toLowerCase()}${out.why ? ` (${out.why})` : ""}. Change it in their âœŽ Edit.`, c.id);
       }
     }
   } catch (err) {
@@ -1578,7 +1707,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/api/tts") {
     const { text, voice } = await readBody(req);
     const file = voiceFile(voice);
-    if (!file) return json(res, 400, { error: "This friend needs a voice clip. Add one in their ⚙ settings." });
+    if (!file) return json(res, 400, { error: "This friend needs a voice clip. Add one in their âš™ settings." });
     // If Chatterbox is still loading (about 20 s after it starts), wait for it rather than failing the sentence.
     await chatterbox.start();
     for (let i = 0; i < 90 && !(await chatterbox.status()).ready; i++) await new Promise((r) => setTimeout(r, 1000));
@@ -1638,7 +1767,7 @@ const server = http.createServer(async (req, res) => {
       last: new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" }),
     };
     writeJson(contactPath(c.id, "memory.json"), c.memory);
-    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings â†’ Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     try {
       return json(res, 200, await leaveVoicemail(c, declined));
@@ -1654,7 +1783,7 @@ const server = http.createServer(async (req, res) => {
       const last = list.at(-1);
       return last && {
         contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
-        last: last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
+        last: last.photo ? "ðŸ“· Photo" : last.gif ? "GIF" : last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
       };
     }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at)));
   }
@@ -1663,6 +1792,25 @@ const server = http.createServer(async (req, res) => {
     if (!c) return json(res, 404, { error: "No such friend." });
     return json(res, 200, shownTexts(c.id).slice(-200));
   }
+  const photoReq = url.pathname.match(/^\/api\/photos\/([a-z0-9-]+)\/([^/]+)$/);
+  if (req.method === "GET" && photoReq) {
+    const file = decodeURIComponent(photoReq[2]);
+    if (!validId(photoReq[1]) || path.basename(file) !== file || !PHOTO_EXT.test(file)) return json(res, 400, { error: "Bad photo." });
+    const full = path.join(photoDir(photoReq[1]), file);
+    if (!fs.existsSync(full)) return json(res, 404, { error: "That photo is gone." });
+    res.writeHead(200, { "Content-Type": photoMime(file), "Cache-Control": "max-age=86400" });
+    return fs.createReadStream(full).pipe(res);
+  }
+  const albumReq = url.pathname.match(/^\/api\/album\/([a-z0-9-]+)$/);
+  if (req.method === "POST" && albumReq) {
+    const c = loadContact(albumReq[1]);
+    if (!c) return json(res, 400, { error: "No such friend." });
+    fs.mkdirSync(photoDir(c.id), { recursive: true });
+    spawn("explorer", [photoDir(c.id)], { detached: true, stdio: "ignore" }).unref();
+    syncAlbum(c).catch(() => {});
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/texts/hide") {
     const { contact } = await readBody(req);
     const c = loadContact(contact);
@@ -1882,7 +2030,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/call") {
-    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings → Account to call." });
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on. Turn it off in Settings â†’ Account to call." });
     if (!getClient()) return json(res, 400, { error: "No API key yet." });
     const { contact: contactId, incoming } = await readBody(req);
     const c = loadContact(contactId);

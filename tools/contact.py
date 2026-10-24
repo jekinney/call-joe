@@ -491,6 +491,10 @@ def cmd_import(args):
     roles = kit.get("roles") or {}
     cmd_publish(ns(id=cid, gender=kit.get("gender", "man"), about=kit.get("about", kit["name"]),
                    role_man=roles.get("man", kit.get("role") or "friend"), role_woman=roles.get("woman", kit.get("role") or "friend")))
+    extras = {k: kit[k] for k in ("textHabits", "photoHabits", "texting", "textScale", "worry") if k in kit}
+    if extras:
+        fj = os.path.join(PERSONAS, cid, "friend.json")
+        write_json(fj, {**(read_json(fj) or {}), **extras})
     print(f'{kit["name"]} is ready. Open Call Joe (or go back to Contacts) to see them.')
 
 
@@ -521,7 +525,9 @@ def cmd_publish(args):
         **({"knows": info["knows"]} if info.get("knows") else {}),
         **({"links": info["links"]} if info.get("links") else {}),
     }
-    write_json(os.path.join(folder, "friend.json"), friend)
+    # Hand-added extras (textHabits, photoHabits, worry, texting...) in an existing friend.json are kept.
+    old = read_json(os.path.join(folder, "friend.json")) or {}
+    write_json(os.path.join(folder, "friend.json"), {**old, **friend})
     print(f'{info["name"]} can now be installed from the app. Saved contacts/{args.id}/friend.json, voice.wav'
           + (" and face.png." if has_face else " (no face picture yet)."))
 

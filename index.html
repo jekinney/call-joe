@@ -330,6 +330,9 @@
   .gif-tray img { height: 72px; border-radius: 10px; display: block; }
   .gif-tray .x { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: #000; color: #fff; font-size: 13px; cursor: pointer; line-height: 22px; padding: 0; }
   .bubble.gif img { display: block; max-width: 220px; border-radius: 16px; }
+  .bubble.gif img.photo { cursor: zoom-in; }
+  .photo-full { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .92); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+  .photo-full img { max-width: 100%; max-height: 100%; }
   .bubble { position: relative; }
   .bubble .tap { position: absolute; top: -10px; left: -10px; background: #3a2f26; border: 2px solid var(--bg); border-radius: 12px; font-size: 13px; padding: 1px 5px; }
   .composer { display: flex; gap: 8px; padding: 8px 12px 10px; background: rgba(24, 19, 15, .94); }
@@ -906,6 +909,8 @@
     <option value="romantic">Romantic (openly into you, PG-13)</option>
   </select>
   <div class="hint">Never explicit. Takes effect on their next call or text.</div>
+  <button type="button" class="btn" id="albumBtn">📷 Photo album</button>
+  <div class="hint">Pictures they can text you. Add your own (name them by who's in them, like "Mateo soccer.jpg"); new ones they make are saved here too.</div>
   <details id="learnedWrap" style="margin-top:12px"><summary style="cursor:pointer">What <span class="fn">Joe</span> has learned about you</summary><div id="learnedBox"></div></details>
   <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
   <div class="face-row">
@@ -2784,6 +2789,11 @@ $("offList").onclick = async (e) => {
   await fetch(`/api/contacts/${b.dataset.turnOn}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: true }) });
   showHome();
 };
+$("albumBtn").onclick = async () => {
+  if (!contact) return;
+  const r = await fetch(`/api/album/${contact.id}`, { method: "POST" }).catch(() => null);
+  toast(r?.ok ? `Opened ${contact.name.split(" ")[0]}'s photo album.` : "Couldn't open the album.");
+};
 $("flirtSelect").onchange = async (e) => {
   if (!contact) return;
   await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ flirting: e.target.value }) });
@@ -2875,11 +2885,23 @@ function addBubble(from, text, at = new Date().toISOString(), extra = {}) {
   }
   lastBubbleAt = time;
   const b = document.createElement("div");
-  b.className = `bubble ${from}${extra.gif ? " gif" : ""}`;
-  if (extra.gif) {
+  const pic = extra.photo ?? extra.gif;
+  b.className = `bubble ${from}${pic ? " gif" : ""}`;
+  if (pic) {
     const img = document.createElement("img");
-    img.src = extra.gif.url;
-    img.alt = extra.gif.title;
+    img.src = pic.url;
+    img.alt = extra.photo ? extra.photo.desc : extra.gif.title;
+    // A photo opens full screen; tap again to close.
+    if (extra.photo) {
+      img.className = "photo";
+      img.onclick = () => {
+        const full = document.createElement("div");
+        full.className = "photo-full";
+        full.innerHTML = `<img src="${esc(pic.url)}" alt="">`;
+        full.onclick = () => full.remove();
+        document.body.append(full);
+      };
+    }
     img.onload = () => ($("bubbles").scrollTop = $("bubbles").scrollHeight);
     b.append(img);
   } else b.textContent = text;

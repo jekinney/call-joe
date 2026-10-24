@@ -149,6 +149,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/rest":
+            # Frees the multilingual model's graphics memory (the picture maker needs it); it reloads when next needed.
+            global mtl_model
+            with mtl_lock, gpu_lock:
+                if mtl_model is not None:
+                    mtl_model = None
+                    mtl_voice["key"] = None
+                    state["multilingual"] = "off"
+                    torch.cuda.empty_cache()
+            return self.send_json(200, state)
         if self.path == "/warm":
             if state["multilingual"] == "off":
                 threading.Thread(target=load_multilingual, daemon=True).start()
