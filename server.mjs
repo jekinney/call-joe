@@ -444,6 +444,19 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/ping") return json(res, 200, { ok: true });
 
+  // Mic-level readings from calls, for tuning voice interrupting (data/vad.log, trimmed to the last ~500 KB).
+  if (req.method === "POST" && url.pathname === "/api/vad-log") {
+    const { lines = [] } = await readBody(req);
+    const file = path.join(dataDir, "vad.log");
+    try {
+      if (fs.existsSync(file) && fs.statSync(file).size > 1_000_000) {
+        fs.writeFileSync(file, fs.readFileSync(file, "utf8").slice(-500_000));
+      }
+      fs.appendFileSync(file, lines.slice(0, 200).map((l) => String(l).slice(0, 300)).join("\n") + "\n");
+    } catch {}
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/key") {
     const { key } = await readBody(req);
     const test = new Anthropic({ apiKey: (key || "").trim() });

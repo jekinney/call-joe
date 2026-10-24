@@ -131,6 +131,8 @@
   #hangBtn { background: var(--red); transform: rotate(135deg); }
   .soft { background: var(--panel); border: 1px solid var(--line); width: 56px; height: 56px; font-size: 22px; }
   .soft.on { background: var(--accent); }
+  .mic-meter { width: 44px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .mic-meter span { display: block; height: 100%; width: 0; background: var(--green); transition: width .05s linear; }
   [hidden] { display: none !important; }
 
   dialog {
@@ -182,7 +184,8 @@
 <div id="captions" class="hidden"></div>
 
 <div class="controls">
-  <div class="ctl" id="muteCtl" hidden><button class="round soft" id="muteBtn" title="Mute your mic">🎙</button>Mute</div>
+  <div class="ctl" id="muteCtl" hidden><button class="round soft" id="muteBtn" title="Mute your mic">🎙</button>Mute
+    <div class="mic-meter" id="micMeterWrap" hidden title="Your mic level"><span id="micMeter"></span></div></div>
   <div class="ctl" id="callCtl"><button class="round" id="callBtn" title="Voice call">📞</button>Call</div>
   <div class="ctl" id="videoCtl"><button class="round" id="videoBtn" title="Video call">🎥</button>Video</div>
   <div class="ctl" id="switchCtl" hidden><button class="round soft" id="switchBtn" title="Switch between video and voice">🎥</button><span id="switchLabel">Video</span></div>
@@ -682,22 +685,27 @@ function sendHeard() {
 // interrupting turns itself off until the next call.
 let vad = null, interrupted = false, heardSomething = false, falseInterrupts = 0;
 const voiceInterruptOn = () => store.get("interruptByVoice", "on") === "on";
+// Your normal speaking level on this mic, learned while you talk to your friend and kept between calls.
+let voiceLevel = Number(store.get("voiceLevel", "0")) || 0;
+let vadLog = [];
 
 async function startInterruptWatch() {
   stopInterruptWatch();
   falseInterrupts = 0;
-  if (!voiceInterruptOn()) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     audioCtx ??= new AudioContext();
+    // A suspended audio engine reads pure silence, so wake it up.
+    if (audioCtx.state === "suspended") await audioCtx.resume().catch(() => {});
     const src = audioCtx.createMediaStreamSource(stream);
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 1024;
     src.connect(analyser);
     const buf = new Float32Array(analyser.fftSize);
-    let floor = 0.005, loudMs = 0, last = performance.now();
+    let floor = 0.003, loudMs = 0, last = performance.now();
+    let stats = { at: Date.now(), max: 0, overMs: 0 }; // diagnostics, two seconds at a time
     const timer = setInterval(() => {
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
@@ -705,28 +713,69 @@ async function startInterruptWatch() {
       const level = Math.sqrt(sum / buf.length);
       const now = performance.now(), dt = now - last;
       last = now;
+      // The mic meter on the call screen.
+      $("micMeter").style.width = `${Math.min(100, (level / 0.12) * 100)}%`;
       // The room's background level: follows quiet moments down quickly and drifts up slowly.
       floor = level < floor ? level : floor * 1.002 + 0.00002;
-      if (state !== "speaking" || muted || falseInterrupts >= 2) { loudMs = 0; return; }
-      if (level > Math.max(0.02, floor * 6)) {
+      // Learn how loud you talk: while you're talking to them and speech is being recognized.
+      if (state === "listening" && heardSomething && level > floor * 3) {
+        voiceLevel = voiceLevel ? voiceLevel * 0.98 + level * 0.02 : level;
+      }
+      // Cut in when you talk at about a third of your normal level, well above the room's background.
+      const threshold = Math.max(floor * 4, voiceLevel ? voiceLevel * 0.35 : 0.01, 0.004);
+
+      if (state === "speaking") {
+        stats.max = Math.max(stats.max, level);
+        if (level > threshold) stats.overMs += dt;
+      }
+      if (Date.now() - stats.at >= 2000) {
+        if (state === "speaking" || state === "listening") {
+          vadLog.push(`${new Date().toLocaleTimeString()} ${state} max=${stats.max.toFixed(4)} over=${Math.round(stats.overMs)}ms floor=${floor.toFixed(4)} threshold=${threshold.toFixed(4)} voice=${voiceLevel.toFixed(4)}`);
+        }
+        stats = { at: Date.now(), max: 0, overMs: 0 };
+      }
+
+      if (!voiceInterruptOn() || state !== "speaking" || muted || falseInterrupts >= 2) { loudMs = 0; return; }
+      if (level > threshold) {
         loudMs += dt;
-        if (loudMs >= 350) { loudMs = 0; interrupt(true); }
+        if (loudMs >= 300) {
+          loudMs = 0;
+          vadLog.push(`${new Date().toLocaleTimeString()} INTERRUPT level=${level.toFixed(4)} threshold=${threshold.toFixed(4)}`);
+          interrupt(true);
+        }
       } else {
-        loudMs = Math.max(0, loudMs - dt);
+        loudMs = Math.max(0, loudMs - dt / 2);
       }
     }, 50);
-    vad = { stream, src, timer };
-  } catch {
+    // Send the diagnostics to data/vad.log every few seconds, and remember your speaking level.
+    const flush = setInterval(() => {
+      if (voiceLevel) store.set("voiceLevel", voiceLevel.toFixed(5));
+      if (!vadLog.length) return;
+      const lines = vadLog;
+      vadLog = [];
+      fetch("/api/vad-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lines }) }).catch(() => {});
+    }, 5000);
+    vad = { stream, src, timer, flush };
+    $("micMeterWrap").hidden = false;
+  } catch (err) {
     // No mic access for the watcher: the spacebar and Hush still work.
+    vadLog.push(`watcher could not start: ${err?.name ?? err}`);
   }
 }
 
 function stopInterruptWatch() {
   if (!vad) return;
   clearInterval(vad.timer);
+  clearInterval(vad.flush);
   vad.src.disconnect();
   vad.stream.getTracks().forEach((t) => t.stop());
   vad = null;
+  $("micMeterWrap").hidden = true;
+  if (voiceLevel) store.set("voiceLevel", voiceLevel.toFixed(5));
+  if (vadLog.length) {
+    fetch("/api/vad-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lines: vadLog }) }).catch(() => {});
+    vadLog = [];
+  }
 }
 
 function interrupt(byVoice = false) {
