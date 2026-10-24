@@ -518,11 +518,26 @@ setInterval(() => {
 // ones with data/contacts/<id>/contact.json; uninstalling deletes that folder (memory and all), so they show up as
 // installable again, brand new.
 const ROLE_CHOICES = [
-  ["best-friend", "Best friend"], ["close-friend", "Close friend"], ["friend", "Friend"], ["family-friend", "Family friend"],
+  ["best-friend", "Best friend"], ["close-friend", "Close friend"], ["friend", "Friend"], ["distant-friend", "Distant friend"],
+  ["family-friend", "Family friend"],
   ["neighbor", "Neighbor"], ["coworker", "Coworker"], ["mom", "Mom"], ["dad", "Dad"], ["sister", "Sister"],
   ["brother", "Brother"], ["grandparent", "Grandparent"], ["aunt", "Aunt"], ["uncle", "Uncle"], ["cousin", "Cousin"],
   ["spouse", "Spouse"],
 ];
+// Relationships that make sense. Family by blood or marriage has a gender (a man can't be your sister) and, once you've
+// talked or texted, is fixed for good: your sister can't later become your wife or your coworker. Friendships can grow
+// closer or drift (best friend <-> close friend <-> friend <-> distant friend), and anyone in the friends group can be
+// moved anywhere in it. Before the first call or text, anything that fits their gender is fine.
+const ROLE_GENDER = { mom: "woman", sister: "woman", aunt: "woman", dad: "man", brother: "man", uncle: "man" };
+const FRIEND_ROLES = new Set(["best-friend", "close-friend", "friend", "distant-friend", "family-friend", "neighbor", "coworker"]);
+const hasTalked = (c) => (c.memory?.calls ?? 0) > 0 || readJson(contactPath(c.id, "texts.json"), []).length > 0;
+function roleChoicesFor(gender, current, talked) {
+  const fits = ROLE_CHOICES.filter(([r]) => !ROLE_GENDER[r] || !gender || ROLE_GENDER[r] === gender);
+  if (!talked || !current) return fits.map(([r]) => r);
+  const now = shownRole(current);
+  if (!FRIEND_ROLES.has(now)) return [now]; // family and spouse are locked once you've met
+  return fits.filter(([r]) => FRIEND_ROLES.has(r)).map(([r]) => r);
+}
 const catalogEntry = (id) => (validId(id) ? readJson(path.join(personasDir, id, "friend.json"), null) : null);
 const friendGender = (c) => c.gender ?? catalogEntry(c.id)?.gender;
 // Two women who are best friends get the best-girlfriend version of that relationship.
@@ -537,7 +552,7 @@ function catalog() {
     return {
       id, name: f.name, about: f.about ?? "", gender: f.gender, installed: !!loadContact(id),
       hasFace: fs.existsSync(path.join(personasDir, id, "face.png")),
-      role: shownRole(resolveRole(f.roles?.[yourGender()] ?? "friend", f.gender)),
+      role: shownRole(resolveRole(f.roles?.[yourGender()] ?? "friend", f.gender)), roleChoices: roleChoicesFor(f.gender, null, false),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -1034,7 +1049,8 @@ const server = http.createServer(async (req, res) => {
     if (yourGender() !== before) {
       for (const c of listContacts()) {
         const f = catalogEntry(c.id);
-        if (f?.roles && c.role === resolveRole(f.roles[before], f.gender)) c.role = f.roles[yourGender()];
+        // Only friends you haven't talked to yet switch defaults; after that, family stays family.
+        if (f?.roles && !hasTalked(c) && c.role === resolveRole(f.roles[before], f.gender)) c.role = f.roles[yourGender()];
         c.role = resolveRole(shownRole(c.role), friendGender(c));
         saveContact(c);
       }
@@ -1371,6 +1387,7 @@ const server = http.createServer(async (req, res) => {
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
       newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
+      roleChoices: roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)),
       worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: c.settings.textsYou ?? "sometimes", textsPerDay: textsPerDay(c),
       // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).
       missed: c.memory.missed ? { ...c.memory.missed, openMinutes: (config.openMinutes ?? 0) - (c.memory.missed.atOpenMinute ?? config.openMinutes ?? 0) } : null,
@@ -1392,7 +1409,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "PUT") {
       const { settings = {}, active, role } = await readBody(req);
       for (const k of SETTING_KEYS) if (k in settings) c.settings[k] = settings[k];
-      if (ROLE_CHOICES.some(([r]) => r === role)) c.role = resolveRole(role, friendGender(c));
+      if (role !== undefined && role !== shownRole(c.role ?? "friend")) {
+        if (!roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)).includes(role)) {
+          return json(res, 400, { error: `${c.name} can't become your ${String(role).replace("-", " ")}. Once you've talked, family stays family, and friends can only move between kinds of friends.` });
+        }
+        c.role = resolveRole(role, friendGender(c));
+      }
       // Turned-off friends are hidden, never call you and hear no news. Turned back on, they catch up on the news.
       let caughtUpSince = null;
       if (active === false && c.active !== false) c.inactiveSince = new Date().toISOString();

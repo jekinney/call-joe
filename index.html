@@ -2778,7 +2778,9 @@ function danger({ title, text, button, typeWord }) {
 // ---------- Friends you can install, and relationships ----------
 let roleChoices = [];
 const loadRoles = async () => (roleChoices.length ? roleChoices : (roleChoices = await fetch("/api/roles").then((r) => r.json()).catch(() => [])));
-const roleOptions = (current) => roleChoices.map((r) => `<option value="${r.id}" ${r.id === current ? "selected" : ""}>${r.name}</option>`).join("");
+// allowed: the relationships that make sense for this friend (from the server); locked ones show a 🔒.
+const roleOptions = (current, allowed) => roleChoices.filter((r) => !allowed || allowed.includes(r.id))
+  .map((r) => `<option value="${r.id}" ${r.id === current ? "selected" : ""}>${allowed?.length === 1 ? "🔒 " : ""}${r.name}</option>`).join("");
 const catalogAvatar = (f) => `<span class="c-avatar">${f.hasFace ? `<img src="/api/catalog/face?id=${encodeURIComponent(f.id)}" alt="">` : esc(f.name[0])}</span>`;
 
 async function renderFriends() {
@@ -2790,14 +2792,14 @@ async function renderFriends() {
   $("friendsMine").innerHTML = mine.map((c) => `
     <div class="pick" style="cursor:default; align-items:flex-start">${avatarHtml(c.name, c.face)}
       <span class="txt"><div class="t1">${esc(c.name)}</div><div class="t2">${c.active ? `${c.calls} call${c.calls === 1 ? "" : "s"}` : "Turned off"}</div>
-        <div class="friend-ctl"><select data-role-for="${esc(c.id)}" aria-label="Who ${esc(c.name)} is to you">${roleOptions(c.role)}</select>
+        <div class="friend-ctl"><select data-role-for="${esc(c.id)}" aria-label="Who ${esc(c.name)} is to you" ${c.roleChoices?.length === 1 ? "disabled title=\"Family stays family once you've talked\"" : ""}>${roleOptions(c.role, c.roleChoices)}</select>
           <button class="btn warn" data-delete="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></div></span></div>`).join("")
     || `<div class="empty">No friends on your phone yet.</div>`;
   const avail = cat.filter((f) => !f.installed);
   $("friendsAvail").innerHTML = avail.map((f) => `
     <div class="pick" style="cursor:default; align-items:flex-start">${catalogAvatar(f)}
       <span class="txt"><div class="t1">${esc(f.name)}</div><div class="t2">${esc(f.about)}</div>
-        <div class="friend-ctl"><select data-install-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role)}</select>
+        <div class="friend-ctl"><select data-install-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select>
           <button class="btn" data-install="${esc(f.id)}">Install</button></div></span></div>`).join("")
     || `<div class="empty">Every friend is already on your phone.</div>`;
 }
@@ -2808,8 +2810,9 @@ const friendsChanged = () => {
 $("friendsMine").onchange = async (e) => {
   const sel = e.target.closest("[data-role-for]");
   if (!sel) return;
-  await fetch(`/api/contacts/${sel.dataset.roleFor}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: sel.value }) });
-  toast(`Saved. It takes effect on their next call.`);
+  const res = await fetch(`/api/contacts/${sel.dataset.roleFor}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: sel.value }) });
+  toast(res.ok ? "Saved. It takes effect on their next call." : (await res.json().catch(() => ({}))).error || "That didn't work.");
+  if (!res.ok) renderFriends();
 };
 $("friendsMine").onclick = async (e) => {
   const b = e.target.closest("[data-delete]");
@@ -3044,7 +3047,7 @@ $("suPickNext").onclick = () => {
   $("suRoles").innerHTML = setupCatalog.filter((f) => picked.includes(f.id)).map((f) => `
     <div class="pick" style="cursor:default">${catalogAvatar(f)}
       <span class="txt"><div class="t1">${esc(f.name)}</div></span>
-      <select data-setup-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role)}</select></div>`).join("");
+      <select data-setup-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select></div>`).join("");
   setupStep(5);
 };
 $("suInstall").onclick = async () => {
