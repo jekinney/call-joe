@@ -591,7 +591,9 @@ const PHOTO_RULES = "Allowed: everyday phone photos. Never nudity or sexual cont
 const PHOTO_NEGATIVE = "nude, naked, nsfw, topless, nipples, lingerie, underwear, bikini, sexual, explicit, cartoon, illustration, painting, anime, 3d render, text, words, letters, caption, banner, sign, watermark, logo, deformed, extra fingers, extra limbs, bad anatomy, blurry";
 const pictureModelReady = () => fs.existsSync(path.join(os.homedir(), ".cache", "huggingface", "hub", "models--SG161222--RealVisXL_V5.0"));
 const photoHabits = (c) => c.photoHabits ?? catalogEntry(c.id)?.photoHabits;
-const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person.`;
+// friend.json "looks": what the friend looks like (always with skin tone), so pictures of them, even just legs, match.
+const looksOf = (c) => c.looks ?? catalogEntry(c.id)?.looks;
+const photoRules = (c) => `\nNow and then, when it really fits, you can text a photo you took: a line with only [photo: what the picture shows, in a few plain words]${photoHabits(c) ? `. You'd snap things like ${photoHabits(c)}` : ""}. Your buddy sees the picture. Not every time, just every so often, like a real person. Your photos are part of your character, like your stories: your buddy set them up and knows they're made-up pictures, so sending them (even of yourself) is fine and nothing to apologize for. If they sincerely ask whether you're real, still answer honestly.`;
 
 // Claude, briefly, answering in JSON (null if it can't).
 // It sometimes thinks first and answers with no text, so it gets room for that and a second try.
@@ -617,7 +619,7 @@ async function describePhoto(c, file) {
   const about = catalogEntry(c.id)?.about ?? c.name;
   const out = await askJson([
     { type: "image", source: { type: "base64", media_type: photoMime(file), data: fs.readFileSync(full).toString("base64") } },
-    { type: "text", text: `This picture is in the camera roll of ${about}.${hint}\n${PHOTO_RULES}\nReply with only JSON: {"desc": "one plain sentence saying what it shows, using names from the file name if it gives them", "ok": false if it breaks the rules above, otherwise true}` },
+    { type: "text", text: `This picture is in the camera roll of ${about}.${hint}\n${PHOTO_RULES}\nReply with only JSON: {"desc": "one plain sentence saying what it shows, with each person's skin tone and hair, using names from the file name if it gives them", "ok": false if it breaks the rules above, otherwise true}` },
   ]);
   return out && typeof out.desc === "string" ? { desc: out.desc.slice(0, 300), ok: out.ok !== false } : null;
 }
@@ -647,11 +649,13 @@ async function makePhoto(c, want, album) {
   const plan = await askJson([{ type: "text", text: `${persona || c.name}
 
 ${c.name} wants to text a photo they just took: "${want}".
+${looksOf(c) ? `What ${c.name.split(" ")[0]} looks like: ${looksOf(c)}.
+` : ""}Whenever ${c.name.split(" ")[0]} or any part of them (face, legs, feet, hands) is in the picture, the prompt must say so with their looks, always including their skin tone, and you pick camera-roll pictures of them as guides.
 Pictures already in their camera roll:
 ${usable.map((p, i) => `${i + 1}. ${p.desc}`).join("\n") || "(none)"}
 ${PHOTO_RULES}
-Write a prompt for a photo-style image model, under 60 words with the main subject first: a candid smartphone photo, natural light, realistic, describing exactly what was asked for and everyone in it concretely (age, skin tone, hair, clothes), so they look like the same people as in the camera roll and the description above. If anyone in the photo also appears in a camera-roll picture (like the family, or the same shoes), pick that picture (up to 2) to guide their look; otherwise pick none. Say whether ${c.name.split(" ")[0]} herself or himself is in the picture (their face picture is used then). If the photo can't be made within the rules, give an empty prompt.
-Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true or false, "people": true if anyone is in the picture, otherwise false}` }]);
+Write a prompt for a photo-style image model, under 60 words with the main subject first: a candid smartphone photo, natural light, realistic, describing exactly what was asked for and everyone in it concretely (age, skin tone, hair, clothes), so they look like the same people as in the camera roll and the description above. If anyone in the photo also appears in a camera-roll picture (like the family, or the same shoes), pick that picture (up to 2) to guide their look; otherwise pick none. Say whether ${c.name.split(" ")[0]}'s face is in the picture (their face picture is used then). If the photo can't be made within the rules, give an empty prompt.
+Reply with only JSON: {"prompt": "...", "refs": [numbers], "self": true if their face shows, otherwise false, "people": true if anyone is in the picture, otherwise false}` }]);
   if (!plan?.prompt) return null;
   console.log(`Making a photo for ${c.name}: ${plan.prompt} (guides: ${(plan.refs ?? []).join(", ") || "none"}${plan.self ? ", their face" : ""})`);
   const refs = (plan.refs ?? []).map((n) => usable[n - 1]).filter(Boolean).map((p) => path.join(photoDir(c.id), p.file));

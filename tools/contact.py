@@ -491,7 +491,7 @@ def cmd_import(args):
     roles = kit.get("roles") or {}
     cmd_publish(ns(id=cid, gender=kit.get("gender", "man"), about=kit.get("about", kit["name"]),
                    role_man=roles.get("man", kit.get("role") or "friend"), role_woman=roles.get("woman", kit.get("role") or "friend")))
-    extras = {k: kit[k] for k in ("textHabits", "photoHabits", "texting", "textScale", "worry") if k in kit}
+    extras = {k: kit[k] for k in ("textHabits", "photoHabits", "looks", "texting", "textScale", "worry") if k in kit}
     if extras:
         fj = os.path.join(PERSONAS, cid, "friend.json")
         write_json(fj, {**(read_json(fj) or {}), **extras})
