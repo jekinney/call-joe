@@ -952,7 +952,7 @@
     <option value="sonnet">Sonnet: quick and sharp (recommended)</option>
     <option value="opus">Opus: deepest, but slower and pricier</option>
   </select>
-  <div class="hint">Takes effect on <span class="fn">Joe</span>'s next reply. Their notes about you are always written by Opus.</div>
+  <div class="hint" id="modelHint">Takes effect on <span class="fn">Joe</span>'s next reply. Their notes about you are always written by Opus.</div>
   <div id="chatterboxVoice">
     <div class="hint" id="cbStatus">Checking Chatterbox…</div>
     <label for="cbSelect"><span class="fn">Joe</span>'s voice</label>
@@ -1801,7 +1801,7 @@ async function fillFrequencies() {
 }
 $("settingsBtn").onclick = async () => {
   await fillFrequencies();
-  $("modelSelect").value = store.get("model", "sonnet");
+  await fillModels(store.get("model", "sonnet"));
   $("activeToggle").checked = contact.active !== false;
   $("cussToggle").checked = !!contact.cussing;
   $("flirtSelect").value = contact.flirting ?? "off";
@@ -1814,7 +1814,37 @@ $("settingsBtn").onclick = async () => {
   $("settingsDialog").showModal();
 };
 $("settingsClose").onclick = () => { recorder?.stop(); $("settingsDialog").close(); };
-$("modelSelect").onchange = (e) => store.set("model", e.target.value);
+$("modelSelect").onchange = (e) => { store.set("model", e.target.value); fillModels(e.target.value); };
+// The Brain list: Claude's models when the Anthropic key works, Gemini's when the Google AI key works.
+// A pick whose key isn't working stays listed, marked with the model standing in for it.
+async function fillModels(current) {
+  const sel = $("modelSelect");
+  const fn = contact.firstName ?? contact.name.split(" ")[0];
+  let info;
+  try { info = await (await fetch("/api/models")).json(); } catch { sel.value = current; return; }
+  const byKey = Object.fromEntries(info.models.map((m) => [m.key, m]));
+  const pick = byKey[current] ? current : "sonnet";
+  const standIn = (m) => [m.twin, "sonnet", "gemini-flash", ...info.models.map((x) => x.key)].map((k) => byKey[k]).find((x) => x?.ok);
+  sel.innerHTML = "";
+  for (const maker of ["Claude", "Gemini"]) {
+    const list = info.models.filter((m) => m.maker === maker && (m.ok || m.key === pick));
+    if (!list.length) continue;
+    const g = document.createElement("optgroup");
+    g.label = maker;
+    for (const m of list) {
+      const o = document.createElement("option");
+      o.value = m.key;
+      o.textContent = m.ok ? m.label : `${m.label.split(":")[0]}: not working now${standIn(m) ? ` (using ${standIn(m).label.split(":")[0]})` : ""}`;
+      g.append(o);
+    }
+    sel.append(g);
+  }
+  sel.value = pick;
+  const side = (s, name, where) => !s.has ? `No ${name} key (${where}).` : s.ok ? "" : `Your ${name} key isn't working${s.why ? `: ${s.why}` : "."}`;
+  const notes = [side(info.claude, "Claude", "add one in Settings → Account to use Claude"), side(info.google, "Google AI", "add one in Settings → Account to use Gemini")].filter(Boolean);
+  const writer = info.claude.ok ? "Opus" : info.google.ok ? "Gemini 4 Argon" : "Opus";
+  $("modelHint").textContent = `Takes effect on ${fn}'s next reply. Their notes about you are always written by ${writer}.${info.airplane ? " Airplane mode is on." : ""}${notes.length ? " " + notes.join(" ") : ""}`;
+}
 $("callsYouSelect").onchange = (e) => {
   store.set("callsYou", e.target.value);
   // The schedule follows right away: a friend set to never call leaves the line of waiting callers.

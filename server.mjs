@@ -20,19 +20,24 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 const PORT = Number(process.env.CALLJOE_PORT) || 5174;
 // Models a friend can think with. Thinking is kept as low as each model allows so they answer quickly.
+// Claude's need the Anthropic key; Gemini's need the Google AI key. Each has a twin on the other side (same tier),
+// used when the chosen one's key is missing or not working.
 const MODELS = {
   haiku: {
-    id: "claude-haiku-5-5",
+    id: "claude-haiku-5-5", label: "Haiku: fastest and cheapest", twin: "gemini-flash-lite",
     params: { thinking: { type: "disabled" } },
   },
   sonnet: {
-    id: "claude-sonnet-5-5",
+    id: "claude-sonnet-5-5", label: "Sonnet: quick and sharp (recommended)", twin: "gemini-flash",
     params: { thinking: { type: "between_tools" }, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" },
   },
   opus: {
-    id: "claude-opus-5-5",
+    id: "claude-opus-5-5", label: "Opus: deepest, but slower and pricier", twin: "gemini-argon",
     params: { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" },
   },
+  "gemini-flash-lite": { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite: fastest and cheapest", twin: "haiku", google: true, params: {} },
+  "gemini-flash": { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash: quick and sharp", twin: "sonnet", google: true, params: {} },
+  "gemini-argon": { id: "gemini-4-argon", label: "Gemini 4 Argon: deepest, but slower and pricier", twin: "opus", google: true, params: {} },
 };
 const DEFAULT_MODEL = "sonnet";
 const MEMORY_MODEL = "claude-opus-5-5"; // writes each friend's notes after each call
@@ -204,16 +209,61 @@ knowledge.startRefreshing(() => (config.airplane ? [] : listContacts()));
 // Your API key is never deleted by anything except you (Settings -> Account -> Remove key, only in airplane mode).
 // Airplane mode (config.airplane) turns the key off: no calls, no friends calling, no news, no live-knowledge
 // updates. Everything already saved stays on this computer.
-// With no Claude key, a Google AI key stands in: Gemini thinks for friends (gemini.mjs) until a Claude key is added.
+// With no Claude key, or one that's stopped working, a Google AI key stands in: Gemini thinks (gemini.mjs).
 let geminiClient = null;
 function getClient() {
   if (config.airplane) return null;
-  if (config.apiKey) return (client ??= new Anthropic({ apiKey: config.apiKey }));
+  if (config.apiKey && !(brains.claude?.ok === false && brains.google?.ok)) return (client ??= new Anthropic({ apiKey: config.apiKey }));
   if (config.googleKey) return (geminiClient ??= createGeminiClient(() => config.googleKey));
   return null;
 }
 
-const chatModel = (c) => MODELS[c?.settings.model] ?? MODELS[DEFAULT_MODEL];
+// Which keys work, and which of the models above each one can use. Checked when the app starts, when a key is saved,
+// and every half hour. null = not checked yet (a saved key counts as working until then).
+const brains = { claude: null, google: null }; // { ok, why, ids: Set, at }
+async function checkBrains() {
+  const check = async (has, list) => {
+    if (!has) return null;
+    try { return { ok: true, ids: new Set(await list()), at: Date.now() }; }
+    catch (err) {
+      const why = err?.status === 401 || err?.status === 403 ? "it wasn't accepted (it may have been turned off or deleted)"
+        : err?.status === 429 ? "it's over its limit for now" : String(err?.message ?? err).slice(0, 160);
+      return { ok: false, why, ids: new Set(), at: Date.now() };
+    }
+  };
+  [brains.claude, brains.google] = await Promise.all([
+    check(config.apiKey, async () => {
+      const ids = [];
+      for await (const m of new Anthropic({ apiKey: config.apiKey }).models.list({ limit: 100 })) ids.push(m.id);
+      return ids;
+    }),
+    check(config.googleKey, async () => {
+      const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": config.googleKey }, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw Object.assign(new Error(`Google answered ${r.status}.`), { status: r.status === 400 ? 401 : r.status });
+      return ((await r.json()).models ?? []).map((m) => m.name.replace(/^models\//, ""));
+    }),
+  ]);
+}
+setTimeout(() => checkBrains().catch(() => {}), 0);
+setInterval(() => checkBrains().catch(() => {}), 30 * 60 * 1000);
+// Can this model think right now?
+function modelUsable(key) {
+  const m = MODELS[key];
+  if (!m || config.airplane) return false;
+  const b = m.google ? brains.google : brains.claude;
+  if (!(m.google ? config.googleKey : config.apiKey)) return false;
+  return !b || (b.ok && b.ids.has(m.id));
+}
+// The friend's chosen model if it can think right now; otherwise its twin, then any that can.
+function chatModel(c) {
+  const want = MODELS[c?.settings.model] ? c.settings.model : DEFAULT_MODEL;
+  const key = [want, MODELS[want].twin, DEFAULT_MODEL, MODELS[DEFAULT_MODEL].twin, ...Object.keys(MODELS)].find(modelUsable) ?? want;
+  const m = MODELS[key];
+  const cl = config.airplane ? null
+    : m.google ? (config.googleKey ? (geminiClient ??= createGeminiClient(() => config.googleKey)) : null)
+      : config.apiKey ? (client ??= new Anthropic({ apiKey: config.apiKey })) : null;
+  return { ...m, key, client: cl ?? getClient() };
+}
 
 // Built once per call and left unchanged during it, so the prompt cache keeps hitting. A friend with no role,
 // connections or knowledge settings (like Joe) gets exactly the persona, ending-the-call, memory and time sections.
@@ -660,14 +710,16 @@ function supportThread() {
   }];
 }
 const SUPPORT_HELP = `Commands (anything else, just ask me):
-/Elena got divorced: a change in a friend's life (I'll show it first)
-/Elena show: their summary, schedule, rules, settings
-/Elena schedule works nights now
-/Elena rule never mention her ex
-/Elena forget the cornbread thing
-/Elena pause 3d, /Elena resume
-/Elena calls daily, /Elena texts often
-/Elena photo at the beach
+For a friend, start with / and their first name, like /Joe or /Elena:
+/{first name} got divorced: a change in their life (I'll show it first)
+/{first name} show: their summary, schedule, rules, settings
+/{first name} schedule works nights now
+/{first name} rule never mention her ex
+/{first name} forget the cornbread thing
+/{first name} pause 3d, /{first name} resume
+/{first name} calls daily, /{first name} texts often
+/{first name} photo at the beach
+For everyone:
 /rule no one texts before 8am (everyone)
 /rules, /rules delete 2
 /me new job at Ford, 7 to 3
@@ -847,7 +899,12 @@ async function supportCommand(text) {
   const [w, ...more] = text.slice(1).trim().split(/\s+/);
   const word = (w ?? "").toLowerCase();
   const rest = more.join(" ").trim();
-  if (word === "help" || !word) return SUPPORT_HELP;
+  if (word === "help" || !word) {
+    const names = listContacts().filter((f) => f.active !== false).map((f) => `/${firstName(f)}`);
+    return `${SUPPORT_HELP}${names.length ? `
+
+Your friends: ${names.join(", ")}` : ""}`;
+  }
   if (word === "yes") {
     if (!supportProposal) return "There's nothing waiting for a yes.";
     const p = supportProposal;
@@ -1614,7 +1671,7 @@ async function friendTexts(c, { opener = false, about = null, noPhoto = false, l
     ? `(It's been ${ago} since your buddy's text${late.what && late.what !== "free" ? `; you couldn't get to your phone because you were ${late.what}` : ""}. Answer naturally, and mention why you're late only if it fits, briefly.)`
     : null;
   const model = chatModel(c);
-  const msg = await getClient().beta.messages.create({
+  const msg = await model.client.beta.messages.create({
     model: model.id,
     max_tokens: 1500,
     output_config: { effort: "low" },
@@ -1783,7 +1840,7 @@ Write the voicemail greeting ${c.name} recorded on their own phone, in their own
 
 async function leaveVoicemail(c, declined) {
   const model = chatModel(c);
-  const msg = await getClient().beta.messages.create({
+  const msg = await model.client.beta.messages.create({
     model: model.id,
     max_tokens: 4000,
     output_config: { effort: "low" },
@@ -2248,7 +2305,7 @@ async function streamReply(res) {
     const model = chatModel(c);
     const tools = c.support ? SUPPORT_TOOLS : knowledge.tools(c);
     for (let round = 0; round < 6; round++) {
-      const stream = getClient().beta.messages.stream({
+      const stream = model.client.beta.messages.stream({
         model: model.id,
         max_tokens: 16000,
         output_config: { effort: "low" },
@@ -2492,7 +2549,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, userBusy: userBusy(), brain: config.apiKey ? "claude" : config.googleKey ? "gemini" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, userBusy: userBusy(), brain: getClient()?.gemini ? "gemini" : getClient() ? "claude" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }
@@ -2598,11 +2655,23 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
 
+  // The Brain list: every model whose key works, grouped by maker. ?fresh=1 checks the keys again first.
+  if (url.pathname === "/api/models") {
+    if (url.searchParams.get("fresh") || [["apiKey", "claude"], ["googleKey", "google"]].some(([k, b]) => config[k] && (!brains[b] || Date.now() - brains[b].at > 10 * 60 * 1000))) {
+      await checkBrains().catch(() => {});
+    }
+    const side = (k, b) => ({ has: !!config[k], ok: !!config[k] && !!brains[b]?.ok, why: brains[b]?.ok === false ? brains[b].why : null });
+    return json(res, 200, {
+      claude: side("apiKey", "claude"), google: side("googleKey", "google"), airplane: !!config.airplane,
+      models: Object.entries(MODELS).map(([key, m]) => ({ key, label: m.label, maker: m.google ? "Gemini" : "Claude", ok: modelUsable(key), twin: m.twin })),
+    });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/key") {
     const { key } = await readBody(req);
     const test = new Anthropic({ apiKey: (key || "").trim() });
     try {
-      await test.models.retrieve(chatModel(null).id);
+      await test.models.retrieve(MODELS[DEFAULT_MODEL].id);
     } catch (err) {
       const why = err?.status === 401
         ? "Make sure you copied the whole key."
@@ -2612,6 +2681,7 @@ const server = http.createServer(async (req, res) => {
     config.apiKey = key.trim();
     client = null;
     writeJson(configFile, config);
+    checkBrains().catch(() => {});
     return json(res, 200, { ok: true });
   }
 
@@ -2882,6 +2952,7 @@ const server = http.createServer(async (req, res) => {
     try { await geminiCheckKey(key); } catch (err) { return json(res, 400, { error: err.message }); }
     config.googleKey = key;
     writeJson(configFile, config);
+    checkBrains().catch(() => {});
     return json(res, 200, { ok: true });
   }
   if (req.method === "GET" && url.pathname === "/api/support") {

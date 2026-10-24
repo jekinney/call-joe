@@ -6,7 +6,8 @@ const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // Claude's tiers, matched to Gemini's.
 export const GEMINI_MODELS = { haiku: "gemini-3.5-flash-lite", sonnet: "gemini-3.8-flash", opus: "gemini-4-argon" };
-const geminiModel = (id = "") => (/haiku/.test(id) ? GEMINI_MODELS.haiku : /opus/.test(id) ? GEMINI_MODELS.opus : GEMINI_MODELS.sonnet);
+// A Gemini model picked for a friend is used as it is; a Claude one gets its Gemini tier.
+const geminiModel = (id = "") => (/^gemini-/.test(id) ? id : /haiku/.test(id) ? GEMINI_MODELS.haiku : /opus/.test(id) ? GEMINI_MODELS.opus : GEMINI_MODELS.sonnet);
 
 const blocksOf = (content) => (typeof content === "string" ? [{ type: "text", text: content }] : content ?? []);
 

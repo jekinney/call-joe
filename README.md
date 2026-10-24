@@ -35,13 +35,13 @@ Your own hours (text Support `/quiet 10pm-7am`, `/work weekdays 9-5`; quiet defa
 
 ## Support by text
 
-**Support** sits at the top of Messages. Ask it anything, or use commands (`/help` lists them): `/Elena got divorced` (a life update: shown first, applied on `/yes`, the old persona archived and a dated note added so she knows it's recent), `/Elena show`, `/Elena schedule …`, `/Elena rule …`, `/Elena forget …`, `/Elena pause 3d` and `/Elena resume`, `/Elena calls daily`, `/Elena texts often`, `/Elena photo …`, `/rule …` for everyone (`data/rules.md`), `/rules`, `/me …`, `/quiet`, `/work`, `/who`, `/log` and `/undo` (`data/changes.json`).
+**Support** sits at the top of Messages. Ask it anything, or use commands (`/help` lists them, with your friends' names). For a friend, start with `/` and their first name (`/Joe`, `/Elena`, and so on): `/{first name} got divorced` (a life update: shown first, applied on `/yes`, the old persona archived and a dated note added so they know it's recent), `/{first name} show`, `/{first name} schedule …`, `/{first name} rule …`, `/{first name} forget …`, `/{first name} pause 3d` and `/{first name} resume`, `/{first name} calls daily`, `/{first name} texts often`, `/{first name} photo …`. For everyone: `/rule …` (`data/rules.md`), `/rules`, `/me …`, `/quiet`, `/work`, `/who`, `/log` and `/undo` (`data/changes.json`).
 
 In a friend's own conversation, a text starting with `/ai` tells them what to do, outside the conversation: `/ai send a pic of you at lunch`, `/ai text me a goodnight message`. They do it right away, in character and within their rules, without arguing or calling instead. The `/ai` text isn't shown or remembered; what they send is.
 
 **Short videos.** Ask a friend for one ("send me a video of the kids at practice", or `/ai send me a video of your lunch`) and they send an 8 to 10 second vertical clip with sound, made by Google's Gemini Omni Flash from their album pictures and face (about $1 a video, with the Google AI key). Friends never send videos on their own. A frame from the middle is checked by Claude before it's sent. Videos are saved in `photos/videos/` (compressed to about 3 MB) and copied to the Desktop's `generated` folder.
 
-**Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. And if there's no Anthropic key, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as an Anthropic key is saved.
+**Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. You can also pick a Gemini model as any friend's brain. And if there's no Anthropic key, or it stops working, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as a working Anthropic key is saved.
 
 ## The phone
 
@@ -66,7 +66,7 @@ Call Joe looks and works like an Android phone, inside a thin phone outline:
 - **Calls you:** how often this friend rings you while the app is open: never, rarely (every few days), about once a day, now and then (every few hours), often (about hourly) or constantly (a few times an hour). The "Try it" button makes them call in a few seconds.
 - **Texts you:** how often they text you first: never, rarely, less than usual, their usual (depends on who they are to you), more, often or constantly.
 - Both settings also go into the friend's instructions, so what they say about calling and texting matches.
-- **Brain:** Haiku (fastest, cheapest), Sonnet (default), or Opus (deepest). Their notes about you are always written by Opus.
+- **Brain:** the models your keys can use right now. With a working Claude key: Haiku (fastest, cheapest), Sonnet (default) or Opus (deepest). With a working Google AI key: Gemini 3.5 Flash-Lite, 3.8 Flash or 4 Argon. The keys are checked when the app starts, when you save one, and every half hour. If a friend's pick stops working (no key, a key turned off), they think with the same tier from the other maker until it works again, and the list says so. Their notes about you are written by Opus (Gemini 4 Argon when only the Google key works).
 - **Voice:** each friend's voice is cloned by Chatterbox, for free on your PC, from a 10–20 second clip. Pick a saved voice, or record or upload a new clip. Only use voices you have permission to copy. A friend can't be called until they have a voice.
 - **Video calls (🎥):**
   - The friend's face is animated from one picture, on your NVIDIA graphics card.
