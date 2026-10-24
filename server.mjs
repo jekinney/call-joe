@@ -393,6 +393,11 @@ async function afterSupportCall(transcript) {
   }
 }
 
+// Cussing: off unless you allow it for this friend (when installing, or in their ✎ Edit). contacts/_language/.
+const languageRules = (c) => {
+  try { return fs.readFileSync(path.join(personasDir, "_language", c.cussing ? "cussing.md" : "clean.md"), "utf8").trim(); } catch { return ""; }
+};
+
 async function systemPrompt(c) {
   if (c.support) return supportPrompt(c);
   // Official friends use their merged identity; until then, the persona and relationship as written.
@@ -412,6 +417,7 @@ async function systemPrompt(c) {
     ...(persona ? [persona.trimEnd()] : [`${src.character}\n\n${src.rules}`.trim(), src.role]),
     aboutBuddy(c),
     treatment(c),
+    languageRules(c),
     missedCalls(c),
     ENDING_THE_CALL,
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
@@ -827,7 +833,7 @@ function catalog() {
   }).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function installFriend(id, role) {
+function installFriend(id, role, cussing = false) {
   const f = catalogEntry(id);
   if (!f) throw new Error("That friend can't be installed.");
   if (loadContact(id)) throw new Error(`${f.name} is already installed.`);
@@ -847,7 +853,7 @@ function installFriend(id, role) {
   fs.mkdirSync(path.join(contactsDir, id), { recursive: true });
   writeJson(contactPath(id, "contact.json"), {
     name: f.name, created: new Date().toISOString(), gender: f.gender, settings,
-    role: resolveRole(role, f.gender), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
+    role: resolveRole(role, f.gender), ...(cussing ? { cussing: true } : {}), ...(f.support ? { support: true } : {}), ...(f.worry ? { worry: f.worry } : {}), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
   });
   for (const l of links) {
     const other = loadContact(l.id);
@@ -884,7 +890,7 @@ function uninstallFriend(c) {
 // Factory reset: everything in data/ goes (friends, memory, voices, faces, looks), except your API key (and whether
 // it's in airplane mode), logs and the knowledge cache. The phone then opens to first-time setup.
 function factoryReset() {
-  const { apiKey, airplane } = config;
+  const { apiKey, airplane, giphyKey } = config; // keys survive a reset
   call = null;
   client = null;
   for (const name of fs.readdirSync(dataDir)) {
@@ -893,7 +899,7 @@ function factoryReset() {
   }
   fs.mkdirSync(contactsDir, { recursive: true });
   setTimeout(installSupport, 0);
-  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(airplane ? { airplane } : {}) };
+  config = { setupDone: false, ...(apiKey ? { apiKey } : {}), ...(giphyKey ? { giphyKey } : {}), ...(airplane ? { airplane } : {}) };
   writeJson(configFile, config);
 }
 
@@ -1353,9 +1359,9 @@ const server = http.createServer(async (req, res) => {
     return fs.createReadStream(file).pipe(res);
   }
   if (req.method === "POST" && url.pathname === "/api/install") {
-    const { id, role } = await readBody(req);
+    const { id, role, cussing } = await readBody(req);
     try {
-      const c = installFriend(id, role);
+      const c = installFriend(id, role, cussing === true);
       return json(res, 200, { id: c.id, name: c.name });
     } catch (err) {
       return json(res, 400, { error: err.message });
@@ -1581,11 +1587,12 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (req.method === "POST" && url.pathname === "/api/giphy-key") {
-    const { key } = await readBody(req);
-    config.giphyKey = String(key ?? "").trim() || undefined;
-    if (config.giphyKey) {
-      try { await searchGifs("hello", 1); } catch (err) { delete config.giphyKey; return json(res, 400, { error: err.message }); }
-    }
+    // The GIPHY key is never deleted, not even by Reset phone; a new working key can only replace it.
+    const key = String((await readBody(req)).key ?? "").trim();
+    if (!key) return json(res, 400, { error: "Paste a GIPHY key first." });
+    const before = config.giphyKey;
+    config.giphyKey = key;
+    try { await searchGifs("hello", 1); } catch (err) { config.giphyKey = before; return json(res, 400, { error: err.message }); }
     writeJson(configFile, config);
     return json(res, 200, { ok: true, hasKey: !!config.giphyKey });
   }
@@ -1691,8 +1698,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === "PUT") {
-      const { settings = {}, active, role } = await readBody(req);
+      const { settings = {}, active, role, cussing } = await readBody(req);
       for (const k of SETTING_KEYS) if (k in settings) c.settings[k] = settings[k];
+      if (cussing === true) c.cussing = true;
+      if (cussing === false) delete c.cussing;
       if (role !== undefined && role !== shownRole(c.role ?? "friend")) {
         if (!roleChoicesFor(friendGender(c), c.role ?? "friend", hasTalked(c)).includes(role)) {
           return json(res, 400, { error: `${c.name} can't become your ${String(role).replace("-", " ")}. Once you've talked, family stays family, and friends can only move between kinds of friends.` });
@@ -1715,7 +1724,7 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 200, {
       id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy, role: shownRole(c.role ?? "friend"),
-      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
+      active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall, cussing: !!c.cussing,
     });
   }
 

@@ -121,5 +121,5 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 
 ## Emoji, GIFs and tapbacks (October 23, 2026)
 
-- The texting composer has an emoji picker (😊) and a GIF picker (GIF). GIFs come from GIPHY and need a free GIPHY API key in Settings → Account (`config.giphyKey`); without one the picker says how to get it. Emoji need nothing.
+- The texting composer has an emoji picker (😊) and a GIF picker (GIF). GIFs come from GIPHY and need a free GIPHY API key in Settings → Account (`config.giphyKey`, never deleted: it survives Reset phone and can only be replaced by another working key); without one the picker says how to get it. Emoji need nothing.
 - Friends see a GIF you send as its title ("sends a GIF: Happy Dance") and react to it. They can tapback your last text (`[react: 😂]`, shown as a little badge on your bubble) and, now and then, send a GIF back (`[gif: search words]`, looked up on GIPHY; skipped without a key).

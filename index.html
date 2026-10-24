@@ -219,6 +219,8 @@
   .pick select { width: auto; max-width: 150px; margin: 0; }
   .friend-ctl { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
   .friend-ctl select { width: auto; flex: 1; margin: 0; }
+  .cuss { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin: 0; cursor: pointer; white-space: nowrap; }
+  .cuss input { width: 17px; height: 17px; accent-color: var(--accent); margin: 0; }
   .btn.danger { background: var(--red); color: #fff; }
   .btn.danger:disabled { opacity: .45; cursor: default; }
   .btn.warn { background: transparent; color: #ff8a80; border: 1px solid #7a2f2f; }
@@ -859,6 +861,10 @@
   <label class="row-item" style="padding:6px 0; color:var(--ink); font-size:14px">
     <span class="txt"><div class="t1">Show on your contacts</div><div class="t2">Turned off, they're hidden and won't call you. Nothing about them is lost.</div></span>
     <input type="checkbox" class="switch" id="activeToggle" aria-label="Active">
+  </label>
+  <label class="row-item" style="padding:6px 0; color:var(--ink); font-size:14px">
+    <span class="txt"><div class="t1">Cussing</div><div class="t2">Let <span class="fn">Joe</span> swear the way they naturally would. Off, they keep it clean. Takes effect on their next call or text.</div></span>
+    <input type="checkbox" class="switch" id="cussToggle" aria-label="Cussing">
   </label>
   <details id="learnedWrap" style="margin-top:12px"><summary style="cursor:pointer">What <span class="fn">Joe</span> has learned about you</summary><div id="learnedBox"></div></details>
   <label for="callsYouSelect"><span class="fn">Joe</span> calls you</label>
@@ -1624,6 +1630,7 @@ $("keySave").onclick = async () => {
 $("settingsBtn").onclick = async () => {
   $("modelSelect").value = store.get("model", "sonnet");
   $("activeToggle").checked = contact.active !== false;
+  $("cussToggle").checked = !!contact.cussing;
   $("callsYouSelect").value = store.get("callsYou", "never");
   $("textsYouSelect").value = store.get("textsYou", "sometimes");
   $("learnedWrap").open = false;
@@ -2665,6 +2672,12 @@ $("offList").onclick = async (e) => {
   await fetch(`/api/contacts/${b.dataset.turnOn}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: true }) });
   showHome();
 };
+$("cussToggle").onchange = async (e) => {
+  if (!contact) return;
+  await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cussing: e.target.checked }) });
+  contact.cussing = e.target.checked;
+  toast(e.target.checked ? `${contact.name} can cuss now, from the next call.` : `${contact.name} keeps it clean from the next call.`);
+};
 $("activeToggle").onchange = async (e) => {
   if (!contact) return;
   await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: e.target.checked }) });
@@ -2801,7 +2814,7 @@ $("giphySave").onclick = async () => {
   const r = await fetch("/api/giphy-key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: $("giphyInput").value }) });
   const out = await r.json().catch(() => ({}));
   $("giphyMsg").className = r.ok ? "msg ok" : "msg err";
-  $("giphyMsg").textContent = r.ok ? (out.hasKey ? "Saved. GIFs are on." : "Removed.") : out.error;
+  $("giphyMsg").textContent = r.ok ? "Saved. GIFs are on." : out.error;
   if (r.ok) $("giphyInput").value = "";
 };
 
@@ -2991,7 +3004,8 @@ async function renderFriends() {
     <div class="pick" style="cursor:default; align-items:flex-start">${catalogAvatar(f)}
       <span class="txt"><div class="t1">${esc(f.name)}</div><div class="t2">${esc(f.about)}</div>
         <div class="friend-ctl"><select data-install-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select>
-          <button class="btn" data-install="${esc(f.id)}">Install</button></div></span></div>`).join("")
+          <button class="btn" data-install="${esc(f.id)}">Install</button></div>
+        <label class="cuss" style="margin-top:6px"><input type="checkbox" data-install-cuss="${esc(f.id)}"> Cussing allowed</label></span></div>`).join("")
     || `<div class="empty">Every friend is already on your phone.</div>`;
 }
 const friendsChanged = () => {
@@ -3034,7 +3048,7 @@ $("friendsAvail").onclick = async (e) => {
   b.disabled = true;
   b.textContent = "Installing…";
   const role = document.querySelector(`[data-install-role="${b.dataset.install}"]`)?.value;
-  const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.install, role }) });
+  const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.install, role, cussing: !!document.querySelector(`[data-install-cuss="${b.dataset.install}"]`)?.checked }) });
   const out = await res.json().catch(() => ({}));
   toast(res.ok ? `${out.name} is on your phone. Find them in Contacts.` : out.error || "That didn't work.");
   friendsChanged();
@@ -3245,7 +3259,8 @@ $("suPickNext").onclick = () => {
   }
   $("suRoles").innerHTML = setupCatalog.filter((f) => picked.includes(f.id)).map((f) => `
     <div class="pick" style="cursor:default">${catalogAvatar(f)}
-      <span class="txt"><div class="t1">${esc(f.name)}</div></span>
+      <span class="txt"><div class="t1">${esc(f.name)}</div>
+        <label class="cuss"><input type="checkbox" data-setup-cuss="${esc(f.id)}"> Cussing allowed</label></span>
       <select data-setup-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select></div>`).join("");
   setupStep(5);
 };
@@ -3256,7 +3271,7 @@ $("suInstall").onclick = async () => {
   for (const [i, sel] of sels.entries()) {
     $("suInstallMsg").className = "msg";
     $("suInstallMsg").textContent = `Installing ${i + 1} of ${sels.length}…`;
-    const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: sel.dataset.setupRole, role: sel.value }) });
+    const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: sel.dataset.setupRole, role: sel.value, cussing: !!document.querySelector(`[data-setup-cuss="${sel.dataset.setupRole}"]`)?.checked }) });
     if (!res.ok) failed.push(sel.dataset.setupRole);
   }
   await fetch("/api/setup/done", { method: "POST" });
