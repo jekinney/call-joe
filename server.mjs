@@ -767,8 +767,8 @@ function missedCalls(c) {
 }
 
 const ENDING_THE_CALL = `# Ending the call
-You can hang up, like on a real phone. When the call is clearly over, because you've both said goodbye, or your buddy said they have to go and you've said bye back, finish your goodbye and put ${HANGUP} at the very end of that last message. It's a signal, not something you say.
-Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
+You can hang up, like on a real phone, but end calls the way people really do: goodbyes go back and forth. When things are winding down, say your goodbye (the "alright, well, I'll let you go" part) without hanging up, and let your buddy answer. Only once they've said bye back, or they clearly said they have to go and you've answered, reply with a short last line ("Bye now!", "Talk soon, love ya") and put ${HANGUP} at the very end of it. It's a signal, not something you say.
+Never put ${HANGUP} after a long goodbye your buddy hasn't answered yet. Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
 
 // ---- You: your name, whether you're a man or a woman, and your town (first-time setup, or Settings -> You) ----
 // An age given in setup, a year older for every year since.

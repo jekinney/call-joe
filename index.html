@@ -1288,6 +1288,8 @@ function stopSpeaking() {
 
 // ---------- Talking to the server ----------
 let turnId = 0;
+let byeTimer = null;
+const BYE_GRACE_MS = 4000; // how long the line stays open after your friend's last goodbye
 
 async function joeTurn(url, body, gate = Promise.resolve()) {
   const myTurn = ++turnId;
@@ -1296,10 +1298,16 @@ async function joeTurn(url, body, gate = Promise.resolve()) {
   let streamDone = false, queued = 0, full = "", pending = "", line = null, hangingUp = false;
 
   // Once they've finished talking: listen for you, or, if they said goodbye and hung up, end the call.
+  // After their last "bye," the line stays open a few seconds, like a real phone: say something and the call goes on.
   const maybeListen = () => {
     if (myTurn !== turnId || !streamDone || queued !== 0 || state === "idle") return;
-    if (hangingUp) hangUp(true);
-    else startListening();
+    startListening();
+    if (!hangingUp) return;
+    $("status").textContent = "Saying goodbye…";
+    clearTimeout(byeTimer);
+    byeTimer = setTimeout(() => {
+      if (myTurn === turnId && state === "listening" && !heard.trim() && !interimLine) hangUp(true);
+    }, BYE_GRACE_MS);
   };
   // Sentences queue up behind the gate (the ring tone on the first turn).
   const say = (sentence) => {
@@ -1376,6 +1384,7 @@ function startListening() {
     }
     const shown = (heard + interim).trim();
     if (shown) {
+      clearTimeout(byeTimer); // you spoke up, so they don't hang up yet
       interimLine ??= addLine("you", "", "interim");
       interimLine.textContent = shown;
       $("captions").scrollTop = $("captions").scrollHeight;
@@ -1618,6 +1627,7 @@ function hangUpTone() {
 }
 
 async function hangUp(byFriend = false) {
+  clearTimeout(byeTimer);
   if (byFriend) hangUpTone();
   turnId += 1;
   stopListening();
