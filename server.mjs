@@ -1629,7 +1629,7 @@ const TEXT_HABITS = {
   "best-friend": ["a random funny observation, like describing a meme", "venting about their day", "making plans", "checking on something the buddy told them", "'omg you will not believe this'"],
   "girlfriend-bestie": ["'omg you will not believe this'", "venting about her day", "hyping her up or a compliment", "making plans for girls' night", "checking on something she told you", "a funny thing that happened"],
   "close-friend": ["checking in", "sharing something that reminded them of the buddy", "making plans"],
-  "romantic-interest": ["a flirty good-morning or goodnight text", "'thinking about you'", "a playful tease", "asking how their day is going", "a compliment out of nowhere", "'when do I get to see you?'"],
+  "romantic-interest": ["a flirty good-morning or goodnight text", "'thinking about you'", "a playful tease", "asking how their day is going", "a compliment out of nowhere", "'missing you'"],
   friend: ["checking in", "sharing something that reminded them of the buddy"],
   "family-friend": ["a warm check-in and asking after the family"],
   cousin: ["family gossip", "a funny memory from when you were kids", "a check-in"],
