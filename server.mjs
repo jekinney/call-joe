@@ -739,6 +739,7 @@ async function proposeLifeUpdate(c, update) {
     const kit = desktopFolder(fresh) && path.join(path.dirname(desktopFolder(fresh)), "persona.md");
     if (kit && fs.existsSync(kit)) fs.writeFileSync(kit, fs.readFileSync(file, "utf8"));
     refreshIdentity(loadContact(c.id));
+    ensureGreeting(loadContact(c.id));
     return `Done. ${first} will be living with it from the next call or text.`;
   });
 }
@@ -1426,9 +1427,40 @@ function voicemailsLeft(c) {
 }
 
 // ---- Your voicemails to friends ----
-// When a friend doesn't pick up, you hear their voicemail greeting (written once in character, spoken in their cloned
-// voice, cached in data/contacts/<id>/greeting.wav), then the beep, and you can leave a message. It's saved with your
-// texts (hidden from the thread) so they remember it, and their follow-up answers it.
+// When a friend doesn't pick up, you hear their voicemail greeting, then the beep, and you can leave a message. It's
+// saved with your texts (hidden from the thread) so they remember it, and their follow-up answers it.
+// The greeting is made ahead of time, in the background: written in character and spoken in their cloned voice
+// (data/contacts/<id>/greeting.wav) when they're installed, and made again when their persona or voice changes
+// (vmGreetingFor remembers which persona and voice it was made from).
+const greetingKey = (c) => `${identitySource(c).hash}:${c.settings.cbVoice ?? ""}`;
+const greetingsMaking = new Set();
+async function ensureGreeting(c) {
+  if (!c || c.support || greetingsMaking.has(c.id) || !getClient() || !voiceFile(c.settings.cbVoice)) return;
+  if (c.vmGreetingFor === greetingKey(c) && fs.existsSync(contactPath(c.id, "greeting.wav"))) return;
+  greetingsMaking.add(c.id);
+  try {
+    const fresh = loadContact(c.id);
+    const personaChanged = (fresh.vmGreetingFor ?? "").split(":")[0] !== identitySource(fresh).hash;
+    if (personaChanged) delete fresh.vmGreeting; // a new persona gets a new greeting; a new voice re-speaks the old one
+    fs.rmSync(contactPath(c.id, "greeting.wav"), { force: true });
+    fresh.vmGreetingFor = greetingKey(fresh);
+    saveContact(fresh);
+    const g = await voicemailGreeting(loadContact(c.id));
+    if (!g.file) { const again = loadContact(c.id); delete again.vmGreetingFor; saveContact(again); } // try again later
+    else console.log(`Recorded ${c.name}'s voicemail greeting`);
+  } catch (err) {
+    console.error(`${c.name}'s voicemail greeting failed:`, err?.message ?? err);
+  } finally {
+    greetingsMaking.delete(c.id);
+  }
+}
+// Any friend missing a current greeting gets one, one at a time (at startup and hourly).
+async function ensureGreetings() {
+  for (const c of listContacts()) await ensureGreeting(c);
+}
+setTimeout(() => ensureGreetings().catch(() => {}), 20000);
+setInterval(() => ensureGreetings().catch(() => {}), 60 * 60 * 1000);
+
 async function voicemailGreeting(c) {
   const file = contactPath(c.id, "greeting.wav");
   if (!c.vmGreeting) {
@@ -2252,6 +2284,7 @@ const server = http.createServer(async (req, res) => {
       // call or text starts right away. If it can't be (no key yet), it's built in the background later.
       if (getClient() && !c.support) {
         await buildIdentity(loadContact(c.id)).catch((err) => console.error(`Building ${c.name}'s identity failed:`, err?.message ?? err));
+        ensureGreeting(loadContact(c.id)); // their voicemail greeting, in the background
       }
       return json(res, 200, { id: c.id, name: c.name });
     } catch (err) {
@@ -2673,7 +2706,9 @@ const server = http.createServer(async (req, res) => {
       if (speaks === "" || LANGS[speaks]) c.speaks = speaks || undefined;
       if (FLIRTING.includes(flirting)) c.flirting = flirting;
       const bad = (k) => (k === "callsYou" && !CALL_FREQ[settings[k]]) || (k === "textsYou" && !TEXT_FREQ[settings[k]]);
+      const voiceBefore = c.settings.cbVoice;
       for (const k of SETTING_KEYS) if (k in settings && !bad(k)) c.settings[k] = settings[k];
+      if (c.settings.cbVoice !== voiceBefore) setTimeout(() => ensureGreeting(loadContact(c.id)), 0);
       if (cussing === true) c.cussing = true;
       if (cussing === false) delete c.cussing;
       if (role !== undefined && role !== shownRole(c.role ?? "friend")) {
