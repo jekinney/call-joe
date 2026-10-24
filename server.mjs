@@ -39,8 +39,8 @@ const MODELS = {
   "gemini-flash-lite": { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite: fastest and cheapest", twin: "haiku", google: true, params: {} },
   "gemini-flash": { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash: quick and sharp", twin: "sonnet", google: true, params: {} },
   "gemini-argon": { id: "gemini-4-argon", label: "Gemini 4 Argon: deepest, but slower and pricier", twin: "opus", google: true, params: {} },
-  "grok-fast": { get id() { return grokModels().fast; }, get label() { return `Grok fast (${this.id}): quickest`; }, twin: "haiku", grok: true, params: {} },
-  grok: { get id() { return grokModels().main; }, get label() { return `Grok (${this.id}): smartest`; }, twin: "sonnet", grok: true, params: {} },
+  "grok-fast": { get id() { return grokModels().fast; }, get label() { return `Grok fast (${this.id}): answers in about a second`; }, twin: "haiku", grok: true, params: {} },
+  grok: { get id() { return grokModels().main; }, get label() { return `Grok (${this.id}): smartest, but thinks 10+ seconds first`; }, twin: "sonnet", grok: true, params: {} },
 };
 // The newest Grok chat models the xAI key offers (checked with the keys, below).
 const grokModels = () => {
@@ -273,10 +273,11 @@ function modelUsable(key) {
 let grokClient = null;
 const getGrok = () => (grokClient ??= createGrokClient(() => config.xaiKey, (id = "") => (/^grok/.test(id) ? id : /haiku|lite/.test(id) ? grokModels().fast : grokModels().main)));
 // The friend's chosen model if it can think right now; otherwise its twin, then any that can.
-// Rated R flirting switches them to Grok, at the same tier (fast picks stay fast).
+// Rated R flirting switches them to Grok fast (a model that doesn't stop to reason: it answers in about a second,
+// where the reasoning ones take 10 to 20 seconds with a full persona), unless you picked a Grok model yourself.
 function chatModel(c) {
   let want = MODELS[c?.settings.model] ? c.settings.model : DEFAULT_MODEL;
-  if (c && flirtingOf(c) === "rated-r" && !MODELS[want].grok) want = ["haiku", "gemini-flash-lite"].includes(want) ? "grok-fast" : "grok";
+  if (c && flirtingOf(c) === "rated-r" && !MODELS[want].grok) want = "grok-fast";
   const key = [want, MODELS[want].twin, DEFAULT_MODEL, MODELS[DEFAULT_MODEL].twin, ...Object.keys(MODELS)].find(modelUsable) ?? want;
   const m = MODELS[key];
   const cl = config.airplane ? null
