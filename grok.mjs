@@ -138,10 +138,11 @@ export function createGrokClient(getKey, pickModel) {
 // The Grok models for chat, newest first: { main, fast }. ids: every model the key can use.
 export function pickGrokModels(ids) {
   const version = (id) => Number(id.match(/^grok-(\d+(?:\.\d+)?)/)?.[1] ?? 0);
-  const chat = [...ids].filter((id) => /^grok-\d/.test(id) && !/image|imagine|vision|voice|video|code|embed|tts|audio/.test(id))
+  const chat = [...ids].filter((id) => /^grok-\d/.test(id) && !/image|imagine|vision|voice|video|code|embed|tts|audio|multi-agent/.test(id))
     .sort((a, b) => version(b) - version(a) || a.length - b.length);
-  const main = chat.find((id) => !/fast|mini/.test(id)) ?? chat[0] ?? null;
-  // For calls, a fast model that doesn't stop to reason answers quickest.
-  const fast = chat.find((id) => /fast/.test(id) && /non-reasoning/.test(id)) ?? chat.find((id) => /fast|mini/.test(id)) ?? main;
+  const main = chat.find((id) => !/fast|mini|non-reasoning/.test(id)) ?? chat[0] ?? null;
+  // For calls, a fast model that doesn't stop to reason answers quickest; else the newest that doesn't reason.
+  const fast = chat.find((id) => /fast/.test(id) && /non-reasoning/.test(id)) ?? chat.find((id) => /fast|mini/.test(id))
+    ?? chat.find((id) => /non-reasoning/.test(id)) ?? main;
   return { main, fast };
 }

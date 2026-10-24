@@ -1566,7 +1566,8 @@ async function geminiVideo(prompt, refs) {
 async function friendVideo(c, want) {
   if (spicyOn(c)) {
     const plan = await spicyPlan(c, want, "video");
-    if (plan) return spicyVideo(c, want, plan);
+    const spicy = plan ? await spicyVideo(c, want, plan).catch((err) => (console.error("Spicy video failed:", err?.message ?? err), null)) : null;
+    if (spicy) return spicy;
   }
   if (!config.googleKey || config.airplane) throw new Error("Videos need a Google AI key (Settings → Account).");
   const album = (await syncAlbum(c)).filter((p) => p.ok);
@@ -1682,9 +1683,12 @@ async function spicyPhoto(c, want, plan) {
   const face = plan.self ? faceFile(c.settings.face) : null;
   console.log(`Making a spicy photo for ${c.name}: ${plan.prompt}`);
   const body = { model: SPICY_IMAGE_MODEL, prompt: plan.prompt, response_format: "b64_json", aspect_ratio: "3:4" };
-  const out = face
-    ? await xai("/images/edits", { ...body, prompt: `Keep this person's face and features exactly. ${plan.prompt}`, image: { type: "image_url", url: `data:${photoMime(face)};base64,${fs.readFileSync(face).toString("base64")}` } })
-    : await xai("/images/generations", body);
+  const out = await (face
+    ? xai("/images/edits", { ...body, prompt: `Keep this person's face and features exactly. ${plan.prompt}`, image: { type: "image_url", url: `data:${photoMime(face)};base64,${fs.readFileSync(face).toString("base64")}` } })
+    : xai("/images/generations", body)).catch((err) => {
+    logSpicy(c, { file: "", want, prompt: plan.prompt, maker: SPICY_IMAGE_MODEL, kept: false, why: /moderat/i.test(err.message) ? "turned down by xAI's moderation" : String(err.message).slice(0, 200) });
+    throw err;
+  });
   const d = out?.data?.[0];
   const bytes = d?.b64_json ? Buffer.from(d.b64_json, "base64") : d?.url ? Buffer.from(await (await fetch(d.url)).arrayBuffer()) : null;
   if (!bytes) throw new Error(`Grok sent no picture: ${JSON.stringify(out).slice(0, 200)}`);
@@ -1734,11 +1738,13 @@ async function spicyVideo(c, want, plan) {
 }
 
 // The picture a friend texts for [photo: ...]: the best album match, or a new one. null if neither works.
-// With spicy pictures on, a sexy one of just them is made by Grok instead.
+// With spicy pictures on, a sexy one of just them is made by Grok instead. If Grok won't (xAI's moderation turns down
+// a lot), an ordinary photo is sent the usual way.
 async function friendPhoto(c, want) {
   if (spicyOn(c)) {
     const plan = await spicyPlan(c, want, "photo");
-    if (plan) return spicyPhoto(c, want, plan);
+    const spicy = plan ? await spicyPhoto(c, want, plan).catch((err) => (console.error("Spicy photo failed:", err?.message ?? err), null)) : null;
+    if (spicy) return spicy;
   }
   const album = (await syncAlbum(c)).filter((p) => p.ok);
   const week = Date.now() - 7 * 24 * 3600 * 1000;
