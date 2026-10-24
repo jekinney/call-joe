@@ -107,6 +107,18 @@
   .hint a { color: var(--accent); }
   .empty { padding: 20px 16px; color: var(--muted); font-size: 14px; }
 
+  /* Voicemail */
+  .vm { align-items: flex-start; }
+  .vm .words { font-size: 14px; line-height: 1.5; margin-top: 6px; color: var(--ink); }
+  .vm.heard .words { color: var(--muted); }
+  .new-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; }
+  .play {
+    width: 40px; height: 40px; border-radius: 50%; border: 0; cursor: pointer; flex: none; margin-top: 3px;
+    background: var(--accent); color: #1d1712; font-size: 15px; display: grid; place-items: center;
+  }
+  .play.playing { background: var(--line); color: var(--ink); }
+  nav .count.new { color: var(--accent); font-weight: 700; }
+
   /* Small windows: the tablet fills the window, and the menu moves to the top. */
   @media (max-width: 720px) {
     body { padding: 0; }
@@ -133,6 +145,7 @@
       <nav aria-label="Settings">
         <h1>Settings</h1>
         <button data-panel="friends" aria-current="page"><span class="ico" style="background:#3a2b1d">👥</span>Friends<span class="count" id="friendCount"></span></button>
+        <button data-panel="voicemail"><span class="ico" style="background:#3a2f1a">📩</span>Voicemail<span class="count" id="vmCount"></span></button>
         <button data-panel="calls"><span class="ico" style="background:#1f3326">📞</span>Calls</button>
         <button data-panel="account"><span class="ico" style="background:#2b2433">🔑</span>Account</button>
         <div class="spacer"></div>
@@ -148,6 +161,12 @@
           <div class="card" id="activeList"></div>
           <div class="group-title">Off</div>
           <div class="card" id="offList"></div>
+        </section>
+
+        <section id="panel-voicemail" hidden>
+          <h2>Voicemail</h2>
+          <p class="lead">When a friend calls and you miss it or decline, they leave a message in their own voice. They'll remember they left it, and whether you've listened.</p>
+          <div class="card" id="vmList"></div>
         </section>
 
         <section id="panel-calls" hidden>
@@ -212,6 +231,7 @@ function show(panel) {
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== `panel-${panel}`));
   pref.set("settingsPanel", panel);
   if (panel === "account") loadKeyState();
+  if (panel === "voicemail") loadVoicemail();
 }
 document.querySelector("nav").onclick = (e) => {
   const b = e.target.closest("button[data-panel]");
@@ -255,6 +275,47 @@ document.querySelector("#panel-friends").onchange = async (e) => {
   await loadFriends();
 };
 
+// ---------- Voicemail ----------
+let vmAudio = null, vmPlayingId = null;
+
+async function loadVoicemail() {
+  const list = await fetch("/api/voicemail").then((r) => r.json()).catch(() => []);
+  const fresh = list.filter((v) => !v.heard).length;
+  $("vmCount").textContent = fresh ? `${fresh} new` : "";
+  $("vmCount").classList.toggle("new", fresh > 0);
+  $("vmList").innerHTML = list.map((v) => `
+    <div class="item vm ${v.heard ? "heard" : ""}">
+      <span class="avatar">${v.face ? `<img src="/api/face?name=${encodeURIComponent(v.face)}" alt="">` : esc(v.name[0])}</span>
+      <span class="text">
+        <span class="title">${v.heard ? "" : `<span class="new-dot" title="New"></span>`}${esc(v.name)}</span>
+        <span class="sub" style="display:block">${esc(v.when)}${v.declined ? " · you declined the call" : " · missed call"}</span>
+        <span class="words" style="display:block">${esc(v.text)}</span>
+      </span>
+      <button class="play ${vmPlayingId === v.id ? "playing" : ""}" data-contact="${esc(v.contact)}" data-vm="${esc(v.id)}" title="${vmPlayingId === v.id ? "Stop" : "Play"}">${vmPlayingId === v.id ? "■" : "▶"}</button>
+    </div>`).join("") || `<div class="empty">No voicemail yet. When a friend calls and you miss it, their message shows up here.</div>`;
+}
+
+$("vmList").onclick = async (e) => {
+  const b = e.target.closest("button[data-vm]");
+  if (!b) return;
+  const wasPlaying = vmPlayingId === b.dataset.vm;
+  vmAudio?.pause();
+  vmAudio = null;
+  vmPlayingId = null;
+  if (wasPlaying) return loadVoicemail();
+  const { contact, vm } = b.dataset;
+  vmAudio = new Audio(`/api/voicemail/audio?contact=${encodeURIComponent(contact)}&id=${encodeURIComponent(vm)}`);
+  vmPlayingId = vm;
+  vmAudio.onended = async () => {
+    vmPlayingId = null;
+    await fetch("/api/voicemail/heard", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact, id: vm }) }).catch(() => {});
+    announce("voicemail-changed");
+    loadVoicemail();
+  };
+  vmAudio.play().catch(() => { vmPlayingId = null; loadVoicemail(); });
+  loadVoicemail();
+};
+
 // ---------- Calls ----------
 $("interruptToggle").checked = pref.get("interruptByVoice", "on") === "on";
 $("interruptToggle").onchange = (e) => {
@@ -288,11 +349,15 @@ $("keySave").onclick = async () => {
 $("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keySave").click(); });
 
 // Stay current if friends change elsewhere (another Settings window, or Claude adding a friend).
-channel && (channel.onmessage = (e) => { if (e.data?.type === "contacts-changed") loadFriends(); });
-window.addEventListener("focus", loadFriends);
+channel && (channel.onmessage = (e) => {
+  if (e.data?.type === "contacts-changed") loadFriends();
+  if (e.data?.type === "voicemail-changed") loadVoicemail();
+});
+window.addEventListener("focus", () => { loadFriends(); loadVoicemail(); });
 
 show(pref.get("settingsPanel", "friends"));
 loadFriends();
+loadVoicemail();
 </script>
 </body>
 </html>

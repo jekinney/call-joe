@@ -45,6 +45,25 @@
   #answerBtn { background: var(--green); }
   #answerVideoBtn { background: #2f7fd1; }
   .c-missed { color: #ff8a80; }
+  .c-vm { color: #ffcf8a; font-weight: 600; }
+  .round.mini.vm { background: #b8792f; }
+
+  /* Voicemail player and pop-up notices on the friends list */
+  #vmPlayer {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(520px, calc(100% - 32px));
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px;
+    display: flex; gap: 12px; align-items: flex-start; box-shadow: 0 12px 30px rgba(0,0,0,.5); z-index: 20;
+  }
+  #vmPlayer .c-avatar { width: 44px; height: 44px; font-size: 18px; }
+  #vmPlayer .vm-text { flex: 1; min-width: 0; }
+  #vmPlayer .vm-who { font-weight: 600; }
+  #vmPlayer .vm-when { font-size: 12px; color: var(--muted); }
+  #vmPlayer .vm-words { font-size: 14px; line-height: 1.45; margin-top: 6px; }
+  #toast {
+    position: fixed; left: 50%; top: 16px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--accent);
+    border-radius: 12px; padding: 10px 16px; font-size: 14px; box-shadow: 0 10px 24px rgba(0,0,0,.45); z-index: 30;
+    max-width: calc(100% - 32px);
+  }
   .c-wrap { position: relative; flex: none; }
   .dot {
     position: absolute; right: 0; bottom: 0; width: 15px; height: 15px; border-radius: 50%;
@@ -194,6 +213,17 @@
   <div class="ctl" id="ccCtl"><button class="round soft" id="ccBtn" title="Show or hide captions">CC</button>Captions</div>
 </div>
 </main>
+
+<div id="toast" hidden></div>
+<div id="vmPlayer" hidden>
+  <div class="c-avatar" id="vmAvatar"></div>
+  <div class="vm-text">
+    <div class="vm-who" id="vmWho"></div>
+    <div class="vm-when" id="vmWhen"></div>
+    <div class="vm-words" id="vmWords"></div>
+  </div>
+  <button class="round mini" id="vmStop" title="Stop" style="background:var(--line)">■</button>
+</div>
 
 <div id="incoming" hidden>
   <div class="avatar" id="inAvatar"></div>
@@ -1134,9 +1164,11 @@ async function showHome() {
       <div class="c-info">
         <div class="c-name">${esc(c.name)}</div>
         <div class="c-last">${!c.hasVoice ? "Needs a voice clip"
+          : c.newVoicemail ? `<span class="c-vm">📩 ${c.newVoicemail === 1 ? "New voicemail" : `${c.newVoicemail} new voicemails`}</span>`
           : missed[c.id] ? `<span class="c-missed">Missed call ${esc(missed[c.id])}</span>`
           : c.lastCall ? `Last call ${esc(c.lastCall)}` : "You haven't called yet"}</div>
       </div>
+      ${c.newVoicemail ? `<button class="round mini vm" data-voicemail title="Play ${esc(c.name)}'s voicemail">▶</button>` : ""}
       <button class="round mini call" data-start="voice" title="${c.hasVoice ? `Voice call ${esc(c.name)}` : "Needs a voice clip first (in their settings)"}" ${c.hasVoice ? "" : "disabled"}>📞</button>
       <button class="round mini video" data-start="video" title="${!c.hasVoice ? "Needs a voice clip first (in their settings)" : c.face ? `Video call ${esc(c.name)}` : "Add a face picture in their settings for video calls"}" ${c.face && c.hasVoice ? "" : "disabled"}>🎥</button>
     </div>`).join("") || `<div class="hint">${all.length ? "All your friends are turned off. Turn some back on in ⚙ Settings." : "No friends yet."}</div>`;
@@ -1161,10 +1193,12 @@ async function updateDots() {
 $("contactList").onclick = (e) => {
   const card = e.target.closest(".contact");
   if (!card || e.target.disabled) return;
+  if (e.target.closest("[data-voicemail]")) return playVoicemails(card.dataset.id);
   openContact(card.dataset.id, e.target.closest("[data-start]")?.dataset.start);
 };
 
 async function openContact(id, startWith, incoming = false) {
+  stopVoicemail();
   const c = await fetch(`/api/contacts/${id}`).then((r) => r.json());
   contact = c;
   // Joe's voice settings used to live only in this browser; bring them over to his contact once.
@@ -1200,7 +1234,7 @@ function openSettingsWindow() {
 }
 if ("BroadcastChannel" in window) {
   new BroadcastChannel("calljoe").onmessage = (e) => {
-    if (e.data?.type === "contacts-changed" && !$("home").hidden) showHome();
+    if (["contacts-changed", "voicemail-changed"].includes(e.data?.type) && !$("home").hidden) showHome();
   };
 }
 
@@ -1253,8 +1287,75 @@ async function ringYou(id) {
   if (!me.answered) {
     missed[c.id] = new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
     if (!$("home").hidden) showHome();
+    receiveVoicemail(c, me.declined);
   }
 }
+
+// ---------- Voicemail ----------
+// A friend whose call you missed or declined leaves a message in their own voice (written and recorded by the
+// server, which takes a few seconds). New messages show on their card with a ▶ button.
+function toast(text, seconds = 6) {
+  $("toast").textContent = text;
+  $("toast").hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => ($("toast").hidden = true), seconds * 1000);
+}
+
+async function receiveVoicemail(c, declined) {
+  const r = await fetch("/api/voicemail", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: c.id, declined: !!declined }),
+  }).catch(() => null);
+  if (!r?.ok) return;
+  toast(`📩 ${c.name} left you a voicemail.`);
+  if (document.hidden && window.Notification?.permission === "granted") {
+    const n = new Notification(`${c.name} left you a voicemail`, { body: "Open Call Joe to listen.", silent: true });
+    n.onclick = () => { window.focus(); n.close(); };
+  }
+  if (!$("home").hidden) showHome();
+  if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
+}
+
+let vmAudio = null, vmStopped = false;
+async function playVoicemails(id) {
+  stopVoicemail();
+  vmStopped = false;
+  const list = (await fetch("/api/voicemail").then((r) => r.json()).catch(() => []))
+    .filter((v) => v.contact === id && !v.heard)
+    .reverse(); // oldest first
+  for (const v of list) {
+    if (vmStopped) break;
+    $("vmAvatar").innerHTML = v.face ? `<img src="/api/face?name=${encodeURIComponent(v.face)}" alt="">` : esc(v.name[0]);
+    $("vmWho").textContent = v.name;
+    $("vmWhen").textContent = v.when;
+    $("vmWords").textContent = v.text;
+    $("vmPlayer").hidden = false;
+    const audio = (vmAudio = new Audio(`/api/voicemail/audio?contact=${encodeURIComponent(v.contact)}&id=${encodeURIComponent(v.id)}`));
+    const finished = await new Promise((resolve) => {
+      audio.onended = () => resolve(true);
+      audio.onerror = () => resolve(false);
+      // Reaching the end also fires "pause" (just before "ended"), so only a pause before the end means Stop.
+      audio.onpause = () => { if (!audio.ended) resolve(false); };
+      audio.play().catch(() => resolve(false));
+    });
+    if (finished) {
+      await fetch("/api/voicemail/heard", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: v.contact, id: v.id }),
+      }).catch(() => {});
+    } else {
+      break;
+    }
+  }
+  vmAudio = null;
+  $("vmPlayer").hidden = true;
+  if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "voicemail-changed" });
+  if (!$("home").hidden) showHome();
+}
+
+function stopVoicemail() {
+  vmStopped = true;
+  vmAudio?.pause();
+}
+$("vmStop").onclick = stopVoicemail;
 
 function answer(video) {
   if (!ringingIn) return;
@@ -1267,7 +1368,7 @@ function answer(video) {
 }
 $("answerBtn").onclick = () => answer(false);
 $("answerVideoBtn").onclick = () => answer(true);
-$("declineBtn").onclick = () => { if (ringingIn) ringingIn.stop = true; };
+$("declineBtn").onclick = () => { if (ringingIn) { ringingIn.declined = true; ringingIn.stop = true; } };
 
 showHome();
 </script>

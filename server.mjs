@@ -175,10 +175,68 @@ async function systemPrompt(c) {
     roleRules(c),
     ENDING_THE_CALL,
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
-    `# Memory\n${mem}${connectionNews(c)}`,
+    `# Memory\n${mem}${connectionNews(c)}${voicemailsLeft(c)}`,
     await knowledge.briefing(c),
     `# Right now\nIt's ${now} where you both live. ${last}`,
   ].filter(Boolean).join("\n\n");
+}
+
+// ---- Voicemail ----
+// When a friend rings and you miss or decline, they leave a voicemail: written in character (with their memory and
+// briefing), spoken in their cloned voice, and saved in data/contacts/<id>/voicemail/ with an index.json. They
+// remember the last few they left, and whether you've listened.
+const voicemailDir = (id) => path.join(contactsDir, id, "voicemail");
+const readVoicemails = (id) => readJson(path.join(voicemailDir(id), "index.json"), []);
+const writeVoicemails = (id, list) => writeJson(path.join(voicemailDir(id), "index.json"), list);
+
+function voicemailsLeft(c) {
+  const week = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recent = readVoicemails(c.id).filter((v) => Date.parse(v.at) > week).slice(-3);
+  if (!recent.length) return "";
+  return `\n\n# Voicemails you left your buddy\n` + recent.map((v) =>
+    `- ${v.when} (${v.heard ? "they've listened to it" : "they haven't listened yet"}): "${v.text}"`).join("\n");
+}
+
+async function leaveVoicemail(c, declined) {
+  const model = chatModel(c);
+  const msg = await getClient().beta.messages.create({
+    model: model.id,
+    max_tokens: 4000,
+    output_config: { effort: "low" },
+    ...model.params,
+    system: await systemPrompt(c),
+    messages: [{
+      role: "user",
+      content: `(You just called your buddy and they ${declined ? "declined the call, so they're probably busy" : "didn't pick up"}. ` +
+        `It went to voicemail. Leave a message after the beep the way you really would: say it's you, why you called, and ask them to call you back. ` +
+        `Two to four sentences. Just the words you'd say, nothing else.)`,
+    }],
+  });
+  if (msg.stop_reason === "refusal") throw new Error("They couldn't leave a message this time.");
+  const text = textOf(msg.content).replaceAll(HANGUP, "").replace(/\s+/g, " ").trim();
+  if (!text) throw new Error("The voicemail came out empty.");
+
+  const file = voiceFile(c.settings.cbVoice);
+  if (!file) throw new Error(`${c.name} needs a voice clip to leave a voicemail.`);
+  await chatterbox.start();
+  const r = await fetch(`${chatterbox.url}/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text.slice(0, 1000), voice_path: file }),
+  });
+  if (!r.ok) throw new Error(`Couldn't record the voicemail (voice engine answered ${r.status}).`);
+  const audio = Buffer.from(await r.arrayBuffer());
+
+  const at = new Date();
+  const id = at.toISOString().replace(/[:.]/g, "-");
+  fs.mkdirSync(voicemailDir(c.id), { recursive: true });
+  fs.writeFileSync(path.join(voicemailDir(c.id), `${id}.wav`), audio);
+  const entry = {
+    id, at: at.toISOString(), text, heard: false, declined: !!declined,
+    when: at.toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }),
+  };
+  writeVoicemails(c.id, [...readVoicemails(c.id), entry]);
+  return entry;
 }
 
 const LOOKING_THINGS_UP = `# Looking things up
@@ -559,11 +617,52 @@ const server = http.createServer(async (req, res) => {
     return Readable.fromWeb(r.body).pipe(res);
   }
 
+  // ---- Voicemail ----
+  if (req.method === "POST" && url.pathname === "/api/voicemail") {
+    const { contact, declined } = await readBody(req);
+    const c = loadContact(contact);
+    if (!c) return json(res, 400, { error: "No such friend." });
+    if (!getClient()) return json(res, 400, { error: "No API key yet." });
+    try {
+      return json(res, 200, await leaveVoicemail(c, declined));
+    } catch (err) {
+      console.error("Voicemail failed:", err?.message ?? err);
+      return json(res, 502, { error: err?.message ?? String(err) });
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/api/voicemail") {
+    const all = listContacts().flatMap((c) => readVoicemails(c.id).map((v) => ({
+      ...v, contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
+    })));
+    return json(res, 200, all.sort((a, b) => b.at.localeCompare(a.at)));
+  }
+  if (req.method === "GET" && url.pathname === "/api/voicemail/audio") {
+    const id = String(url.searchParams.get("id") || "");
+    const contact = url.searchParams.get("contact");
+    if (!validId(contact) || !/^[\w-]+$/.test(id)) return json(res, 400, { error: "Bad voicemail." });
+    const file = path.join(voicemailDir(contact), `${id}.wav`);
+    if (!fs.existsSync(file)) return json(res, 404, { error: "No such voicemail." });
+    res.writeHead(200, { "Content-Type": "audio/wav" });
+    return fs.createReadStream(file).pipe(res);
+  }
+  if (req.method === "POST" && url.pathname === "/api/voicemail/heard") {
+    const { contact, id } = await readBody(req);
+    if (!validId(contact)) return json(res, 400, { error: "Bad voicemail." });
+    const list = readVoicemails(contact);
+    const v = list.find((x) => x.id === id);
+    if (v && !v.heard) {
+      v.heard = true;
+      writeVoicemails(contact, list);
+    }
+    return json(res, 200, { ok: true });
+  }
+
   // ---- Contacts ----
   if (req.method === "GET" && url.pathname === "/api/contacts") {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
+      newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length,
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }
