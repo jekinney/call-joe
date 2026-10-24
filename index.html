@@ -186,6 +186,36 @@
   .style-card .t { font-weight: 600; font-size: 14px; }
   .style-card .d { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .field { display: flex; gap: 10px; padding: 12px 14px; flex-wrap: wrap; }
+  /* First-time setup, Settings -> You / Friends / System */
+  .setup { width: min(460px, calc(100% - 32px)); margin: 3vh 0 20px; }
+  .setup-card { background: rgba(24, 18, 13, .92); border-radius: 26px; padding: 24px 22px; }
+  .setup-card h1 { font-size: 26px; font-weight: 400; margin: 0 0 8px; }
+  .setup-card p, .setup-card li { color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .setup-card ol { padding-left: 20px; margin: 10px 0; }
+  .setup-card a { color: var(--accent); }
+  .setup-big { font-size: 56px; text-align: center; margin: 6px 0 10px; }
+  .setup-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 22px; }
+  .setup-dots { display: flex; justify-content: center; gap: 7px; margin-bottom: 14px; }
+  .setup-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+  .setup-dots span.on { background: var(--accent); width: 22px; border-radius: 4px; }
+  .two { display: flex; gap: 10px; }
+  .two > div { flex: 1; min-width: 0; }
+  .choose { display: flex; gap: 8px; margin-top: 4px; }
+  .choose button { flex: 1; padding: 11px; border-radius: 22px; border: 1px solid var(--line); background: none; color: var(--ink); font: inherit; cursor: pointer; }
+  .choose button[aria-pressed="true"] { background: rgba(217,140,63,.28); border-color: var(--accent); font-weight: 600; }
+  .pick { display: flex; gap: 12px; align-items: center; padding: 10px 0; cursor: pointer; }
+  .pick + .pick { border-top: 1px solid var(--line); }
+  .pick input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; margin: 0; }
+  .pick .c-avatar { width: 48px; height: 48px; flex: none; }
+  .pick .txt { flex: 1; min-width: 0; }
+  .pick .t1 { font-weight: 600; }
+  .pick .t2 { font-size: 13px; color: var(--muted); line-height: 1.4; margin-top: 2px; }
+  .pick select { width: auto; max-width: 150px; margin: 0; }
+  .friend-ctl { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .friend-ctl select { width: auto; flex: 1; margin: 0; }
+  .btn.danger { background: var(--red); color: #fff; }
+  .btn.danger:disabled { opacity: .45; cursor: default; }
+  .btn.warn { background: transparent; color: #ff8a80; border: 1px solid #7a2f2f; }
   .field input { flex: 1; min-width: 160px; }
   .msg { font-size: 13px; padding: 0 14px 12px; color: var(--muted); }
   .msg.ok { color: #8fd69f; }
@@ -451,11 +481,117 @@
     <p class="hint" style="font-size:13px">Your friends think with Claude, using your own key. It's saved only on this computer. Manage keys at <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a>.</p>
   </div>
 
+  <div id="set-you" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="list" style="width:100%; padding: 4px 16px 16px">
+      <div class="two">
+        <div><label for="youFirst">First name</label><input id="youFirst"></div>
+        <div><label for="youLast">Last name</label><input id="youLast"></div>
+      </div>
+      <label>I'm a</label>
+      <div class="choose" id="youGender"><button data-gender="man">Man</button><button data-gender="woman">Woman</button></div>
+      <label for="youHome">Town and state</label>
+      <input id="youHome" placeholder="Like Omaha, Nebraska">
+      <div class="row" style="justify-content:space-between; align-items:center"><span class="msg" id="youMsg"></span><button class="btn" id="youSave">Save</button></div>
+    </div>
+    <p class="hint" style="font-size:13px">Your friends know your name and your town's weather from their next call.</p>
+  </div>
+
+  <div id="set-friends" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="section-title">On your phone</div>
+    <div class="list" style="width:100%; padding: 2px 16px" id="friendsMine"></div>
+    <div class="section-title" style="margin-top:16px">Ready to install</div>
+    <div class="list" style="width:100%; padding: 2px 16px" id="friendsAvail"></div>
+    <p class="hint" style="font-size:13px">To take a break from a friend without losing anything, turn them off instead: Contacts → the friend → ✎ Edit. To make a brand-new friend, use Add friend on the home screen.</p>
+  </div>
+
+  <div id="set-system" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
+    <div class="list" style="width:100%; padding: 16px">
+      <div class="t1" style="font-weight:600">Reset phone</div>
+      <p class="hint" style="font-size:14px">Puts Call Joe back the way it came, brand new. Every friend and everything they've learned about you is deleted, with your call history, voicemail, voices, pictures, looks and API key. Then you set up the phone again.</p>
+      <div class="row" style="justify-content:flex-start"><button class="btn warn" id="resetBtn">Reset phone…</button></div>
+    </div>
+  </div>
+
   <div id="set-about" class="set-sub" hidden style="width:min(520px, calc(100% - 32px))">
     <div class="list" style="width:100%; padding:14px; line-height:1.5; font-size:14px">
       <b>Call Joe</b><br>
       Voice and video calls with AI friends. Conversations go to Anthropic through your own key; everything else (memories, voices, faces and voicemail) stays on this computer.<br><br>
       Voices are cloned by Chatterbox (Resemble AI) and faces are animated by Ditto (Ant Group), both on your graphics card. Credits for each friend's voice clip and picture are in <code>docs/credits.md</code>.
+    </div>
+  </div>
+</main>
+
+<!-- First-time setup: shown on a brand-new (or reset) phone -->
+<main id="pageSetup" class="page" hidden>
+  <div class="setup">
+    <div class="setup-dots" id="setupDots"></div>
+
+    <div class="setup-card setup-step">
+      <div class="setup-big">📞</div>
+      <h1>Welcome to Call Joe</h1>
+      <p>Your phone for calling AI friends who remember you. Let's get it set up: it takes about two minutes.</p>
+      <div class="setup-actions"><span></span><button class="btn" data-step="1">Get started</button></div>
+    </div>
+
+    <div class="setup-card setup-step" hidden>
+      <h1>About you</h1>
+      <p>Your friends will know your name and call you by it.</p>
+      <div class="two">
+        <div><label for="suFirst">First name</label><input id="suFirst" autocomplete="given-name"></div>
+        <div><label for="suLast">Last name</label><input id="suLast" autocomplete="family-name"></div>
+      </div>
+      <label>I'm a</label>
+      <div class="choose" id="suGender"><button data-gender="man" aria-pressed="true">Man</button><button data-gender="woman" aria-pressed="false">Woman</button></div>
+      <p style="font-size:12px">It changes how some friends treat you. For example, Elena is a sister to a man and a best girlfriend to a woman.</p>
+      <div class="msg err" id="suNameMsg"></div>
+      <div class="setup-actions"><button class="btn ghost" data-step="0">Back</button><button class="btn" id="suNameNext">Next</button></div>
+    </div>
+
+    <div class="setup-card setup-step" hidden>
+      <h1>Where do you live?</h1>
+      <p>So your friends know your weather and what's going on around you.</p>
+      <label for="suHome">Town and state</label>
+      <input id="suHome" placeholder="Like Omaha, Nebraska" autocomplete="address-level2">
+      <div class="setup-actions"><button class="btn ghost" data-step="1">Back</button><button class="btn" id="suHomeNext">Next</button></div>
+    </div>
+
+    <div class="setup-card setup-step" hidden>
+      <h1>Your API key</h1>
+      <p>Your friends think with Claude, using your own Anthropic account. You pay Anthropic directly for what you use. To get a key:</p>
+      <ol>
+        <li>Go to <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> and sign up or sign in.</li>
+        <li>Under <b>Billing</b>, add a little credit.</li>
+        <li>Open <b>API keys</b>, click <b>Create key</b>, name it "Call Joe", and copy it.</li>
+        <li>Paste it below. It's saved only on this computer.</li>
+      </ol>
+      <input id="suKey" type="password" placeholder="sk-ant-..." autocomplete="off">
+      <div class="msg" id="suKeyMsg"></div>
+      <p style="font-size:12px">No key yet? Skip it and add it later in Settings → Account. You can't call anyone until you do.</p>
+      <div class="setup-actions"><button class="btn ghost" data-step="2">Back</button>
+        <span style="display:flex; gap:8px"><button class="btn ghost" id="suKeySkip">Skip for now</button><button class="btn" id="suKeySave">Save key</button></span></div>
+    </div>
+
+    <div class="setup-card setup-step" hidden>
+      <h1>Pick your friends</h1>
+      <p>Choose who to put on your phone. You can install the others any time from Settings → Friends.</p>
+      <div id="suPicks"></div>
+      <div class="msg err" id="suPickMsg"></div>
+      <div class="setup-actions"><button class="btn ghost" data-step="3">Back</button><button class="btn" id="suPickNext">Next</button></div>
+    </div>
+
+    <div class="setup-card setup-step" hidden>
+      <h1>Who are they to you?</h1>
+      <p>Pick how you know each friend. It shapes how they talk to you and what news they hear about you from each other. You can change it later.</p>
+      <div id="suRoles"></div>
+      <div class="msg" id="suInstallMsg"></div>
+      <div class="setup-actions"><button class="btn ghost" data-step="4">Back</button><button class="btn" id="suInstall">Install</button></div>
+    </div>
+
+    <div class="setup-card setup-step" hidden>
+      <div class="setup-big">🎉</div>
+      <h1 id="suDoneTitle">You're all set</h1>
+      <p id="suDoneText">Your friends are on your phone. Tap one in Contacts, or on your home screen, and give them a call.</p>
+      <div class="setup-actions"><span></span><button class="btn" id="suFinish">Go to home screen</button></div>
     </div>
   </div>
 </main>
@@ -506,6 +642,7 @@
   <p class="hint" style="font-size:14px">For now, Claude builds new friends with you. Open Claude Code in the <b>Call Joe</b> folder and type:</p>
   <code class="cmd">/new-contact</code>
   <p class="hint" style="font-size:14px">Have ready: their name and a few sentences about who they are, a 10 to 20 second voice clip (someone who's okay with it), and a made-up face picture for video calls. Claude writes their personality, shows it to you, and sets everything up.</p>
+  <p class="hint" style="font-size:14px">Or put a ready-made friend on your phone: <a href="#" id="toFriends" style="color:var(--accent)">Settings → Friends</a>.</p>
   <div class="row"><button class="btn ghost" id="copyCmd">Copy command</button><button class="btn" id="addFriendClose">Got it</button></div>
 </dialog>
 
@@ -532,6 +669,13 @@
     <label><input type="radio" name="clearWhich" value="outgoing"> Outgoing (you called)</label>
   </div>
   <div class="row"><button class="btn ghost" id="clearCancel">Cancel</button><button class="btn" id="clearOk">Clear</button></div>
+</dialog>
+
+<dialog id="dangerDialog">
+  <h2 id="dangerTitle"></h2>
+  <p class="hint" id="dangerText" style="font-size:14px; line-height:1.5"></p>
+  <div id="dangerTypeWrap" hidden><label for="dangerInput" id="dangerTypeLabel"></label><input id="dangerInput" autocomplete="off"></div>
+  <div class="row"><button class="btn ghost" id="dangerCancel">Cancel</button><button class="btn danger" id="dangerOk"></button></div>
 </dialog>
 
 <div id="toast" hidden></div>
@@ -1598,6 +1742,7 @@ if ("BroadcastChannel" in window) {
 }
 
 fetch("/api/status").then((r) => r.json()).then((s) => {
+  if (!s.setupDone) return showSetup();
   if (!s.hasKey) $("keyDialog").showModal();
 });
 // ---------- Friends who call you ----------
@@ -1734,7 +1879,7 @@ $("declineBtn").onclick = () => { if (ringingIn) { ringingIn.declined = true; ri
 // ---------- The phone: pages, tabs, status bar ----------
 // Pages: home (app icons), contacts (the friends list, id "home"), calls, messages, settings, and call (a friend's
 // page, which is also the call screen). The tabs and home bar hide during a call.
-const PAGE_IDS = { home: "pageHome", contacts: "home", calls: "pageCalls", messages: "pageMessages", settings: "pageSettings", call: "callScreen" };
+const PAGE_IDS = { home: "pageHome", contacts: "home", calls: "pageCalls", messages: "pageMessages", settings: "pageSettings", call: "callScreen", setup: "pageSetup" };
 let page = "home";
 let pagesBack = [], goingBack = false;
 const data = { friends: [], voicemail: [] }; // refreshed by refreshData()
@@ -1757,6 +1902,8 @@ function showPage(name) {
   $("setDrawer").hidden = true;
   $("backBtn").hidden = name !== "call" || state !== "idle";
   $("settingsBtn").hidden = name !== "call" || state !== "idle";
+  // First-time setup takes the whole screen; the tabs and navigation buttons come back after it.
+  if (state === "idle") $("tabbar").hidden = $("homebar").hidden = name === "setup";
   if (name === "home") renderHome();
   if (name === "calls") renderCalls();
   if (name === "settings") showSetting(null);
@@ -1772,7 +1919,7 @@ $("tabbar").onclick = (e) => {
 // The three navigation buttons. Back closes whatever is open first (the notification shade, the settings
 // list, a setting's page), then steps back through the pages you came from, ending at Home.
 function goBack() {
-  if (state !== "idle") return;
+  if (state !== "idle" || page === "setup") return;
   if (!$("shade").hidden) return closeShade();
   if (!$("setDrawer").hidden) return void ($("setDrawer").hidden = true);
   if (page === "settings" && $("setIndex").hidden) return showSetting(null);
@@ -2000,9 +2147,12 @@ $("callsList").onclick = async (e) => {
 
 // ---------- Settings: a list, with ☰ to jump between them ----------
 const SETTINGS = [
+  { id: "you", ic: "👤", name: "You", sub: "Your name and town", bg: "#2f7fd1" },
+  { id: "friends", ic: "👥", name: "Friends", sub: "Install, relationships, delete", bg: "#8a5a2b" },
   { id: "calls", ic: "📞", name: "Calls", sub: "Interrupting", bg: "#2f9e4f" },
   { id: "looks", ic: "🎨", name: "Looks", sub: "Wallpaper and call screen", bg: "#7b3f8c" },
   { id: "account", ic: "🔑", name: "Account", sub: "Your API key", bg: "#8a6a2b" },
+  { id: "system", ic: "⚠", name: "System", sub: "Reset phone", bg: "#7a2f2f" },
   { id: "about", ic: "ℹ", name: "About", sub: "Call Joe and credits", bg: "#3c5a78" },
 ];
 const settingsRows = () => SETTINGS.map((x) => `
@@ -2018,6 +2168,8 @@ function showSetting(id) {
   if (id === "calls") $("interruptToggle").checked = voiceInterruptOn();
   if (id === "looks") renderLooks();
   if (id === "account") loadKeyState();
+  if (id === "you") loadYou();
+  if (id === "friends") renderFriends();
 }
 $("setIndex").onclick = $("setDrawerList").onclick = (e) => {
   const b = e.target.closest("[data-set]");
@@ -2149,6 +2301,268 @@ $("activeToggle").onchange = async (e) => {
   await fetch(`/api/contacts/${contact.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: e.target.checked }) });
   contact.active = e.target.checked;
   toast(e.target.checked ? `${contact.name} is back on your contacts.` : `${contact.name} is turned off. Find them at the bottom of Contacts.`);
+};
+
+// ---------- Dangerous things ask twice ----------
+// A warning dialog that resolves true or false. With typeWord, the button only works once you type that word.
+function danger({ title, text, button, typeWord }) {
+  return new Promise((resolve) => {
+    $("dangerTitle").textContent = title;
+    $("dangerText").innerHTML = text;
+    $("dangerOk").textContent = button;
+    $("dangerTypeWrap").hidden = !typeWord;
+    $("dangerInput").value = "";
+    if (typeWord) $("dangerTypeLabel").textContent = `Type ${typeWord} to confirm`;
+    const check = () => { $("dangerOk").disabled = !!typeWord && $("dangerInput").value.trim().toLowerCase() !== typeWord.toLowerCase(); };
+    $("dangerInput").oninput = check;
+    check();
+    let answered = false;
+    const done = (ok) => {
+      if (answered) return;
+      answered = true;
+      $("dangerDialog").close();
+      resolve(ok);
+    };
+    $("dangerOk").onclick = () => done(true);
+    $("dangerCancel").onclick = () => done(false);
+    // Esc closes it. (A close event left over from the first of two warnings arrives while the second is open.)
+    $("dangerDialog").onclose = () => { if (!$("dangerDialog").open) done(false); };
+    $("dangerDialog").showModal();
+    if (typeWord) $("dangerInput").focus();
+  });
+}
+
+// ---------- Friends you can install, and relationships ----------
+let roleChoices = [];
+const loadRoles = async () => (roleChoices.length ? roleChoices : (roleChoices = await fetch("/api/roles").then((r) => r.json()).catch(() => [])));
+const roleOptions = (current) => roleChoices.map((r) => `<option value="${r.id}" ${r.id === current ? "selected" : ""}>${r.name}</option>`).join("");
+const catalogAvatar = (f) => `<span class="c-avatar">${f.hasFace ? `<img src="/api/catalog/face?id=${encodeURIComponent(f.id)}" alt="">` : esc(f.name[0])}</span>`;
+
+async function renderFriends() {
+  await loadRoles();
+  const [mine, cat] = await Promise.all([
+    fetch("/api/contacts").then((r) => r.json()).catch(() => []),
+    fetch("/api/catalog").then((r) => r.json()).catch(() => []),
+  ]);
+  $("friendsMine").innerHTML = mine.map((c) => `
+    <div class="pick" style="cursor:default; align-items:flex-start">${avatarHtml(c.name, c.face)}
+      <span class="txt"><div class="t1">${esc(c.name)}</div><div class="t2">${c.active ? `${c.calls} call${c.calls === 1 ? "" : "s"}` : "Turned off"}</div>
+        <div class="friend-ctl"><select data-role-for="${esc(c.id)}" aria-label="Who ${esc(c.name)} is to you">${roleOptions(c.role)}</select>
+          <button class="btn warn" data-delete="${esc(c.id)}" data-name="${esc(c.name)}">Delete</button></div></span></div>`).join("")
+    || `<div class="empty">No friends on your phone yet.</div>`;
+  const avail = cat.filter((f) => !f.installed);
+  $("friendsAvail").innerHTML = avail.map((f) => `
+    <div class="pick" style="cursor:default; align-items:flex-start">${catalogAvatar(f)}
+      <span class="txt"><div class="t1">${esc(f.name)}</div><div class="t2">${esc(f.about)}</div>
+        <div class="friend-ctl"><select data-install-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role)}</select>
+          <button class="btn" data-install="${esc(f.id)}">Install</button></div></span></div>`).join("")
+    || `<div class="empty">Every friend is already on your phone.</div>`;
+}
+const friendsChanged = () => {
+  if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "contacts-changed" });
+  refreshData();
+};
+$("friendsMine").onchange = async (e) => {
+  const sel = e.target.closest("[data-role-for]");
+  if (!sel) return;
+  await fetch(`/api/contacts/${sel.dataset.roleFor}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: sel.value }) });
+  toast(`Saved. It takes effect on their next call.`);
+};
+$("friendsMine").onclick = async (e) => {
+  const b = e.target.closest("[data-delete]");
+  if (!b) return;
+  const name = b.dataset.name, first = name.split(" ")[0];
+  const sure = await danger({
+    title: `Delete ${name}?`,
+    text: `${esc(first)} will be deleted for good: <b>everything ${esc(first)} has learned about you</b>, your calls, voicemails, and the news ${esc(first)} heard from other friends. This can't be undone.<br><br>Just want a break? Turn ${esc(first)} off instead (Contacts → ${esc(first)} → ✎ Edit), and nothing is lost.`,
+    button: "Continue",
+  });
+  if (!sure) return;
+  const really = await danger({
+    title: "Are you absolutely sure?",
+    text: `${esc(first)} will forget you completely. You can install ${esc(first)} again later, but brand new, like you never met.`,
+    button: `Delete ${first}`,
+    typeWord: first,
+  });
+  if (!really) return;
+  const res = await fetch(`/api/contacts/${b.dataset.delete}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: first }) });
+  if (!res.ok) return toast((await res.json().catch(() => ({}))).error || "That didn't work.");
+  toast(`${first} was deleted.`);
+  friendsChanged();
+  renderFriends();
+};
+$("friendsAvail").onclick = async (e) => {
+  const b = e.target.closest("[data-install]");
+  if (!b) return;
+  b.disabled = true;
+  b.textContent = "Installing…";
+  const role = document.querySelector(`[data-install-role="${b.dataset.install}"]`)?.value;
+  const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.install, role }) });
+  const out = await res.json().catch(() => ({}));
+  toast(res.ok ? `${out.name} is on your phone. Find them in Contacts.` : out.error || "That didn't work.");
+  friendsChanged();
+  renderFriends();
+};
+$("toFriends").onclick = (e) => {
+  e.preventDefault();
+  $("addFriendDialog").close();
+  showPage("settings");
+  showSetting("friends");
+};
+
+// ---------- You ----------
+const pickGender = (wrap, g) => wrap.querySelectorAll("[data-gender]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.gender === g)));
+const pickedGender = (wrap) => wrap.querySelector('[aria-pressed="true"]')?.dataset.gender ?? "man";
+$("youGender").onclick = $("suGender").onclick = (e) => {
+  const b = e.target.closest("[data-gender]");
+  if (b) pickGender(e.currentTarget, b.dataset.gender);
+};
+async function loadYou() {
+  const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  const u = st.user ?? {};
+  $("youFirst").value = u.first ?? "";
+  $("youLast").value = u.last ?? "";
+  $("youHome").value = u.home ?? "";
+  pickGender($("youGender"), u.gender ?? "man");
+  $("youMsg").textContent = "";
+}
+const saveProfile = (first, last, gender, home) =>
+  fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ first, last, gender, home }) });
+$("youSave").onclick = async () => {
+  if (!$("youFirst").value.trim()) {
+    $("youMsg").className = "msg err";
+    $("youMsg").textContent = "Your first name, please.";
+    return;
+  }
+  await saveProfile($("youFirst").value, $("youLast").value, pickedGender($("youGender")), $("youHome").value);
+  $("youMsg").className = "msg ok";
+  $("youMsg").textContent = "Saved.";
+};
+
+// ---------- System: reset the phone ----------
+$("resetBtn").onclick = async () => {
+  const sure = await danger({
+    title: "Reset your phone?",
+    text: "This puts Call Joe back the way it came, brand new. <b>Every friend and everything they've learned about you will be deleted</b>, along with your call history, voicemail, voices, pictures, wallpaper and your API key.<br><br>This can't be undone.",
+    button: "Continue",
+  });
+  if (!sure) return;
+  const really = await danger({
+    title: "This deletes everything",
+    text: "Last chance. Your friends will forget you completely, and you'll set up the phone again from the start.",
+    button: "Reset phone",
+    typeWord: "RESET",
+  });
+  if (!really) return;
+  const res = await fetch("/api/system/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: "RESET" }) });
+  if (!res.ok) return toast("The reset didn't work.");
+  try { localStorage.clear(); } catch {}
+  if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "contacts-changed" });
+  location.reload();
+};
+
+// ---------- First-time setup ----------
+// Welcome, about you, where you live, API key, pick friends, who they are to you, done.
+const SETUP_STEPS = 7;
+let setupCatalog = [];
+function setupStep(n) {
+  document.querySelectorAll(".setup-step").forEach((el, i) => (el.hidden = i !== n));
+  $("setupDots").innerHTML = Array.from({ length: SETUP_STEPS }, (_, i) => `<span class="${i === n ? "on" : ""}"></span>`).join("");
+  $("pageSetup").scrollTop = 0;
+}
+async function showSetup() {
+  showPage("setup");
+  setupStep(0);
+  const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  if (st.user) {
+    $("suFirst").value = st.user.first ?? "";
+    $("suLast").value = st.user.last ?? "";
+    $("suHome").value = st.user.home ?? "";
+    pickGender($("suGender"), st.user.gender ?? "man");
+  }
+}
+$("pageSetup").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-step]");
+  if (b) setupStep(Number(b.dataset.step));
+});
+$("suNameNext").onclick = () => {
+  if (!$("suFirst").value.trim()) {
+    $("suNameMsg").textContent = "Your first name, please.";
+    return $("suFirst").focus();
+  }
+  $("suNameMsg").textContent = "";
+  setupStep(2);
+};
+$("suHomeNext").onclick = async () => {
+  // Saved now, so the relationships offered later fit whether you're a man or a woman.
+  await saveProfile($("suFirst").value, $("suLast").value, pickedGender($("suGender")), $("suHome").value);
+  const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  setupStep(st.hasKey ? 4 : 3);
+  if (st.hasKey) renderSetupPicks();
+};
+$("suKeySkip").onclick = () => { setupStep(4); renderSetupPicks(); };
+$("suKeySave").onclick = async () => {
+  const key = $("suKey").value.trim();
+  if (!key) return $("suKey").focus();
+  $("suKeyMsg").className = "msg";
+  $("suKeyMsg").textContent = "Checking…";
+  const res = await fetch("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    $("suKeyMsg").className = "msg err";
+    $("suKeyMsg").textContent = out.error || "That didn't work.";
+    return;
+  }
+  $("suKeyMsg").textContent = "";
+  $("suKey").value = "";
+  setupStep(4);
+  renderSetupPicks();
+};
+async function renderSetupPicks() {
+  await loadRoles();
+  setupCatalog = (await fetch("/api/catalog").then((r) => r.json()).catch(() => [])).filter((f) => !f.installed);
+  $("suPicks").innerHTML = setupCatalog.map((f) => `
+    <label class="pick"><input type="checkbox" data-pick="${esc(f.id)}" checked>${catalogAvatar(f)}
+      <span class="txt"><div class="t1">${esc(f.name)}</div><div class="t2">${esc(f.about)}</div></span></label>`).join("")
+    || `<div class="empty">No friends are waiting to be installed.</div>`;
+}
+$("suPickNext").onclick = () => {
+  const picked = [...document.querySelectorAll("[data-pick]:checked")].map((x) => x.dataset.pick);
+  $("suPickMsg").textContent = "";
+  if (!picked.length && setupCatalog.length) {
+    $("suPickMsg").textContent = "Pick at least one friend, or you'll have no one to call. (You can add more later.)";
+    return;
+  }
+  $("suRoles").innerHTML = setupCatalog.filter((f) => picked.includes(f.id)).map((f) => `
+    <div class="pick" style="cursor:default">${catalogAvatar(f)}
+      <span class="txt"><div class="t1">${esc(f.name)}</div></span>
+      <select data-setup-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role)}</select></div>`).join("");
+  setupStep(5);
+};
+$("suInstall").onclick = async () => {
+  $("suInstall").disabled = true;
+  const sels = [...document.querySelectorAll("[data-setup-role]")];
+  const failed = [];
+  for (const [i, sel] of sels.entries()) {
+    $("suInstallMsg").className = "msg";
+    $("suInstallMsg").textContent = `Installing ${i + 1} of ${sels.length}…`;
+    const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: sel.dataset.setupRole, role: sel.value }) });
+    if (!res.ok) failed.push(sel.dataset.setupRole);
+  }
+  await fetch("/api/setup/done", { method: "POST" });
+  $("suInstall").disabled = false;
+  $("suInstallMsg").textContent = "";
+  const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
+  $("suDoneTitle").textContent = `You're all set${st.user?.first ? `, ${st.user.first}` : ""}`;
+  $("suDoneText").textContent = (failed.length ? `Some friends couldn't be installed (${failed.join(", ")}); try again in Settings → Friends. ` : "")
+    + (st.hasKey ? "Your friends are on your phone. Tap one in Contacts, or on your home screen, and give them a call."
+      : "Your friends are on your phone. Add your API key in Settings → Account, then give them a call.");
+  setupStep(6);
+};
+$("suFinish").onclick = async () => {
+  await refreshData();
+  if ("BroadcastChannel" in window) new BroadcastChannel("calljoe").postMessage({ type: "contacts-changed" });
+  showPage("home");
 };
 
 showPage("home");

@@ -69,3 +69,11 @@ Done: Joe moved into `data/contacts/joe/` (backup in `data/backup-before-contact
 ## The phone layout (October 23, 2026)
 
 The separate Settings window (`settings.html`) is gone. Everything lives in the one window, laid out like an **Android** phone (deliberately not iPhone-styled): a status bar with a camera punch-hole and notifications, a home screen of app icons, bottom tabs (Calls, Contacts, Messages, Settings) that hide during a call, and the three Android navigation buttons (back, home, recents) with a real back history. Settings is a list of subpages with a ☰ drawer. Add friend, Wallpaper and Tips live on the home screen to keep Settings short. Looks are saved in `data/config.json` `appearance`: `wallpaper`, `callStyle`, `frame` (phone outline color, black by default, or `none`) and `ink` (a text color per wallpaper, so dark text works on light wallpapers). Messages is a placeholder for texting later.
+
+## Setup, installable friends, delete and reset (October 23, 2026)
+
+- **First-time setup** runs on a brand-new or reset phone (`config.json` `setupDone: false`): your name, man or woman, town, API key, which friends to install, and each one's relationship. Your name, gender and town go into every friend's prompt (`aboutBuddy()`), and your town's weather into their briefing. Phones in use before this counted as set up; fill in Settings → You.
+- **Installable friends**: `contacts/<id>/friend.json` plus `voice.wav` and `face.png` (from `tools/contact.py publish`) hold each friend's defaults, including their starting relationship for a man and for a woman (Elena is a sister to a man and a best girlfriend to a woman). Installing copies the voice and face into `data/` and links couples that are both installed.
+- **Turning off is the soft delete**: hidden, no calls, no news. Turned back on, a friend catches up on what linked friends heard while they were off (`catchUp()`).
+- **Delete and reset are real deletes**, by the user's choice, each behind two warnings (the second asks to type the name, or RESET). Nothing is archived.
+- **New relationship prompts**: close-friend, family-friend, aunt, uncle, cousin, a fuller sister, and girlfriend-bestie (best friends who are both women).

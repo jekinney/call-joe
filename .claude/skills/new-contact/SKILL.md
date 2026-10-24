@@ -80,6 +80,16 @@ The relation words pick reusable connection rules from `contacts/_connections/` 
 
 Also make sure both personas mention each other. If the other friend was built first and doesn't mention the new one, ask the user before updating their persona with `persona`; their memory is kept.
 
+## 5c. Make them installable
+
+Every friend can be installed from the app (first-time setup, and Settings → Friends), so they come back after a factory reset or after being deleted. Ask whether the friend is a man or a woman if it isn't obvious, and which relationship they should start with for a man and for a woman using the phone (roles in `contacts/_roles/`; `girlfriend-bestie` is the best-friend version for two women). Then:
+
+```
+video\.venv\Scripts\python.exe tools\contact.py publish <id> --gender woman --about "One line about them" --role-man sister --role-woman girlfriend-bestie
+```
+
+This copies their voice sample and face into `contacts/<id>/` and writes `contacts/<id>/friend.json`. Commit those with the persona.
+
 ## 6. Check the result
 
 - Open `data/faces/<name>.png` with the Read tool and look at the crop. It should be head and shoulders, with the face centered and not cut off. If the crop is bad or the tool warned that no face was found, tell the user and ask for a better picture.
@@ -95,7 +105,7 @@ Tell the user:
 - Voice and video settings can be tweaked later in that friend's ⚙ settings in the app.
 - The first call is a fresh start: the friend will ask the user's name and get to know them.
 
-Then ask whether to save the new friend's persona to GitHub. If yes, commit only `contacts/<id>/persona.md`. Never commit `data/`, which holds the voice clip, face picture and memory.
+Then ask whether to save the new friend to GitHub. If yes, commit only `contacts/<id>/` (persona, friend.json, voice.wav, face.png). Never commit `data/`, which holds the voice clip, face picture and memory.
 
 ## Rules that always apply
 

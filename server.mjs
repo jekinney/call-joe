@@ -130,8 +130,8 @@ const listContacts = () =>
 // One-time move from the single-friend layout (data/memory.json, data/call-log.txt) into data/contacts/joe/.
 // The old files are copied to data/backup-before-contacts/ first. Joe's notes and log move over unchanged.
 function moveJoeIntoContacts() {
-  if (fs.existsSync(contactPath("joe", "contact.json"))) return;
   const oldMemory = path.join(dataDir, "memory.json");
+  if (fs.existsSync(contactPath("joe", "contact.json")) || !fs.existsSync(oldMemory)) return;
   const oldLog = path.join(dataDir, "call-log.txt");
   const backup = path.join(dataDir, "backup-before-contacts");
   fs.mkdirSync(backup, { recursive: true });
@@ -146,6 +146,11 @@ function moveJoeIntoContacts() {
   console.log("Moved Joe into data/contacts/joe (backup in data/backup-before-contacts)");
 }
 moveJoeIntoContacts();
+// A phone that was in use before first-time setup existed counts as set up (fill in "You" in Settings later).
+if (config.setupDone === undefined) {
+  config.setupDone = !!config.apiKey || fs.readdirSync(contactsDir).length > 0;
+  writeJson(configFile, config);
+}
 
 // Live facts for friends who follow a team or have a hometown (see knowledge.mjs); refreshed while the app is open.
 const knowledge = createKnowledge(dataDir);
@@ -169,15 +174,18 @@ async function systemPrompt(c) {
   });
   const mem = memory.notes
     ? `What you remember about your buddy from past calls:\n${memory.notes}`
-    : "This is the first time this buddy has ever called you. You don't know their name or anything about them yet.";
+    : config.user?.first
+      ? "This is your first phone call in a long while. You know who your buddy is, but you're behind on what's going on in their life lately, so catch up."
+      : "This is the first time this buddy has ever called you. You don't know their name or anything about them yet.";
   const last = memory.lastCall ? `Your last call with them was ${memory.lastCall}.` : "";
   return [
     persona.trimEnd(),
     roleRules(c),
+    aboutBuddy(),
     ENDING_THE_CALL,
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
     `# Memory\n${mem}${connectionNews(c)}${voicemailsLeft(c)}`,
-    await knowledge.briefing(c),
+    await knowledge.briefing(c, config.user?.home),
     `# Right now\nIt's ${now} where you both live. ${last}`,
   ].filter(Boolean).join("\n\n");
 }
@@ -252,6 +260,144 @@ const ENDING_THE_CALL = `# Ending the call
 You can hang up, like on a real phone. When the call is clearly over, because you've both said goodbye, or your buddy said they have to go and you've said bye back, finish your goodbye and put ${HANGUP} at the very end of that last message. It's a signal, not something you say.
 Don't hang up during a pause, in the middle of a conversation, or while your buddy is upset or struggling. If you're not sure the call is over, don't hang up. Keep talking or ask if they need to go.`;
 
+// ---- You: your name, whether you're a man or a woman, and your town (first-time setup, or Settings -> You) ----
+function aboutBuddy() {
+  const u = config.user;
+  if (!u?.first) return "";
+  const who = `${u.first}${u.last ? ` ${u.last}` : ""}`;
+  return `# Your buddy\nYour buddy is ${who}, ${u.gender === "woman" ? "a woman" : "a man"}${u.home ? ` who lives in ${u.home}` : ""}. ` +
+    `You know them, so use their first name now and then, the way you naturally would.`;
+}
+
+// ---- Friends you can install (Settings -> Friends, and first-time setup) ----
+// Every friend in contacts/<id>/ with a friend.json (written by `tools/contact.py publish`) can be installed: their
+// voice sample and face are copied into data/, and they start with a relationship you pick. Installed friends are the
+// ones with data/contacts/<id>/contact.json; uninstalling deletes that folder (memory and all), so they show up as
+// installable again, brand new.
+const ROLE_CHOICES = [
+  ["best-friend", "Best friend"], ["close-friend", "Close friend"], ["friend", "Friend"], ["family-friend", "Family friend"],
+  ["neighbor", "Neighbor"], ["coworker", "Coworker"], ["mom", "Mom"], ["dad", "Dad"], ["sister", "Sister"],
+  ["brother", "Brother"], ["grandparent", "Grandparent"], ["aunt", "Aunt"], ["uncle", "Uncle"], ["cousin", "Cousin"],
+  ["spouse", "Spouse"],
+];
+const catalogEntry = (id) => (validId(id) ? readJson(path.join(personasDir, id, "friend.json"), null) : null);
+const friendGender = (c) => c.gender ?? catalogEntry(c.id)?.gender;
+// Two women who are best friends get the best-girlfriend version of that relationship.
+const resolveRole = (role, gender) =>
+  role === "best-friend" && config.user?.gender === "woman" && gender === "woman" ? "girlfriend-bestie" : role;
+const shownRole = (role) => (role === "girlfriend-bestie" ? "best-friend" : role);
+const yourGender = () => (config.user?.gender === "woman" ? "woman" : "man");
+
+function catalog() {
+  return fs.readdirSync(personasDir).filter((id) => !id.startsWith("_") && catalogEntry(id)).map((id) => {
+    const f = catalogEntry(id);
+    return {
+      id, name: f.name, about: f.about ?? "", gender: f.gender, installed: !!loadContact(id),
+      hasFace: fs.existsSync(path.join(personasDir, id, "face.png")),
+      role: shownRole(resolveRole(f.roles?.[yourGender()] ?? "friend", f.gender)),
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function installFriend(id, role) {
+  const f = catalogEntry(id);
+  if (!f) throw new Error("That friend can't be installed.");
+  if (loadContact(id)) throw new Error(`${f.name} is already installed.`);
+  role = ROLE_CHOICES.some(([r]) => r === role) ? role : f.roles?.[yourGender()] ?? "friend";
+  const folder = path.join(personasDir, id);
+  const settings = { model: MODELS[f.model] ? f.model : DEFAULT_MODEL, cbVoice: `${f.name} voice` };
+  fs.mkdirSync(voicesDir, { recursive: true });
+  fs.copyFileSync(path.join(folder, "voice.wav"), path.join(voicesDir, `${settings.cbVoice}.wav`));
+  if (fs.existsSync(path.join(folder, "face.png"))) {
+    fs.mkdirSync(facesDir, { recursive: true });
+    fs.copyFileSync(path.join(folder, "face.png"), path.join(facesDir, `${f.name}.png`));
+    settings.face = f.name;
+  }
+  // Links (like a married couple) only connect friends who are both installed.
+  const links = (f.links ?? []).filter((l) => loadContact(l.id));
+  fs.mkdirSync(path.join(contactsDir, id), { recursive: true });
+  writeJson(contactPath(id, "contact.json"), {
+    name: f.name, created: new Date().toISOString(), gender: f.gender, settings,
+    role: resolveRole(role, f.gender), ...(f.knows ? { knows: f.knows } : {}), ...(links.length ? { links } : {}),
+  });
+  for (const l of links) {
+    const other = loadContact(l.id);
+    const back = catalogEntry(l.id)?.links?.find((x) => x.id === id);
+    if (other && back && !(other.links ?? []).some((x) => x.id === id)) {
+      other.links = [...(other.links ?? []), back];
+      saveContact(other);
+    }
+  }
+  return loadContact(id);
+}
+
+// Deletes a friend for good: memory, call logs, voicemail, news, and their copies of the voice and face. Friends
+// linked to them forget the link. Their persona stays in contacts/<id>/, so they can be installed again, brand new.
+function uninstallFriend(c) {
+  if (call?.contactId === c.id) call = null;
+  fs.rmSync(path.join(contactsDir, c.id), { recursive: true, force: true });
+  const others = listContacts();
+  if (c.settings.cbVoice && !others.some((o) => o.settings.cbVoice === c.settings.cbVoice)) {
+    fs.rmSync(path.join(voicesDir, `${c.settings.cbVoice}.wav`), { force: true });
+  }
+  if (c.settings.face && !others.some((o) => o.settings.face === c.settings.face)) {
+    fs.rmSync(path.join(facesDir, `${c.settings.face}.png`), { force: true });
+  }
+  for (const o of others) {
+    if (!(o.links ?? []).some((l) => l.id === c.id)) continue;
+    o.links = o.links.filter((l) => l.id !== c.id);
+    if (!o.links.length) delete o.links;
+    saveContact(o);
+    fs.rmSync(heardFromPath(o.id, c.id), { force: true });
+  }
+}
+
+// Factory reset: everything in data/ goes (friends, memory, voices, faces, your key, looks), except logs and the
+// knowledge cache. The phone then opens to first-time setup.
+function factoryReset() {
+  call = null;
+  client = null;
+  for (const name of fs.readdirSync(dataDir)) {
+    if (name.endsWith(".log") || name === "cache") continue;
+    fs.rmSync(path.join(dataDir, name), { recursive: true, force: true });
+  }
+  fs.mkdirSync(contactsDir, { recursive: true });
+  config = { setupDone: false };
+  writeJson(configFile, config);
+}
+
+// Each call in a friend's call log, oldest first. Headers look like "===== Call on Friday, October 23 at 3:02 PM ====="
+// (no year), with " (they called)" when the friend rang you. Calls logged before that was added count as yours.
+function callLogEntries(id) {
+  let log = "";
+  try { log = fs.readFileSync(contactPath(id, "call-log.txt"), "utf8"); } catch {}
+  const year = new Date().getFullYear();
+  const parts = log.split(/^===== Call on (.+?)( \(they called\))? =====$/m);
+  const entries = [];
+  for (let i = 1; i + 2 < parts.length + 1; i += 3) {
+    const when = parts[i];
+    const at = Date.parse(`${when.replace(/^\w+, /, "").replace(" at ", ` ${year} `)}`);
+    if (Number.isNaN(at)) continue;
+    entries.push({
+      when, incoming: !!parts[i + 1], transcript: (parts[i + 2] ?? "").trim(),
+      at: new Date(at > Date.now() + 864e5 ? at - 31536e6 : at).toISOString(),
+    });
+  }
+  return entries;
+}
+
+// A friend you turned back on catches up on the news they'd have heard from linked friends while they were off.
+async function catchUp(c, since) {
+  for (const { id } of c.links ?? []) {
+    const sender = loadContact(id);
+    if (!sender || sender.active === false) continue;
+    const calls = callLogEntries(id).filter((e) => e.at > since && e.transcript);
+    if (!calls.length) continue;
+    const transcript = calls.map((e) => `(Call on ${e.when})\n${e.transcript}`).join("\n\n").slice(-40000);
+    await passNews(sender, transcript, c.id);
+  }
+}
+
 // ---- Roles and connections (docs/roadmap.md, section 4) ----
 // A friend's role in the buddy's life (contact.json "role", like "friend" or "mom") adds contacts/_roles/<role>.md
 // to their instructions. Connections between friends (contact.json "links": [{ id, relation }], set with
@@ -304,10 +450,11 @@ function connectionNews(c) {
 
 // After a call with `sender`, works out what news about the buddy would naturally reach each connected friend, given
 // how they're connected and the receiver's role, and merges it into what that friend has heard.
-async function passNews(sender, transcript) {
+async function passNews(sender, transcript, onlyTo = null) {
   for (const { id } of sender.links ?? []) {
+    if (onlyTo && id !== onlyTo) continue;
     const receiver = loadContact(id);
-    if (!receiver) continue;
+    if (!receiver || receiver.active === false) continue;
     const link = receiver.links?.find((l) => l.id === sender.id) ?? { id: sender.id, relation: "a friend" };
     const relation = link.relation;
     const file = heardFromPath(receiver.id, sender.id);
@@ -456,6 +603,7 @@ async function hangUp() {
       console.error("Memory update failed:", err?.message ?? err);
     }
   }
+  if (!fs.existsSync(path.join(contactsDir, c.id))) return; // uninstalled, or the phone was reset, during the call
   writeJson(memoryFile, memory);
   if (transcript.trim()) await passNews(c, transcript);
 }
@@ -534,9 +682,61 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(dir, "index.html")));
   }
   if (url.pathname === "/api/status") {
-    return json(res, 200, { hasKey: !!config.apiKey, inCall: call?.contactId ?? null });
+    return json(res, 200, { hasKey: !!config.apiKey, inCall: call?.contactId ?? null, setupDone: config.setupDone !== false, user: config.user ?? null });
   }
   if (url.pathname === "/api/ping") return json(res, 200, { ok: true });
+
+  // ---- You (first-time setup, or Settings -> You) ----
+  if (req.method === "PUT" && url.pathname === "/api/profile") {
+    const b = await readBody(req);
+    const clean = (v) => String(v ?? "").trim().slice(0, 80);
+    const before = yourGender();
+    config.user = { first: clean(b.first), last: clean(b.last), gender: b.gender === "woman" ? "woman" : "man", home: clean(b.home) };
+    // Switching between man and woman moves friends still on their default relationship to the default for the other.
+    if (yourGender() !== before) {
+      for (const c of listContacts()) {
+        const f = catalogEntry(c.id);
+        if (f?.roles && c.role === resolveRole(f.roles[before], f.gender)) c.role = f.roles[yourGender()];
+        c.role = resolveRole(shownRole(c.role), friendGender(c));
+        saveContact(c);
+      }
+    }
+    writeJson(configFile, config);
+    return json(res, 200, config.user);
+  }
+  if (req.method === "POST" && url.pathname === "/api/setup/done") {
+    config.setupDone = true;
+    writeJson(configFile, config);
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && url.pathname === "/api/system/reset") {
+    const { confirm } = await readBody(req);
+    if (confirm !== "RESET") return json(res, 400, { error: 'Type RESET to confirm.' });
+    factoryReset();
+    return json(res, 200, { ok: true });
+  }
+
+  // ---- Friends you can install ----
+  if (req.method === "GET" && url.pathname === "/api/roles") {
+    return json(res, 200, ROLE_CHOICES.map(([id, name]) => ({ id, name })));
+  }
+  if (req.method === "GET" && url.pathname === "/api/catalog") return json(res, 200, catalog());
+  if (req.method === "GET" && url.pathname === "/api/catalog/face") {
+    const id = url.searchParams.get("id");
+    const file = validId(id) ? path.join(personasDir, id, "face.png") : null;
+    if (!file || !fs.existsSync(file)) return json(res, 404, { error: "No picture." });
+    res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "max-age=3600" });
+    return fs.createReadStream(file).pipe(res);
+  }
+  if (req.method === "POST" && url.pathname === "/api/install") {
+    const { id, role } = await readBody(req);
+    try {
+      const c = installFriend(id, role);
+      return json(res, 200, { id: c.id, name: c.name });
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
 
   // Mic-level readings from calls, for tuning voice interrupting (data/vad.log, trimmed to the last ~500 KB).
   if (req.method === "POST" && url.pathname === "/api/vad-log") {
@@ -668,20 +868,11 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/api/recents") {
     const cleared = readJson(recentsFile, {}).cleared ?? {};
-    const year = new Date().getFullYear();
     const items = [];
     for (const c of listContacts()) {
       const face = c.settings.face && faceFile(c.settings.face) ? c.settings.face : null;
       const who = { contact: c.id, name: c.name, face, active: c.active !== false };
-      let log = "";
-      try { log = fs.readFileSync(contactPath(c.id, "call-log.txt"), "utf8"); } catch {}
-      // Headers look like "===== Call on Friday, October 23 at 3:02 PM =====" (no year), with " (they called)" when
-      // the friend rang you. Calls logged before that was added count as yours.
-      for (const m of log.matchAll(/^===== Call on (.+?)( \(they called\))? =====$/gm)) {
-        const when = m[1];
-        const at = Date.parse(`${when.replace(/^\w+, /, "").replace(" at ", ` ${year} `)}`);
-        if (!Number.isNaN(at)) items.push({ ...who, kind: m[2] ? "incoming" : "outgoing", when, at: new Date(at > Date.now() + 864e5 ? at - 31536e6 : at).toISOString() });
-      }
+      for (const e of callLogEntries(c.id)) items.push({ ...who, kind: e.incoming ? "incoming" : "outgoing", when: e.when, at: e.at });
       for (const v of readVoicemails(c.id)) {
         items.push({ ...who, kind: v.declined ? "declined" : "missed", when: v.when, at: v.at, voicemail: v.id, heard: v.heard });
       }
@@ -738,7 +929,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, listContacts().map((c) => ({
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
-      newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length,
+      newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     })));
   }
@@ -746,17 +937,33 @@ const server = http.createServer(async (req, res) => {
   if (contactRoute) {
     const c = loadContact(contactRoute[1]);
     if (!c) return json(res, 404, { error: "No such friend." });
+    if (req.method === "DELETE") {
+      const { confirm } = await readBody(req);
+      if (String(confirm ?? "").trim().toLowerCase() !== firstName(c).toLowerCase()) {
+        return json(res, 400, { error: `Type ${firstName(c)} to confirm.` });
+      }
+      uninstallFriend(c);
+      return json(res, 200, { ok: true });
+    }
     if (req.method === "PUT") {
-      const { settings = {}, active } = await readBody(req);
+      const { settings = {}, active, role } = await readBody(req);
       for (const k of SETTING_KEYS) if (k in settings) c.settings[k] = settings[k];
-      // Inactive friends are hidden from the friends list and never call you; nothing else about them changes.
+      if (ROLE_CHOICES.some(([r]) => r === role)) c.role = resolveRole(role, friendGender(c));
+      // Turned-off friends are hidden, never call you and hear no news. Turned back on, they catch up on the news.
+      let caughtUpSince = null;
+      if (active === false && c.active !== false) c.inactiveSince = new Date().toISOString();
+      if (active === true && c.inactiveSince) {
+        caughtUpSince = c.inactiveSince;
+        delete c.inactiveSince;
+      }
       if (typeof active === "boolean") c.active = active;
+      if (caughtUpSince && getClient()) setTimeout(() => catchUp(loadContact(c.id), caughtUpSince).catch((err) => console.error("Catch-up failed:", err?.message ?? err)), 0);
       if (c.settings.model && !MODELS[c.settings.model]) c.settings.model = DEFAULT_MODEL;
       if (Object.keys(settings).length) delete c.legacy;
       saveContact(c);
     }
     return json(res, 200, {
-      id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy,
+      id: c.id, name: c.name, firstName: firstName(c), settings: c.settings, legacy: !!c.legacy, role: shownRole(c.role ?? "friend"),
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
     });
   }

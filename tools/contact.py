@@ -36,6 +36,12 @@ Commands:
     activate <id> / deactivate <id>       show or hide a friend on the friends list (hidden friends never
                                           call you; nothing else about them changes)
     remove <id>                           archive a friend to data/removed/ (never deletes memory)
+    publish <id> --gender man|woman --about "One line" [--role-man ROLE] [--role-woman ROLE]
+                                          make a friend installable from the app (Settings -> Friends, and
+                                          first-time setup): copies their voice sample and face into
+                                          contacts/<id>/ and writes contacts/<id>/friend.json with their
+                                          defaults (model, live knowledge, links, and the relationship they
+                                          start with for a man or a woman). Run it after building a friend.
 
 A friend's id is short and lowercase, like "joe" or "uncle-earl". Their memory and call logs are never
 touched by this tool except "reset" and "remove", which move them to an archive folder.
@@ -392,6 +398,34 @@ def cmd_remove(args):
     print(f'{info["name"]} archived to data/removed/{args.id}-{stamp} (memory and call logs kept there).')
 
 
+def cmd_publish(args):
+    info = load(args.id)
+    for role in (args.role_man, args.role_woman):
+        check_role(role)
+    s = info.get("settings", {})
+    folder = os.path.join(PERSONAS, args.id)
+    voice = os.path.join(VOICES, f"{s.get('cbVoice', '')}.wav")
+    if not s.get("cbVoice") or not os.path.isfile(voice):
+        fail(f'{info["name"]} has no voice clip yet; add one with "voice" first.')
+    shutil.copyfile(voice, os.path.join(folder, "voice.wav"))
+    face = os.path.join(FACES, f"{s.get('face', '')}.png")
+    has_face = bool(s.get("face")) and os.path.isfile(face)
+    if has_face:
+        shutil.copyfile(face, os.path.join(folder, "face.png"))
+    friend = {
+        "name": info["name"],
+        "gender": args.gender,
+        "about": args.about.strip(),
+        "model": s.get("model", "sonnet"),
+        "roles": {"man": args.role_man, "woman": args.role_woman},
+        **({"knows": info["knows"]} if info.get("knows") else {}),
+        **({"links": info["links"]} if info.get("links") else {}),
+    }
+    write_json(os.path.join(folder, "friend.json"), friend)
+    print(f'{info["name"]} can now be installed from the app. Saved contacts/{args.id}/friend.json, voice.wav'
+          + (" and face.png." if has_face else " (no face picture yet)."))
+
+
 def main():
     p = argparse.ArgumentParser(description="Build and manage Call Joe friends.", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -419,6 +453,9 @@ def main():
     s = sub.add_parser("activate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=True)
     s = sub.add_parser("deactivate"); s.add_argument("id"); s.set_defaults(fn=cmd_active, on=False)
     s = sub.add_parser("remove"); s.add_argument("id"); s.set_defaults(fn=cmd_remove)
+    s = sub.add_parser("publish"); s.add_argument("id"); s.add_argument("--gender", choices=["man", "woman"], required=True)
+    s.add_argument("--about", required=True); s.add_argument("--role-man", default="friend")
+    s.add_argument("--role-woman", default="friend"); s.set_defaults(fn=cmd_publish)
     args = p.parse_args()
     args.fn(args)
 

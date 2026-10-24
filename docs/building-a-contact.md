@@ -60,7 +60,7 @@ video\.venv\Scripts\python.exe tools\contact.py link rosa george --relation "you
 
 ## A friend's role in your life
 
-`tools\contact.py role <id> <role>` sets who they are to you: friend, best-friend, spouse, mom, dad, sister, brother, grandparent, coworker or neighbor. Each role has a rules file in `contacts/_roles/` (what they'd plausibly hear about you, and what they wouldn't), and it's added to their instructions. Edit those files to fit your family, or add a new role file.
+In the app: Settings → Friends, the menu under each friend. From the command line, `tools\contact.py role <id> <role>` sets who they are to you: best-friend, close-friend, friend, family-friend, neighbor, coworker, mom, dad, sister, brother, grandparent, aunt, uncle, cousin or spouse. When you and a friend are both women, best-friend becomes `girlfriend-bestie` automatically. Each role has a rules file in `contacts/_roles/` (what they'd plausibly hear about you, and what they wouldn't), and it's added to their instructions. Edit those files to fit your family, or add a new role file.
 
 ## What they keep up with (live knowledge)
 
@@ -87,10 +87,17 @@ video\.venv\Scripts\python.exe tools\contact.py link rosa george --relation "you
 
 ## Turning friends on and off
 
-On the friends list, press ⚙ to open **Settings**. Every friend has an **Active** switch there.
-- Only active friends show on the friends list, and only active friends call you.
-- Turning a friend off only hides them. Their personality, voice, face, memory and links stay exactly as they are. Turn them back on any time.
+Contacts → the friend → ✎ Edit → **Show on your contacts**.
+- Only active friends show on your contacts, and only active friends call you.
+- Turning a friend off only hides them. Their personality, voice, face, memory and links stay exactly as they are, but they hear no news about you from linked friends while they're off.
+- Turn them back on any time. They catch up on the news they missed from linked friends' calls.
 - From the command line: `tools\contact.py deactivate <id>` and `activate <id>`. In `list`, friends who are off show `[off]`.
+
+## Installing, deleting and resetting
+
+- Friends with a `contacts/<id>/friend.json` (made by `tools\contact.py publish`) can be installed in first-time setup or in Settings → Friends, with a relationship you pick.
+- **Delete** (Settings → Friends) removes a friend for good: memory, call log, voicemail and news. Two warnings come first, and the second asks you to type their first name. They go back to "Ready to install", brand new.
+- **Reset phone** (Settings → System) wipes everything in `data/` except logs and the weather and sports cache, including your API key, then opens first-time setup. Two warnings first; the second asks you to type RESET.
 
 ## Tweaking a friend later
 

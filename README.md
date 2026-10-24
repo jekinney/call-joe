@@ -15,6 +15,10 @@ Desktop voice and video calls with AI friends powered by Claude. Joe Tucker ("Jo
 
 Open Claude Code in this folder and type `/new-contact`, then give Claude a name, a few sentences about who they are, a short voice clip and a face picture. Details are in `docs/building-a-contact.md`.
 
+## First-time setup
+
+A brand-new (or reset) phone walks you through setup: your name, whether you're a man or a woman, your town (for weather), your Anthropic API key (with how to get one; you can skip it), which friends to install, and who each one is to you (best friend, close friend, family friend, sister, grandparent, neighbor and so on). Friends you skip can be installed later in Settings → Friends.
+
 ## The phone
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:
@@ -24,7 +28,7 @@ Call Joe looks and works like an Android phone, inside a thin phone outline:
   - **Calls:** Recents (the last 30 calls, ↙ incoming or ↗ outgoing, plus missed and declined) and Voicemail, with play buttons. **Clear** asks whether to clear all, incoming or outgoing calls. It only clears the list: friends still remember the calls, and voicemails stay.
   - **Contacts:** your active friends, the ＋ button to add one, and friends you've turned off (with Turn on).
   - **Messages:** texting your friends is coming later.
-  - **Settings:** a list of settings; ☰ jumps between them. Calls (interrupt by talking), Looks, Account (your API key) and About.
+  - **Settings:** a list of settings; ☰ jumps between them. You (name, man or woman, town), Friends (install, change relationships, delete), Calls (interrupt by talking), Looks, Account (your API key), System (reset phone) and About.
 - **Navigation buttons:** ◁ back, ○ home, □ recent calls. Esc and a mouse's back button also go back.
 - **Looks:** a wallpaper (presets, including softer ones like Blush, Lavender, Peach, Rose gold and Floral, or your own picture), the text color on it (picked separately for each wallpaper; Auto suits it), the phone outline color (black by default, or None), and the call screen style: Classic (the default) or Photo, where the friend's picture fills the screen.
 

@@ -211,7 +211,8 @@ export function createKnowledge(dataDir) {
   // ---------- What a friend gets ----------
 
   // Real, current facts added to the system prompt at the start of a call (fixed for the call, so caching holds).
-  async function briefing(c) {
+  // buddyHome: where you live (from first-time setup), so friends know your weather too.
+  async function briefing(c, buddyHome) {
     const k = c.knows ?? {};
     const parts = [];
     if (k.nflTeam) {
@@ -229,6 +230,12 @@ export function createKnowledge(dataDir) {
       } catch {
         // Weather is a nice-to-have; leave it out if it can't be fetched.
       }
+    }
+    if (buddyHome && buddyHome.trim().toLowerCase() !== (k.home ?? "").trim().toLowerCase()) {
+      try {
+        const w = await weatherFor(buddyHome);
+        parts.push(`## Weather where your buddy lives (updated ${ago(w.at)})\n${w.data}`);
+      } catch {}
     }
     if (!parts.length && !k.web) return "";
     return `# What's going on (real and current)\nThese are real facts as of today. Use them naturally, like something you read in the paper or saw on TV. Don't recite them like a list.\n\n${parts.join("\n\n")}`;
