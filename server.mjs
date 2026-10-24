@@ -289,9 +289,9 @@ const identityFile = (id) => contactPath(id, "identity.md");
 function identityReady(c) {
   return c.identity?.hash === identitySource(c).hash && fs.existsSync(identityFile(c.id));
 }
-// Identities are built (and rebuilt after a persona, relationship or gender change) in the background. Until the new
-// one is ready, the friend talks from their persona and relationship as written (systemPrompt's fallback), so you
-// never wait on a "Creating…" screen.
+// Identities are built when a friend is installed (the "Creating…" screen, the only time you see it), and rebuilt
+// after a persona, relationship or gender change in the background. Until the new one is ready, the friend talks from
+// their persona and relationship as written (systemPrompt's fallback), so a call or text never waits.
 const buildingIdentity = new Set();
 function refreshIdentity(c) {
   if (!c || c.support || buildingIdentity.has(c.id) || identityReady(c) || !getClient()) return;
@@ -2217,6 +2217,11 @@ const server = http.createServer(async (req, res) => {
     const { id, role, cussing } = await readBody(req);
     try {
       const c = installFriend(id, role, cussing === true);
+      // Installing is the one time you watch a friend being created: their identity is built now, so their first
+      // call or text starts right away. If it can't be (no key yet), it's built in the background later.
+      if (getClient() && !c.support) {
+        await buildIdentity(loadContact(c.id)).catch((err) => console.error(`Building ${c.name}'s identity failed:`, err?.message ?? err));
+      }
       return json(res, 200, { id: c.id, name: c.name });
     } catch (err) {
       return json(res, 400, { error: err.message });

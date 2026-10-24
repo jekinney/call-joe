@@ -3179,9 +3179,13 @@ async function friendTextsYou(c) {
 }
 
 // ---------- Becoming official ----------
-// At your first call or text (and after their persona or relationship changes), a friend's personality and
-// relationship are merged into one identity by the server, in the background. Nothing waits on it: until it's
-// ready, they talk from their persona as written.
+// A friend's personality and your relationship are merged into one identity when you install them, behind the
+// "Creating…" screen (the only time you see it). After a change, or for a friend added another way, it's rebuilt by
+// the server in the background. Nothing else waits on it: until it's ready, they talk from their persona as written.
+function showCreating(name, count = "") {
+  $("creating").hidden = !name;
+  if (name) $("creatingTitle").textContent = `Creating ${name.split(" ")[0]}…${count ? ` (${count})` : ""}`;
+}
 async function ensureReady(id) {
   const f = data.friends.find((c) => c.id === id);
   if (!f || f.ready) return;
@@ -3291,7 +3295,7 @@ async function renderFriends() {
     <div class="pick" style="cursor:default; align-items:flex-start">${catalogAvatar(f)}
       <span class="txt"><div class="t1">${esc(f.name)}</div><div class="t2">${esc(f.about)}</div>
         <div class="friend-ctl"><select data-install-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select>
-          <button class="btn" data-install="${esc(f.id)}">Install</button></div>
+          <button class="btn" data-install="${esc(f.id)}" data-name="${esc(f.name)}">Install</button></div>
         <label class="cuss" style="margin-top:6px"><input type="checkbox" data-install-cuss="${esc(f.id)}" ${f.cussing ? "checked" : ""}> Cussing allowed</label></span></div>`).join("")
     || `<div class="empty">Every friend is already on your phone.</div>`;
 }
@@ -3335,8 +3339,10 @@ $("friendsAvail").onclick = async (e) => {
   b.disabled = true;
   b.textContent = "Installing…";
   const role = document.querySelector(`[data-install-role="${b.dataset.install}"]`)?.value;
+  showCreating(b.dataset.name);
   const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: b.dataset.install, role, cussing: !!document.querySelector(`[data-install-cuss="${b.dataset.install}"]`)?.checked }) });
   const out = await res.json().catch(() => ({}));
+  showCreating(null);
   toast(res.ok ? `${out.name} is on your phone. Find them in Contacts.` : out.error || "That didn't work.");
   friendsChanged();
   renderFriends();
@@ -3548,7 +3554,7 @@ $("suPickNext").onclick = () => {
     <div class="pick" style="cursor:default">${catalogAvatar(f)}
       <span class="txt"><div class="t1">${esc(f.name)}</div>
         <label class="cuss"><input type="checkbox" data-setup-cuss="${esc(f.id)}" ${f.cussing ? "checked" : ""}> Cussing allowed</label></span>
-      <select data-setup-role="${esc(f.id)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select></div>`).join("");
+      <select data-setup-role="${esc(f.id)}" data-name="${esc(f.name)}" aria-label="Who ${esc(f.name)} is to you">${roleOptions(f.role, f.roleChoices)}</select></div>`).join("");
   setupStep(5);
 };
 $("suInstall").onclick = async () => {
@@ -3558,9 +3564,11 @@ $("suInstall").onclick = async () => {
   for (const [i, sel] of sels.entries()) {
     $("suInstallMsg").className = "msg";
     $("suInstallMsg").textContent = `Installing ${i + 1} of ${sels.length}…`;
+    showCreating(sel.dataset.name, sels.length > 1 ? `${i + 1} of ${sels.length}` : "");
     const res = await fetch("/api/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: sel.dataset.setupRole, role: sel.value, cussing: !!document.querySelector(`[data-setup-cuss="${sel.dataset.setupRole}"]`)?.checked }) });
     if (!res.ok) failed.push(sel.dataset.setupRole);
   }
+  showCreating(null);
   await fetch("/api/setup/done", { method: "POST" });
   $("suInstall").disabled = false;
   $("suInstallMsg").textContent = "";
