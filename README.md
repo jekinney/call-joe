@@ -23,6 +23,8 @@ A brand-new (or reset) phone walks you through setup: your name, whether you're 
 
 Your API key is never deleted by anything, not even Reset phone. **Airplane mode** (the ✈ tile when you pull down the status bar, or Settings → Account) turns the key off: no calls, friends don't call you, no news passes between friends, and live knowledge stops updating. Everything already saved stays on this computer. To remove the key for good, turn on airplane mode first, then Settings → Account → Remove key (two warnings).
 
+**Google AI key (optional).** Settings → Account also takes a Google AI key (billing on). With it, friends' new photos are made by Google's Nano Banana. And if there's no Anthropic key, Gemini stands in for Claude (`gemini.mjs`): calls, texts, voicemails and memory all keep working, with the same personas and memory notes (Sonnet → Gemini 3.8 Flash, Haiku → 3.5 Flash-Lite, Opus → Gemini 4 Argon). Claude takes over again as soon as an Anthropic key is saved.
+
 ## The phone
 
 Call Joe looks and works like an Android phone, inside a thin phone outline:

@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { createKnowledge } from "./knowledge.mjs";
+import { createGeminiClient } from "./gemini.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 // CALLJOE_DATA and CALLJOE_PORT let a test copy run beside the real one without touching your data.
@@ -201,10 +202,13 @@ knowledge.startRefreshing(() => (config.airplane ? [] : listContacts()));
 // Your API key is never deleted by anything except you (Settings -> Account -> Remove key, only in airplane mode).
 // Airplane mode (config.airplane) turns the key off: no calls, no friends calling, no news, no live-knowledge
 // updates. Everything already saved stays on this computer.
+// With no Claude key, a Google AI key stands in: Gemini thinks for friends (gemini.mjs) until a Claude key is added.
+let geminiClient = null;
 function getClient() {
-  if (!config.apiKey || config.airplane) return null;
-  client ??= new Anthropic({ apiKey: config.apiKey });
-  return client;
+  if (config.airplane) return null;
+  if (config.apiKey) return (client ??= new Anthropic({ apiKey: config.apiKey }));
+  if (config.googleKey) return (geminiClient ??= createGeminiClient(() => config.googleKey));
+  return null;
 }
 
 const chatModel = (c) => MODELS[c?.settings.model] ?? MODELS[DEFAULT_MODEL];
@@ -1638,7 +1642,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/api/status") {
     return json(res, 200, {
-      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
+      held: held?.contactId ?? null, hasGiphy: !!config.giphyKey, hasGoogle: !!config.googleKey, googleProblem: geminiProblem && Date.now() < geminiProblem.until ? geminiProblem.message : null, hasKey: !!config.apiKey, brain: config.apiKey ? "claude" : config.googleKey ? "gemini" : null, airplane: !!config.airplane, silent: !!config.silent, inCall: call?.contactId ?? null,
       setupDone: config.setupDone !== false, user: config.user ?? null,
     });
   }

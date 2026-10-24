@@ -1578,7 +1578,7 @@ async function videoReady() {
 async function startCall(video, incoming = false) {
   const status = await fetch("/api/status").then((r) => r.json());
   if (status.airplane) return toast("Airplane mode is on. Turn it off to call: pull down the status bar, or Settings → Account.");
-  if (!status.hasKey) return $("keyDialog").showModal();
+  if (!status.hasKey && !status.hasGoogle) return $("keyDialog").showModal();
   if (!hasVoice()) {
     $("status").textContent = `${who()} needs a voice clip first. Add one in ⚙ settings, or ask Claude.`;
     return $("settingsBtn").click();
@@ -2001,7 +2001,7 @@ if ("BroadcastChannel" in window) {
 
 fetch("/api/status").then((r) => r.json()).then((s) => {
   if (!s.setupDone) return showSetup();
-  if (!s.hasKey && !s.airplane) $("keyDialog").showModal();
+  if (!s.hasKey && !s.hasGoogle && !s.airplane) $("keyDialog").showModal();
 });
 // ---------- Friends who call you ----------
 // Once a minute (never at night), friends who want to call get in line:
@@ -2767,7 +2767,8 @@ document.querySelector(".styles").onclick = async (e) => {
 async function loadKeyState() {
   const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
   showAirplane(!!st.airplane);
-  $("keyState").textContent = !st.hasKey ? "No key yet. Paste one below."
+  $("keyState").textContent = !st.hasKey && st.hasGoogle ? "No Claude key, so friends are thinking with Gemini (your Google AI key) for now. Paste a Claude key below to switch back."
+    : !st.hasKey ? "No key yet. Paste one below."
     : st.airplane ? "Saved, and turned off (airplane mode)." : "Saved and on. Paste a new one below to replace it.";
   $("removeKeyBtn").hidden = !st.hasKey;
   $("removeKeyHint").hidden = !st.hasKey;
@@ -3433,8 +3434,8 @@ $("suHomeNext").onclick = async () => {
   // Saved now, so the relationships offered later fit whether you're a man or a woman.
   await saveProfile($("suFirst").value, $("suLast").value, pickedGender($("suGender")), $("suHome").value, readSpouse("suSpouse"), $("suAge").value, $("suBday").value);
   const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
-  setupStep(st.hasKey ? 4 : 3);
-  if (st.hasKey) renderSetupPicks();
+  setupStep(st.hasKey || st.hasGoogle ? 4 : 3);
+  if (st.hasKey || st.hasGoogle) renderSetupPicks();
 };
 $("suKeySkip").onclick = () => { setupStep(4); renderSetupPicks(); };
 $("suKeySave").onclick = async () => {
@@ -3492,7 +3493,7 @@ $("suInstall").onclick = async () => {
   const st = await fetch("/api/status").then((r) => r.json()).catch(() => ({}));
   $("suDoneTitle").textContent = `You're all set${st.user?.first ? `, ${st.user.first}` : ""}`;
   $("suDoneText").textContent = (failed.length ? `Some friends couldn't be installed (${failed.join(", ")}); try again in Settings → Friends. ` : "")
-    + (st.hasKey ? "Your friends are on your phone. Tap one in Contacts, or on your home screen, and give them a call."
+    + (st.hasKey || st.hasGoogle ? "Your friends are on your phone. Tap one in Contacts, or on your home screen, and give them a call."
       : "Your friends are on your phone. Add your API key in Settings → Account, then give them a call.");
   setupStep(6);
 };
