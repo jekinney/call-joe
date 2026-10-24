@@ -284,6 +284,31 @@
   #waiting .txt { flex: 1; min-width: 0; }
   #waiting .t1 { font-weight: 600; }
   #waiting .t2 { font-size: 13px; color: var(--muted); }
+  /* Texts, like Android's Messages app */
+  #pageThread { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; }
+  .thread-top { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: rgba(24, 19, 15, .94); }
+  .thread-top .c-avatar { width: 38px; height: 38px; font-size: 16px; }
+  .thread-name { flex: 1; font-weight: 600; font-size: 17px; }
+  .bubbles { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; width: min(560px, 100%); align-self: center; }
+  .bubble { max-width: 78%; padding: 9px 13px; border-radius: 20px; font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; white-space: pre-wrap; animation: pop .15s ease-out; }
+  .bubble.me { align-self: flex-end; background: var(--accent); color: #241a12; border-bottom-right-radius: 6px; }
+  .bubble.them { align-self: flex-start; background: #3a2f26; color: var(--ink); border-bottom-left-radius: 6px; }
+  .bubble.me + .bubble.them, .bubble.them + .bubble.me { margin-top: 8px; }
+  .bubble.err { background: none; color: #ff8a80; font-size: 12px; align-self: flex-end; padding: 2px 4px; }
+  @keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+  .stamp { align-self: center; font-size: 11px; color: var(--wall-ink); opacity: .75; margin: 12px 0 4px; text-shadow: 0 1px 4px var(--wall-shadow); }
+  .typing { align-self: flex-start; background: #3a2f26; border-radius: 20px; padding: 12px 14px; display: flex; gap: 4px; margin-top: 6px; }
+  .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .3; } 40% { opacity: 1; } }
+  .composer { display: flex; gap: 8px; padding: 8px 12px 10px; background: rgba(24, 19, 15, .94); }
+  .composer input { flex: 1; margin: 0; border-radius: 24px; padding: 11px 16px; }
+  .send { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent); color: #241a12; font-size: 18px; cursor: pointer; flex: none; }
+  .send:disabled { opacity: .5; cursor: default; }
+  .row-item.unread .t1, .row-item.unread .t2 { color: var(--ink); font-weight: 700; }
+  .row-item .when { font-size: 12px; color: var(--muted); align-self: flex-start; margin-top: 3px; }
+  .unread-dot { min-width: 20px; height: 20px; border-radius: 10px; background: var(--accent); color: #241a12; font-size: 11px; font-weight: 700; display: grid; place-items: center; padding: 0 5px; }
   /* Android-style snackbar above the tabs */
   #toast {
     position: fixed; left: 50%; bottom: 130px; transform: translateX(-50%); background: #efe4d4; color: #241a12; width: max-content;
@@ -453,8 +478,23 @@
 <!-- Messages: text messages are a later feature -->
 <main id="pageMessages" class="page" hidden>
   <div class="page-top"><h1>Messages</h1></div>
-  <div class="soon-card"><div class="big">💬</div><h2>Text messages are coming soon</h2>
-    <p class="hint" style="font-size:14px">You'll be able to text your friends, and they'll text you back in their own words.</p></div>
+  <div class="list" id="threadList"></div>
+  <button class="fab" id="newTextBtn" title="New message">✎</button>
+</main>
+
+<!-- One text conversation -->
+<main id="pageThread" hidden>
+  <div class="thread-top">
+    <button class="top-btn" id="threadBack" title="Back">←</button>
+    <span class="c-avatar" id="threadAvatar"></span>
+    <div class="thread-name" id="threadName"></div>
+    <button class="top-btn" id="threadCall" title="Call">📞</button>
+  </div>
+  <div class="bubbles" id="bubbles"></div>
+  <div class="composer">
+    <input id="textInput" placeholder="Text message" autocomplete="off" maxlength="2000">
+    <button class="send" id="textSend" title="Send">➤</button>
+  </div>
 </main>
 
 <!-- Settings: ☰ opens the list of settings; each one has its own page -->
@@ -641,6 +681,7 @@
     <div class="mic-meter" id="micMeterWrap" hidden title="Your mic level"><span id="micMeter"></span></div></div>
   <div class="ctl" id="callCtl"><button class="round" id="callBtn" title="Voice call">📞</button>Call</div>
   <div class="ctl" id="videoCtl"><button class="round" id="videoBtn" title="Video call">🎥</button>Video</div>
+  <div class="ctl" id="textCtl"><button class="round soft" id="textBtn" title="Text message">💬</button>Text</div>
   <div class="ctl" id="switchCtl" hidden><button class="round soft" id="switchBtn" title="Switch between video and voice">🎥</button><span id="switchLabel">Video</span></div>
   <div class="ctl" id="hushCtl" hidden><button class="round soft" id="hushBtn" title="Cut them off so you can talk">✋</button>Hush</div>
   <div class="ctl" id="hangCtl" hidden><button class="round" id="hangBtn" title="Hang up">📞</button>Hang up</div>
@@ -651,7 +692,7 @@
 <nav class="tabbar" id="tabbar" aria-label="Phone">
   <button data-go="calls"><span class="ico">📞</span>Calls<span class="badge" id="tabCallsBadge" hidden></span></button>
   <button data-go="contacts"><span class="ico">👥</span>Contacts</button>
-  <button data-go="messages"><span class="ico">💬</span>Messages</button>
+  <button data-go="messages"><span class="ico">💬</span>Messages<span class="badge" id="tabMsgBadge" hidden></span></button>
   <button data-go="settings"><span class="ico">⚙</span>Settings</button>
 </nav>
 <nav class="navbar" id="homebar" aria-label="Navigation">
@@ -692,6 +733,12 @@
     <label><input type="radio" name="clearWhich" value="outgoing"> Outgoing (you called)</label>
   </div>
   <div class="row"><button class="btn ghost" id="clearCancel">Cancel</button><button class="btn" id="clearOk">Clear</button></div>
+</dialog>
+
+<dialog id="pickDialog">
+  <h2>New message</h2>
+  <div id="pickList"></div>
+  <div class="row"><button class="btn ghost" id="pickClose">Cancel</button></div>
 </dialog>
 
 <dialog id="dangerDialog">
@@ -757,6 +804,15 @@
     </select>
     <button class="btn ghost" id="callMeNow" title="Try it: they call you in a few seconds">Try it</button>
   </div>
+  <label for="textsYouSelect"><span class="fn">Joe</span> texts you</label>
+  <div class="face-row">
+    <select id="textsYouSelect">
+      <option value="never">Never (only texts back)</option>
+      <option value="sometimes">Their usual (depends on who they are to you)</option>
+      <option value="often">Often (about twice as much)</option>
+    </select>
+    <button class="btn ghost" id="textMeNow" title="Try it: they text you in a few seconds">Try it</button>
+  </div>
   <div class="hint">Only while Call Joe is open, and never between 9 PM and 8 AM.</div>
   <label for="modelSelect"><span class="fn">Joe</span>'s brain</label>
   <select id="modelSelect">
@@ -805,7 +861,7 @@
 const $ = (id) => document.getElementById(id);
 // Voice, face and model settings belong to the friend on the call screen and are saved on the server.
 // Everything else (like captions on or off) is a preference kept in this browser.
-const PER_FRIEND = new Set(["model", "cbVoice", "face", "callsYou"]);
+const PER_FRIEND = new Set(["model", "cbVoice", "face", "callsYou", "textsYou"]);
 let contact = null; // the friend on the call screen: { id, name, firstName, settings, calls, lastCall }
 let saveTimer = null;
 const store = {
@@ -867,6 +923,7 @@ function setState(s, text) {
   $("status").textContent = text;
   const inCall = s !== "idle";
   $("callCtl").hidden = inCall;
+  $("textCtl").hidden = inCall;
   $("videoCtl").hidden = inCall;
   $("hangCtl").hidden = !inCall;
   $("muteCtl").hidden = !inCall;
@@ -1500,6 +1557,7 @@ $("settingsBtn").onclick = async () => {
   $("modelSelect").value = store.get("model", "sonnet");
   $("activeToggle").checked = contact.active !== false;
   $("callsYouSelect").value = store.get("callsYou", "never");
+  $("textsYouSelect").value = store.get("textsYou", "sometimes");
   refreshChatterbox();
   refreshFaces();
   $("settingsDialog").showModal();
@@ -1510,6 +1568,12 @@ $("callsYouSelect").onchange = (e) => {
   store.set("callsYou", e.target.value);
   // So an incoming call can show up even when the window is behind others.
   if (e.target.value !== "never" && window.Notification?.permission === "default") Notification.requestPermission();
+};
+$("textsYouSelect").onchange = (e) => store.set("textsYou", e.target.value);
+$("textMeNow").onclick = () => {
+  const c = data.friends.find((f) => f.id === contact?.id);
+  $("settingsDialog").close();
+  if (c) setTimeout(() => friendTextsYou(c), 3000);
 };
 $("callMeNow").onclick = () => {
   const c = contact;
@@ -1832,6 +1896,23 @@ setInterval(async () => {
   dispatchCall();
 }, 60 * 1000);
 
+// Friends text on their own, separately from calls: each minute the app is open (not at night), a friend's chance is
+// their usual texts per day (relationship and personality, from the server) spread over about 8 open hours. One text
+// at a time across all friends, at least 10 minutes apart, and at least 45 minutes between texts from the same friend.
+const TEXT_SCALE = { sometimes: 1, often: 2 };
+const lastTextFrom = {};
+let lastAnyText = 0;
+setInterval(() => {
+  if (airplane || quietHours() || Date.now() - lastAnyText < 10 * 60 * 1000) return;
+  for (const c of data.friends) {
+    if (!c.active || !TEXT_SCALE[c.textsYou] || Date.now() - (lastTextFrom[c.id] ?? 0) < 45 * 60 * 1000) continue;
+    if (Math.random() < (c.textsPerDay * TEXT_SCALE[c.textsYou]) / 480) {
+      lastTextFrom[c.id] = lastAnyText = Date.now();
+      return friendTextsYou(c);
+    }
+  }
+}, 60 * 1000);
+
 // Rings the next friend in line when their turn comes: normally when you're free, as call waiting during a call,
 // or straight to voicemail when both lines are busy.
 function dispatchCall() {
@@ -1839,6 +1920,7 @@ function dispatchCall() {
   if (state === "idle" && Date.now() - lastCallEnded < 10 * 60 * 1000) return; // a breather after a call
   const c = callQueue.shift();
   nextRingAt = Date.now() + randomGap();
+  if (!worriedCallback(c) && Math.random() < 0.4) return friendTextsYou(c);
   if (heldContact) {
     missed[c.id] = new Date().toLocaleString("en-US", { weekday: "long", hour: "numeric", minute: "2-digit" });
     toast(`📞 ${c.name} called, but both lines were busy.`);
@@ -2009,10 +2091,12 @@ $("declineBtn").onclick = () => { if (ringingIn) { ringingIn.declined = true; ri
 // ---------- The phone: pages, tabs, status bar ----------
 // Pages: home (app icons), contacts (the friends list, id "home"), calls, messages, settings, and call (a friend's
 // page, which is also the call screen). The tabs and home bar hide during a call.
-const PAGE_IDS = { home: "pageHome", contacts: "home", calls: "pageCalls", messages: "pageMessages", settings: "pageSettings", call: "callScreen", setup: "pageSetup" };
+const PAGE_IDS = { home: "pageHome", contacts: "home", calls: "pageCalls", messages: "pageMessages", thread: "pageThread", settings: "pageSettings", call: "callScreen", setup: "pageSetup" };
 let page = "home";
 let pagesBack = [], goingBack = false;
-const data = { friends: [], voicemail: [], notices: [] }; // refreshed by refreshData()
+const data = { friends: [], voicemail: [], notices: [], threads: [] }; // refreshed by refreshData()
+const unreadTexts = () => data.threads.reduce((n, t) => n + t.unread, 0);
+let seenTextAt = null; // newest text time already announced
 
 function showPage(name) {
   // Leaving a friend's page between calls puts their video away.
@@ -2027,13 +2111,19 @@ function showPage(name) {
   else if (page !== name) pagesBack.push(page);
   page = name;
   for (const [n, id] of Object.entries(PAGE_IDS)) $(id).hidden = n !== name;
-  document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.go === (name === "call" ? "contacts" : name)));
+  const tab = { call: "contacts", thread: "messages" }[name] ?? name;
+  document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.go === tab));
+  if (name !== "thread") threadId = null;
   closeShade();
   $("setDrawer").hidden = true;
   $("backBtn").hidden = name !== "call" || state !== "idle";
   $("settingsBtn").hidden = name !== "call" || state !== "idle";
   // First-time setup takes the whole screen; the tabs and navigation buttons come back after it.
-  if (state === "idle") $("tabbar").hidden = $("homebar").hidden = name === "setup";
+  if (state === "idle") {
+    $("homebar").hidden = name === "setup";
+    $("tabbar").hidden = name === "setup" || name === "thread"; // a conversation gets the whole screen, like Android
+  }
+  if (name === "messages") renderThreads();
   if (name === "home") renderHome();
   if (name === "calls") renderCalls();
   if (name === "settings") showSetting(null);
@@ -2114,7 +2204,15 @@ async function refreshData() {
     fetch("/api/contacts").then((r) => r.json()).catch(() => data.friends),
     fetch("/api/voicemail").then((r) => r.json()).catch(() => data.voicemail),
     fetch("/api/notices").then((r) => r.json()).catch(() => data.notices),
+    fetch("/api/texts/threads").then((r) => r.json()).then((t) => (data.threads = t)).catch(() => {}),
   ]);
+  // A text that arrived without the phone asking (like a friend texting about the game): announce it once.
+  const newest = data.threads.find((t) => t.unread && t.lastFrom === "them");
+  if (seenTextAt !== null && newest && newest.at > seenTextAt && newest.contact !== threadId) {
+    toast(`💬 ${newest.name}: ${newest.last}`);
+    ring(0.4).catch(() => {});
+  }
+  seenTextAt = data.threads.reduce((m, t) => (t.at > m ? t.at : m), seenTextAt ?? "");
   data.notices = notices;
   data.friends = friends;
   data.voicemail = voicemail;
@@ -2163,6 +2261,10 @@ function notifications() {
   return [
     ...data.voicemail.filter((v) => !v.heard).map((v) => ({ key: `vm:${v.id}`, go: "voicemail", name: v.name, face: v.face, title: `${v.name} left you a voicemail`, sub: v.when })),
     ...Object.entries(missed).filter(([id]) => byId[id]).map(([id, when]) => ({ key: `missed:${id}`, go: "recents", name: byId[id].name, face: byId[id].face, title: `Missed call from ${byId[id].name}`, sub: when })),
+    ...data.threads.filter((t) => t.unread && t.contact !== threadId).map((t) => ({
+      key: `text:${t.contact}:${t.at}`, go: `text:${t.contact}`, name: t.name, face: t.face,
+      title: `${t.name}${t.unread > 1 ? ` (${t.unread} texts)` : ""}`, sub: t.last,
+    })),
     ...data.notices.map((n) => {
       const f = data.friends.find((c) => c.id === n.contact);
       return { key: `notice:${n.id}`, go: "contacts", name: f?.name ?? "Call Joe", face: f?.face, title: n.text, sub: new Date(n.at).toLocaleString([], { weekday: "long", hour: "numeric", minute: "2-digit" }) };
@@ -2181,6 +2283,8 @@ function renderNotifications() {
     || `<div class="empty">You're all caught up.</div>`;
   $("clearNotesBtn").hidden = !notes.length;
   const fresh = data.voicemail.filter((v) => !v.heard).length + Object.keys(missed).length;
+  $("tabMsgBadge").textContent = unreadTexts();
+  $("tabMsgBadge").hidden = !unreadTexts();
   $("tabCallsBadge").textContent = fresh;
   $("tabCallsBadge").hidden = !fresh;
 }
@@ -2203,6 +2307,7 @@ $("notes").onclick = (e) => {
   const n = e.target.closest("[data-note]");
   if (!n || state !== "idle") return;
   if (n.dataset.note === "contacts") return showHome();
+  if (n.dataset.note.startsWith("text:")) return openThread(n.dataset.note.slice(5));
   callsTab = n.dataset.note;
   showPage("calls");
 };
@@ -2219,7 +2324,7 @@ document.addEventListener("click", (e) => {
 const APPS = [
   { go: "calls", ic: "📞", name: "Phone", bg: "#2f9e4f" },
   { go: "contacts", ic: "👥", name: "Contacts", bg: "#8a5a2b" },
-  { go: "messages", ic: "💬", name: "Messages", bg: "#2f7fd1", soon: true },
+  { go: "messages", ic: "💬", name: "Messages", bg: "#2f7fd1" },
   { go: "voicemail", ic: "📩", name: "Voicemail", bg: "#b8792f" },
   { go: "add", ic: "➕", name: "Add friend", bg: "#4c6b3a" },
   { go: "looks", ic: "🎨", name: "Wallpaper", bg: "#7b3f8c" },
@@ -2234,6 +2339,7 @@ async function renderHome() {
       <button class="app ${a.soon ? "soon" : ""}" data-app="${a.go}">
         <span class="ic" style="background:${a.bg}">${a.ic}</span>${a.name}
         ${a.go === "voicemail" && fresh ? `<span class="badge">${fresh}</span>` : ""}
+        ${a.go === "messages" && unreadTexts() ? `<span class="badge">${unreadTexts()}</span>` : ""}
       </button>`).join("");
     const favs = data.friends.filter((c) => c.active).slice(0, 8);
     $("favsWrap").hidden = !favs.length;
@@ -2490,6 +2596,148 @@ $("activeToggle").onchange = async (e) => {
   contact.active = e.target.checked;
   toast(e.target.checked ? `${contact.name} is back on your contacts.` : `${contact.name} is turned off. Find them at the bottom of Contacts.`);
 };
+
+// ---------- Texts ----------
+// Short, modern texts both ways. Their replies show up one at a time with a typing bubble. When a conversation runs
+// long for who they are to you, they text that they're calling and ring you (the server decides; see TEXTS_BEFORE_CALL).
+let threadId = null, textBusy = false;
+const shortWhen = (iso) => {
+  const d = new Date(iso), now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (now - d < 6 * 864e5) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+};
+async function renderThreads() {
+  await refreshData();
+  if (page !== "messages") return;
+  $("threadList").innerHTML = data.threads.map((t) => `
+    <button class="row-item ${t.unread ? "unread" : ""}" data-thread="${esc(t.contact)}">${avatarHtml(t.name, t.face)}
+      <span class="txt"><div class="t1">${esc(t.name)}</div><div class="t2" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.lastFrom === "me" ? "You: " : ""}${esc(t.last)}</div></span>
+      <span style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><span class="when">${shortWhen(t.at)}</span>${t.unread ? `<span class="unread-dot">${t.unread}</span>` : ""}</span>
+    </button>`).join("") || `<div class="empty">No messages yet. Tap ✎ to text a friend.</div>`;
+}
+$("threadList").onclick = (e) => {
+  const t = e.target.closest("[data-thread]");
+  if (t) openThread(t.dataset.thread);
+};
+
+async function openThread(id) {
+  const f = data.friends.find((c) => c.id === id) ?? (await refreshData(), data.friends.find((c) => c.id === id));
+  if (!f) return;
+  showPage("thread");
+  threadId = id;
+  $("threadName").textContent = f.name;
+  $("threadAvatar").innerHTML = f.face ? `<img src="/api/face?name=${encodeURIComponent(f.face)}" alt="">` : esc(f.name[0]);
+  const list = await fetch(`/api/texts?contact=${encodeURIComponent(id)}`).then((r) => r.json()).catch(() => []);
+  drawBubbles(list);
+  markRead(id);
+  $("textInput").focus();
+}
+async function markRead(id) {
+  await fetch("/api/texts/read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id }) }).catch(() => {});
+  refreshData();
+}
+let lastBubbleAt = 0;
+function drawBubbles(list) {
+  $("bubbles").innerHTML = "";
+  lastBubbleAt = 0;
+  for (const t of list) addBubble(t.from, t.text, t.at);
+}
+function addBubble(from, text, at = new Date().toISOString()) {
+  const time = Date.parse(at);
+  if (time - lastBubbleAt > 30 * 60 * 1000) {
+    const stamp = document.createElement("div");
+    stamp.className = "stamp";
+    stamp.textContent = `${shortWhen(at)}${new Date(at).toDateString() === new Date().toDateString() ? "" : `, ${new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}`;
+    $("bubbles").append(stamp);
+  }
+  lastBubbleAt = time;
+  const b = document.createElement("div");
+  b.className = `bubble ${from}`;
+  b.textContent = text;
+  $("bubbles").append(b);
+  $("bubbles").scrollTop = $("bubbles").scrollHeight;
+  return b;
+}
+function showTyping(on) {
+  $("bubbles").querySelector(".typing")?.remove();
+  if (!on) return;
+  const t = document.createElement("div");
+  t.className = "typing";
+  t.innerHTML = "<span></span><span></span><span></span>";
+  $("bubbles").append(t);
+  $("bubbles").scrollTop = $("bubbles").scrollHeight;
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Shows their texts one by one, with a pause like they're typing each one.
+async function showTheirTexts(id, texts) {
+  for (const t of texts) {
+    if (threadId === id) showTyping(true);
+    await sleep(Math.min(4000, 700 + t.text.length * 35));
+    if (threadId === id) { showTyping(false); addBubble("them", t.text, t.at); }
+  }
+  if (threadId === id) markRead(id); else refreshViews();
+}
+async function sendText() {
+  const text = $("textInput").value.trim();
+  const id = threadId;
+  if (!text || !id || textBusy) return;
+  $("textInput").value = "";
+  addBubble("me", text);
+  textBusy = true;
+  $("textSend").disabled = true;
+  await sleep(900);
+  if (threadId === id) showTyping(true);
+  const res = await fetch("/api/texts/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: id, text }) }).catch(() => null);
+  const out = await res?.json().catch(() => ({}));
+  if (threadId === id) showTyping(false);
+  textBusy = false;
+  $("textSend").disabled = false;
+  if (!res?.ok) {
+    if (threadId === id) addBubble("err", `Not delivered: ${out?.error ?? "no connection"}`);
+    return;
+  }
+  await showTheirTexts(id, out.texts);
+  if (out.call) setTimeout(() => ringYou(id), 4000); // "calling u" means the phone rings
+}
+$("textSend").onclick = sendText;
+$("textInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); } };
+$("threadBack").onclick = () => goBack();
+$("threadCall").onclick = () => { const id = threadId; if (id) openContact(id, "voice"); };
+$("textBtn").onclick = () => { if (contact) openThread(contact.id); };
+
+// New message: pick a friend.
+$("newTextBtn").onclick = async () => {
+  await refreshData();
+  $("pickList").innerHTML = data.friends.filter((c) => c.active).map((c) => `
+    <button class="row-item" data-pick-text="${esc(c.id)}">${avatarHtml(c.name, c.face)}<span class="txt"><div class="t1">${esc(c.name)}</div></span></button>`).join("");
+  $("pickDialog").showModal();
+};
+$("pickList").onclick = (e) => {
+  const b = e.target.closest("[data-pick-text]");
+  if (!b) return;
+  $("pickDialog").close();
+  openThread(b.dataset.pickText);
+};
+$("pickClose").onclick = () => $("pickDialog").close();
+
+// A friend texts you first (chosen by the call scheduler instead of a call now and then).
+async function friendTextsYou(c) {
+  const res = await fetch("/api/texts/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contact: c.id }) }).catch(() => null);
+  if (!res?.ok) return;
+  const out = await res.json();
+  if (threadId === c.id) return showTheirTexts(c.id, out.texts);
+  const first = out.texts[0]?.text ?? "";
+  seenTextAt = out.texts.at(-1)?.at ?? seenTextAt;
+  toast(`💬 ${c.name}: ${first}`);
+  ring(0.4).catch(() => {});
+  if (document.hidden && window.Notification?.permission === "granted") {
+    const n = new Notification(c.name, { body: first, silent: true });
+    n.onclick = () => { window.focus(); openThread(c.id); n.close(); };
+  }
+  refreshViews();
+  if (page === "messages") renderThreads();
+}
 
 // ---------- Dangerous things ask twice ----------
 // A warning dialog that resolves true or false. With typeWord, the button only works once you type that word.

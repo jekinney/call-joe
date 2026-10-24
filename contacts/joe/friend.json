@@ -6,5 +6,11 @@
   "roles": {
     "man": "best-friend",
     "woman": "friend"
-  }
+  },
+  "textHabits": [
+    "a funny story about Brandy or the kids",
+    "a country saying that fits the day",
+    "something dumb that just happened at work"
+  ],
+  "textScale": 1
 }

@@ -86,3 +86,10 @@ The separate Settings window (`settings.html`) is gone. Everything lives in the 
 - Calls queue up: family first (spouse, mom, dad, sister, brother, grandparent, aunt, uncle, cousin), then best friends, then others only when the line is empty; ties go to whoever you've called most. A random 3 to 12 minute gap between rings.
 - Two lines: a call during a call rings as call waiting. Answer puts the first friend on hold (`/api/call/hold`) and they come back when the second call ends (`/api/call/resume`). With someone on hold, a third caller goes to voicemail.
 - Laughs are only noticed when speech recognition writes them down ("haha", "that's funny"); a mic-based laugh detector is still to do.
+
+## Text messages (October 23, 2026)
+
+- Messages tab: threads like Android Messages, a conversation screen with typing bubbles, ✎ to start one, 💬 Text on a friend's page. Texts live in `data/contacts/<id>/texts.json`.
+- Friends text back short and modern (a sentence or two, sometimes a couple in a row). A long conversation turns into a phone call: after a number of your texts set by relationship (`TEXTS_BEFORE_CALL`: grandparents 3, moms 4, best friends 10, best girlfriends 12) and personality (`friend.json` `texting`: "calls" cuts it), they text that they're calling and your phone rings. That also keeps API use down.
+- Friends text first on their own clock while the app is open: texts per day by relationship (`TEXTS_PER_DAY`), scaled by `friend.json` `textScale` and the friend's "texts you" setting; what they text about comes from relationship habits (`TEXT_HABITS`: moms check in, sisters send jokes and "can you believe" gossip) plus `friend.json` `textHabits`. Football fans also text at kickoff, after scores and at the final (`knowledge.liveGame`).
+- Texts reach the memory notes with the next call, or once 20 pile up, and calls see the last two days of texts.

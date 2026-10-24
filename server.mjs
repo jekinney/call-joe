@@ -105,7 +105,8 @@ const contactsDir = path.join(dataDir, "contacts");
 fs.mkdirSync(contactsDir, { recursive: true });
 // Every friend talks with a Chatterbox voice cloned from their clip (cbVoice); face is optional (video calls).
 // callsYou: how often this friend rings you while the app is open ("never", "sometimes", "often").
-const SETTING_KEYS = ["model", "cbVoice", "face", "callsYou"];
+// textsYou: how often this friend texts you on their own ("never", "sometimes" (their usual), "often").
+const SETTING_KEYS = ["model", "cbVoice", "face", "callsYou", "textsYou"];
 
 const validId = (id) => /^[a-z0-9][a-z0-9-]{0,39}$/.test(String(id || ""));
 const contactPath = (id, file) => path.join(contactsDir, id, file);
@@ -190,10 +191,153 @@ async function systemPrompt(c) {
     missedCalls(c),
     ENDING_THE_CALL,
     knowledge.tools(c).length ? LOOKING_THINGS_UP : "",
-    `# Memory\n${mem}${connectionNews(c)}${voicemailsLeft(c)}`,
+    `# Memory\n${mem}${connectionNews(c)}${voicemailsLeft(c)}${recentTexts(c)}`,
     await knowledge.briefing(c, config.user?.home),
     `# Right now\nIt's ${now} where you both live. ${last}`,
   ].filter(Boolean).join("\n\n");
+}
+
+// ---- Text messages ----
+// data/contacts/<id>/texts.json: [{ id, from: "me" | "them", text, at, read, remembered }]. Friends text back short,
+// the way people really text. A long back-and-forth turns into a phone call (they text that they're calling and ring
+// you), at a point set by who they are to you and their personality, which also keeps API use down. Texts reach the
+// memory notes with the next call, or on their own once 20 pile up.
+const textsFile = (id) => contactPath(id, "texts.json");
+const readTexts = (id) => readJson(textsFile(id), []);
+const writeTexts = (id, list) => writeJson(textsFile(id), list.slice(-500));
+const CALL_MARK = "<call>";
+// How many of your texts in one conversation before they'd rather call. Moms, grandparents and neighbors call sooner;
+// best friends and siblings will text for ages. friend.json "texting": "calls" (prefers calling) cuts it, "texts" stretches it.
+const TEXTS_BEFORE_CALL = {
+  mom: 4, dad: 5, grandparent: 3, spouse: 8, sister: 8, brother: 8, "best-friend": 10, "girlfriend-bestie": 12,
+  "close-friend": 8, cousin: 8, aunt: 5, uncle: 5, friend: 6, "family-friend": 5, neighbor: 4, coworker: 4,
+};
+const TEXTING_SCALE = { calls: 0.6, normal: 1, texts: 1.5 };
+function textsBeforeCall(c) {
+  const style = c.texting ?? catalogEntry(c.id)?.texting ?? "normal";
+  return Math.max(2, Math.round((TEXTS_BEFORE_CALL[c.role] ?? 6) * (TEXTING_SCALE[style] ?? 1)));
+}
+// The current conversation: texts with no gap longer than 30 minutes.
+function currentThread(list) {
+  let i = list.length - 1;
+  while (i > 0 && Date.parse(list[i].at) - Date.parse(list[i - 1].at) < 30 * 60 * 1000) i--;
+  return list.slice(Math.max(i, 0));
+}
+const textWhen = (iso) => new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" });
+
+const TEXTING = `# Right now you're texting, not on the phone
+Your buddy and you are texting. Text back like a real person on their phone: short and casual, the way you'd really text. Younger or easygoing people use lowercase, abbreviations and an emoji now and then; older people text in fuller sentences, maybe with an odd emoji. Each text is a sentence or two at most, usually under 20 words. Usually one text, sometimes two or three quick ones in a row. Put a line with only --- between separate texts. Never write paragraphs, never put times or dates in brackets, and never use the hang-up marker.
+If something is serious, upsetting, or easier said out loud, you can say you'll call instead, and end with ${CALL_MARK}.`;
+
+// Builds the conversation for the model from recent texts (alternating turns, starting and ending with the buddy).
+function textTurns(list, extra) {
+  const turns = [];
+  for (const t of list.slice(-40)) {
+    const role = t.from === "me" ? "user" : "assistant";
+    const line = t.text;
+    if (turns.at(-1)?.role === role) turns.at(-1).content += `\n${line}`;
+    else turns.push({ role, content: line });
+  }
+  if (turns[0]?.role === "assistant") turns.unshift({ role: "user", content: "(Earlier texts.)" });
+  if (extra) {
+    if (turns.at(-1)?.role === "user") turns.at(-1).content += `\n\n${extra}`;
+    else turns.push({ role: "user", content: extra });
+  }
+  return turns;
+}
+
+// What people text about on their own, by relationship (from how families and friends really text: moms check in and
+// send good-morning texts, sisters send jokes and "can you believe" gossip, best friends vent and make plans,
+// grandparents send rare, sweet, formal notes). friend.json "textHabits" adds their own. One is picked at random.
+const TEXT_HABITS = {
+  mom: ["a good morning or goodnight text", "asking if they've eaten or are taking care of themselves", "a reminder about something (an appointment, calling family)", "sharing a recipe, article or photo description", "a quick 'love you, thinking of you'"],
+  dad: ["a short dad joke or one-liner", "a comment about the weather or a game", "a practical reminder (car, bills, the furnace)"],
+  spouse: ["what's for dinner", "a quick 'love you'", "asking them to grab something on the way home", "a funny thing that happened today"],
+  sister: ["a random joke or funny thing that just happened", "juicy gossip: 'can you BELIEVE...'", "venting about someone being dramatic", "asking their opinion on something (an outfit, a gift, a text she got)", "an eye-roll update about the family"],
+  brother: ["lightly roasting them", "a funny thing he saw", "sports talk", "asking if they want to do something"],
+  "best-friend": ["a random funny observation, like describing a meme", "venting about their day", "making plans", "checking on something the buddy told them", "'omg you will not believe this'"],
+  "girlfriend-bestie": ["'omg you will not believe this'", "venting about her day", "hyping her up or a compliment", "making plans for girls' night", "checking on something she told you", "a funny thing that happened"],
+  "close-friend": ["checking in", "sharing something that reminded them of the buddy", "making plans"],
+  friend: ["checking in", "sharing something that reminded them of the buddy"],
+  "family-friend": ["a warm check-in and asking after the family"],
+  cousin: ["family gossip", "a funny memory from when you were kids", "a check-in"],
+  aunt: ["a sweet check-in", "family news"],
+  uncle: ["a bad joke", "a sports comment"],
+  grandparent: ["a sweet, formal check-in, signed like a letter", "the weather where they live", "asking when they'll visit"],
+  neighbor: ["a neighborhood heads-up (a package, trash day, the weather)"],
+  coworker: ["work gossip or a complaint about a meeting"],
+};
+// Texts on their own per day the app is open (~8 hours), by relationship; friend.json "textScale" adjusts it.
+const TEXTS_PER_DAY = {
+  mom: 2, dad: 0.7, spouse: 3, sister: 3, brother: 1.5, "best-friend": 3, "girlfriend-bestie": 3.5, "close-friend": 1.5,
+  friend: 0.7, "family-friend": 0.4, cousin: 1, aunt: 0.5, uncle: 0.5, grandparent: 0.5, neighbor: 0.3, coworker: 0.4,
+};
+function textHabit(c) {
+  const own = c.textHabits ?? catalogEntry(c.id)?.textHabits ?? [];
+  const pool = [...(TEXT_HABITS[c.role] ?? TEXT_HABITS.friend), ...own, ...own]; // their own habits come up more
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+const textsPerDay = (c) => (TEXTS_PER_DAY[c.role] ?? 0.7) * (c.textScale ?? catalogEntry(c.id)?.textScale ?? 1);
+
+// Asks the friend for their next text(s). opener: they're texting first; about: what prompted it.
+async function friendTexts(c, { opener = false, about = null } = {}) {
+  const list = readTexts(c.id);
+  const thread = currentThread(list);
+  const mine = thread.filter((t) => t.from === "me").length;
+  const wantsCall = !opener && mine >= textsBeforeCall(c);
+  const note = opener
+    ? `(You decide to text your buddy, on your own. What prompted it: ${about ?? textHabit(c)}. Text the way you would. Just the text.)`
+    : wantsCall
+      ? `(This text conversation has gone on a while, and you'd rather just talk. Text that you're calling, in your own style, and end with ${CALL_MARK}.)`
+      : null;
+  const model = chatModel(c);
+  const msg = await getClient().beta.messages.create({
+    model: model.id,
+    max_tokens: 1500,
+    output_config: { effort: "low" },
+    ...model.params,
+    system: `${await systemPrompt(c)}\n\n${TEXTING}`,
+    messages: textTurns(list, note),
+  });
+  if (msg.stop_reason === "refusal") throw new Error("They couldn't text back right now.");
+  let raw = textOf(msg.content).replaceAll(HANGUP, "");
+  const call = raw.includes(CALL_MARK);
+  raw = raw.replaceAll(CALL_MARK, "");
+  const texts = raw.replace(/\[(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\]]*\]\s*/g, "").split(/^\s*---\s*$/m).map((t) => t.trim()).filter(Boolean).slice(0, 3);
+  const now = Date.now();
+  const added = texts.map((text, i) => ({ id: `${now + i}`, from: "them", text, at: new Date(now + i).toISOString(), read: false }));
+  writeTexts(c.id, [...readTexts(c.id), ...added]);
+  if (readTexts(c.id).filter((t) => !t.remembered).length >= 20) rememberTexts(c).catch(() => {});
+  return { texts: added, call };
+}
+
+// Texts not yet in the memory notes, as transcript lines; marks them remembered.
+function takeUnrememberedTexts(c) {
+  const list = readTexts(c.id);
+  const fresh = list.filter((t) => !t.remembered);
+  if (!fresh.length) return "";
+  for (const t of fresh) t.remembered = true;
+  writeTexts(c.id, list);
+  const first = firstName(c);
+  return fresh.map((t) => `[text ${textWhen(t.at)}] ${t.from === "me" ? "Buddy" : first}: ${t.text}`).join("\n");
+}
+async function rememberTexts(c) {
+  const transcript = takeUnrememberedTexts(c);
+  if (!transcript) return;
+  const memory = loadContact(c.id)?.memory;
+  if (!memory) return;
+  await mergeMemory(c, memory, `(Text messages)\n${transcript}`, "recent texts");
+  await learnRules(c, memory, transcript);
+  if (fs.existsSync(path.join(contactsDir, c.id))) writeJson(contactPath(c.id, "memory.json"), memory);
+}
+
+// Recent texts, so a call picks up where the texting left off.
+function recentTexts(c) {
+  const since = Date.now() - 2 * 24 * 3600 * 1000;
+  const recent = readTexts(c.id).filter((t) => Date.parse(t.at) > since).slice(-12);
+  if (!recent.length) return "";
+  const first = firstName(c);
+  return `\n\n# Recent texts with your buddy\n` + recent.map((t) => `- ${textWhen(t.at)}, ${t.from === "me" ? "buddy" : first}: ${t.text}`).join("\n");
 }
 
 // ---- Voicemail ----
@@ -600,7 +744,7 @@ async function hangUp() {
   const first = firstName(c);
   const memory = c.memory;
   const memoryFile = contactPath(c.id, "memory.json");
-  const transcript = ended.messages
+  let transcript = ended.messages
     .slice(1)
     .map((m) => `${m.role === "user" ? "Buddy" : first}: ${textOf(m.content).replaceAll(HANGUP, "").trim()}`)
     .join("\n");
@@ -608,31 +752,36 @@ async function hangUp() {
   memory.lastCall = ended.started.toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
   const direction = ended.incoming ? " (they called)" : "";
   fs.appendFileSync(contactPath(c.id, "call-log.txt"), `\n===== Call on ${memory.lastCall}${direction} =====\n${transcript}\n`);
-  if (transcript.trim()) {
-    try {
-      const msg = await getClient().messages.create({
-        model: MEMORY_MODEL,
-        max_tokens: 8000,
-        output_config: { effort: "low" },
-        system:
-          `You keep ${c.name}'s private memory notes about their buddy, the person who calls them. ` +
-          `Merge what was learned on the newest call into the existing notes. Keep facts about the buddy (name, family, job, likes, worries, plans, what's going on in their life), things ${first} promised to ask about next time, and any details ${first} made up about their own life so they stay consistent. ` +
-          "Write short plain-text bullet lines starting with '- '. Keep it under 60 lines and drop stale or trivial things. Output only the notes.",
-        messages: [{
-          role: "user",
-          content: `Existing notes:\n${memory.notes || "(none yet)"}\n\nNewest call (${memory.lastCall}):\n${transcript}`,
-        }],
-      });
-      if (msg.stop_reason !== "refusal") memory.notes = textOf(msg.content).trim();
-    } catch (err) {
-      console.error("Memory update failed:", err?.message ?? err);
-    }
-  }
+  const texts = takeUnrememberedTexts(c);
+  if (texts) transcript = `(Text messages since the last call)\n${texts}\n\n(The call)\n${transcript}`;
+  if (transcript.trim()) await mergeMemory(c, memory, transcript, memory.lastCall);
   if (transcript.trim()) await learnRules(c, memory, transcript);
   delete memory.missed; // you talked, so there's nothing to worry about
   if (!fs.existsSync(path.join(contactsDir, c.id))) return; // uninstalled, or the phone was reset, during the call
   writeJson(memoryFile, memory);
   if (transcript.trim()) await passNews(c, transcript);
+}
+
+async function mergeMemory(c, memory, transcript, label) {
+  const first = firstName(c);
+  try {
+    const msg = await getClient().messages.create({
+      model: MEMORY_MODEL,
+      max_tokens: 8000,
+      output_config: { effort: "low" },
+      system:
+        `You keep ${c.name}'s private memory notes about their buddy, the person who calls them. ` +
+        `Merge what was learned on the newest call into the existing notes. Keep facts about the buddy (name, family, job, likes, worries, plans, what's going on in their life), things ${first} promised to ask about next time, and any details ${first} made up about their own life so they stay consistent. ` +
+        "Write short plain-text bullet lines starting with '- '. Keep it under 60 lines and drop stale or trivial things. Output only the notes.",
+      messages: [{
+        role: "user",
+        content: `Existing notes:\n${memory.notes || "(none yet)"}\n\nNewest conversation (${label}):\n${transcript}`,
+      }],
+    });
+    if (msg.stop_reason !== "refusal") memory.notes = textOf(msg.content).trim();
+  } catch (err) {
+    console.error("Memory update failed:", err?.message ?? err);
+  }
 }
 
 // Learns how the buddy wants to be treated (what upset them, which jokes landed, what they gave permission for) and
@@ -1006,6 +1155,50 @@ const server = http.createServer(async (req, res) => {
       return json(res, 502, { error: err?.message ?? String(err) });
     }
   }
+  // ---- Texts ----
+  if (req.method === "GET" && url.pathname === "/api/texts/threads") {
+    return json(res, 200, listContacts().map((c) => {
+      const list = readTexts(c.id);
+      const last = list.at(-1);
+      return last && {
+        contact: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null, active: c.active !== false,
+        last: last.text, lastFrom: last.from, at: last.at, unread: list.filter((t) => t.from === "them" && !t.read).length,
+      };
+    }).filter(Boolean).sort((a, b) => b.at.localeCompare(a.at)));
+  }
+  if (req.method === "GET" && url.pathname === "/api/texts") {
+    const c = loadContact(url.searchParams.get("contact"));
+    if (!c) return json(res, 404, { error: "No such friend." });
+    return json(res, 200, readTexts(c.id).slice(-200));
+  }
+  if (req.method === "POST" && url.pathname === "/api/texts/read") {
+    const { contact } = await readBody(req);
+    const c = loadContact(contact);
+    if (!c) return json(res, 404, { error: "No such friend." });
+    const list = readTexts(c.id);
+    for (const t of list) if (t.from === "them") t.read = true;
+    writeTexts(c.id, list);
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === "POST" && (url.pathname === "/api/texts/send" || url.pathname === "/api/texts/start")) {
+    const { contact, text } = await readBody(req);
+    const c = loadContact(contact);
+    if (!c) return json(res, 400, { error: "No such friend." });
+    if (config.airplane) return json(res, 400, { error: "Airplane mode is on." });
+    if (!getClient()) return json(res, 400, { error: "No API key yet." });
+    const opener = url.pathname.endsWith("/start");
+    if (!opener) {
+      const said = String(text ?? "").trim().slice(0, 2000);
+      if (!said) return json(res, 400, { error: "Nothing to send." });
+      writeTexts(c.id, [...readTexts(c.id), { id: `${Date.now()}`, from: "me", text: said, at: new Date().toISOString(), read: true }]);
+    }
+    try {
+      return json(res, 200, await friendTexts(c, { opener }));
+    } catch (err) {
+      console.error("Texting failed:", err?.message ?? err);
+      return json(res, 502, { error: err?.message ?? String(err) });
+    }
+  }
   if (req.method === "GET" && url.pathname === "/api/notices") return json(res, 200, readJson(noticesFile, []));
   if (req.method === "POST" && url.pathname === "/api/notices/clear") {
     const { ids } = await readBody(req);
@@ -1062,7 +1255,7 @@ const server = http.createServer(async (req, res) => {
       id: c.id, name: c.name, face: c.settings.face && faceFile(c.settings.face) ? c.settings.face : null,
       hasVoice: !!voiceFile(c.settings.cbVoice), callsYou: c.settings.callsYou ?? "never",
       newVoicemail: readVoicemails(c.id).filter((v) => !v.heard).length, role: shownRole(c.role ?? "friend"),
-      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal",
+      worry: c.worry ?? catalogEntry(c.id)?.worry ?? "normal", textsYou: c.settings.textsYou ?? "sometimes", textsPerDay: textsPerDay(c),
       // openMinutes: how long the app has been open since their last missed call (time closed doesn't count).
       missed: c.memory.missed ? { ...c.memory.missed, openMinutes: (config.openMinutes ?? 0) - (c.memory.missed.atOpenMinute ?? config.openMinutes ?? 0) } : null,
       active: c.active !== false, calls: c.memory.calls, lastCall: c.memory.lastCall,
@@ -1147,6 +1340,36 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404);
   res.end();
 });
+
+// Football fans text about their team's game while the app is open: kickoff, their team scoring (and sometimes the
+// other team), and the final. At most one text per friend every 10 minutes, apart from the final. Never after 11 PM.
+const games = new Map(); // team -> last seen { id, state, usScore, themScore }
+const lastGameText = new Map(); // friend id -> time
+setInterval(async () => {
+  if (Date.now() - lastPing > 90 * 1000 || !getClient() || config.airplane) return;
+  const hour = new Date().getHours();
+  if (hour >= 23 || hour < 8) return;
+  const fans = listContacts().filter((c) => c.active !== false && c.knows?.nflTeam && (c.settings.textsYou ?? "sometimes") !== "never");
+  for (const team of new Set(fans.map((c) => c.knows.nflTeam))) {
+    let g;
+    try { g = await knowledge.liveGame(team); } catch { continue; }
+    if (!g) continue;
+    const before = games.get(team);
+    games.set(team, g);
+    if (!before || before.id !== g.id) continue; // first look at this game: just remember it
+    let about = null, final = false;
+    if (before.state === "pre" && g.state === "in") about = `the ${g.us} game against the ${g.them} is kicking off`;
+    else if (g.state === "in" && g.usScore > before.usScore) about = `the ${g.us} just scored (${g.us} ${g.usScore}, ${g.them} ${g.themScore}, ${g.detail})`;
+    else if (g.state === "in" && g.themScore - before.themScore >= 7 && Math.random() < 0.5) about = `the ${g.them} just scored on the ${g.us} (${g.us} ${g.usScore}, ${g.them} ${g.themScore}, ${g.detail})`;
+    else if (before.state === "in" && g.state === "post") { about = `the ${g.us} game just ended: ${g.us} ${g.usScore}, ${g.them} ${g.themScore}`; final = true; }
+    if (!about) continue;
+    for (const c of fans.filter((f) => f.knows.nflTeam === team)) {
+      if (!final && Date.now() - (lastGameText.get(c.id) ?? 0) < 10 * 60 * 1000) continue;
+      lastGameText.set(c.id, Date.now());
+      friendTexts(c, { opener: true, about }).catch((err) => console.error("Game text failed:", err?.message ?? err));
+    }
+  }
+}, 2 * 60 * 1000);
 
 // Time only counts while the app is open: config.openMinutes goes up once a minute while the page is talking to us.
 // Worried friends' call-back clocks run on it, so closing the app pauses them (see the scheduler in index.html).

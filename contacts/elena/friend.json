@@ -11,5 +11,14 @@
     "home": "Cibolo, Texas",
     "web": true
   },
-  "worry": "high"
+  "worry": "high",
+  "texting": "calls",
+  "textHabits": [
+    "gossip about another mom's marriage: 'can you believe...'",
+    "a Bible verse for the day",
+    "bragging on one of the kids' games",
+    "PTA drama",
+    "what Yesenia told her at the salon"
+  ],
+  "textScale": 1.5
 }

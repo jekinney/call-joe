@@ -18,5 +18,12 @@
       "relation": "your wife"
     }
   ],
-  "worry": "low"
+  "worry": "low",
+  "texting": "calls",
+  "textHabits": [
+    "grumbling about the Vikings",
+    "complaining about the Minnesota weather",
+    "a short, gruff check-in"
+  ],
+  "textScale": 0.6
 }

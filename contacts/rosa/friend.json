@@ -16,5 +16,12 @@
       "id": "george",
       "relation": "your husband"
     }
-  ]
+  ],
+  "texting": "calls",
+  "textHabits": [
+    "what she's cooking tonight, with a recipe tip",
+    "asking if they're eating enough",
+    "something George did that drove her crazy (lovingly)"
+  ],
+  "textScale": 0.8
 }

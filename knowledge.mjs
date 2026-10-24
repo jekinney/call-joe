@@ -307,5 +307,22 @@ export function createKnowledge(dataDir) {
     setTimeout(tick, 5000).unref?.();
   }
 
-  return { briefing, tools, runTool, startRefreshing };
+  // A team's game on the current scoreboard, straight from ESPN (not cached, so scores are fresh), or null.
+  async function liveGame(abbr) {
+    const j = await getJson(`${ESPN}/scoreboard`);
+    for (const e of j.events ?? []) {
+      const comp = e.competitions[0];
+      const us = comp.competitors.find((x) => x.team.abbreviation === abbr);
+      if (!us) continue;
+      const them = comp.competitors.find((x) => x !== us);
+      const score = (x) => Number((typeof x.score === "object" ? x.score?.displayValue : x.score) ?? 0) || 0;
+      return {
+        id: e.id, state: comp.status.type.state, detail: comp.status.type.shortDetail,
+        us: us.team.displayName, them: them.team.displayName, usScore: score(us), themScore: score(them),
+      };
+    }
+    return null;
+  }
+
+  return { briefing, tools, runTool, startRefreshing, liveGame };
 }
