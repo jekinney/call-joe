@@ -2486,7 +2486,10 @@ const textOf = (content) =>
 // line they say first is spoken while the lookup runs.
 async function streamReply(res) {
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
-  const startLength = call.messages.length - 1; // where this turn's user message sits
+  // This turn belongs to the call it started on. If that call ends (or a new one starts) mid-reply, say after the
+  // page was refreshed, the rest lands in the old call's history, never the new one's.
+  const live = call;
+  const startLength = live.messages.length - 1; // where this turn's user message sits
   // Strip the hang-up marker, and texts or photos sent during the call (<text>...</text>, <photo>...</photo>, never
   // spoken), as text streams in. Markers can arrive split across chunks, so hold back any ending that could start one.
   const MARKS = [HANGUP, "<text>", "<photo>"];
@@ -2515,7 +2518,7 @@ async function streamReply(res) {
     held = held.slice(held.length - keep);
   };
   try {
-    var c = loadContact(call.contactId);
+    var c = loadContact(live.contactId);
     const model = chatModel(c);
     const tools = c.support ? SUPPORT_TOOLS : knowledge.tools(c);
     for (let round = 0; round < 6; round++) {
@@ -2526,8 +2529,8 @@ async function streamReply(res) {
         cache_control: { type: "ephemeral" },
         ...model.params,
         ...(tools.length ? { tools } : {}),
-        system: call.system,
-        messages: call.messages,
+        system: live.system,
+        messages: live.messages,
       });
       for await (const event of stream) {
         // Text around a web search arrives as separate blocks; keep a space between them so sentences stay apart.
@@ -2538,10 +2541,10 @@ async function streamReply(res) {
       if (final.stop_reason === "refusal") {
         const line = "Huh, you cut out on me there, buddy. Say that again?";
         pass(line);
-        call.messages.push({ role: "assistant", content: line });
+        live.messages.push({ role: "assistant", content: line });
         break;
       }
-      call.messages.push({ role: "assistant", content: final.content });
+      live.messages.push({ role: "assistant", content: final.content });
       if (final.stop_reason === "pause_turn") continue; // a long web search; the API picks up where it left off
       const uses = final.content.filter((b) => b.type === "tool_use");
       if (final.stop_reason !== "tool_use" || !uses.length) break;
@@ -2550,25 +2553,36 @@ async function streamReply(res) {
           (content) => ({ type: "tool_result", tool_use_id: u.id, content }),
           (err) => ({ type: "tool_result", tool_use_id: u.id, content: `Couldn't get that right now: ${err.message}`, is_error: true }),
         )));
-      call.messages.push({ role: "user", content: results });
+      live.messages.push({ role: "user", content: results });
       pass(" "); // keep "let me look." and what comes after it as separate sentences
     }
     if (!hiding) res.write(held);
     if (hangingUp) res.write("\u0000HANGUP");
-    const said = call.messages.slice(startLength + 1).filter((m) => m.role === "assistant").map((m) => textOf(m.content)).join("\n");
+    const said = live.messages.slice(startLength + 1).filter((m) => m.role === "assistant").map((m) => textOf(m.content)).join("\n");
     if (!c.support) textsDuringCall(c, said).catch((err) => console.error("Texting during the call failed:", err?.message ?? err));
   } catch (err) {
     console.error(err);
-    call.messages.length = startLength; // drop this unanswered turn (and any lookups) so the history stays valid
+    live.messages.length = startLength; // drop this unanswered turn (and any lookups) so the history stays valid
     res.write("\u0000ERROR:" + (err?.message ?? String(err)));
   }
   res.end();
 }
 
-async function hangUp() {
-  if (!call) return;
+// Ending a call frees the line at once; saving it (notes, rules, news) carries on. closing holds that work per friend,
+// so a new call to the same friend can wait for it and still remember the last call.
+const closing = new Map(); // friend id -> promise
+function hangUp() {
+  if (!call) return Promise.resolve();
   const ended = call;
   call = null;
+  const done = saveCall(ended)
+    .catch((err) => console.error("Saving the call failed:", err?.message ?? err))
+    .finally(() => { if (closing.get(ended.contactId) === done) closing.delete(ended.contactId); });
+  closing.set(ended.contactId, done);
+  return done;
+}
+
+async function saveCall(ended) {
   const c = loadContact(ended.contactId);
   if (!c) return;
   if (c.support) {
@@ -3433,7 +3447,9 @@ const server = http.createServer(async (req, res) => {
     const c = loadContact(contactId);
     if (!c) return json(res, 400, { error: "No such friend." });
     warmLanguages(c).catch(() => {});
-    if (call) await hangUp();
+    // A call still open here was left behind (the page was refreshed): end it, saving it in the background.
+    if (call) hangUp();
+    await closing.get(c.id); // calling the same friend again: let them finish their notes on the last call first
     call = {
       contactId: c.id,
       incoming: !!incoming,
@@ -3466,6 +3482,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/hangup") {
+    // ?all=1 comes from a page that's closing or refreshing: end a call on hold too, since nothing can get back to it.
+    if (url.searchParams.get("all") && held) { const h = held; held = null; if (call) hangUp(); call = h; }
     await hangUp();
     return json(res, 200, { ok: true });
   }
@@ -3525,5 +3543,8 @@ setInterval(async () => {
     process.exit(0);
   }
 }, 30 * 1000);
+
+// One request going wrong mustn't take the whole phone down: log it and keep answering.
+process.on("unhandledRejection", (err) => console.error("Unhandled:", err?.stack ?? err));
 
 server.listen(PORT, "127.0.0.1", () => console.log(`Joe's picking up at http://localhost:${PORT}`));

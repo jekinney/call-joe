@@ -1774,6 +1774,8 @@ async function hangUp(byFriend = false) {
   if (heldContact) resumeHeld();
 }
 $("hangBtn").onclick = () => hangUp();
+// Refreshing or closing the page mid-call hangs up (and ends a call on hold), so the next call starts clean.
+addEventListener("pagehide", () => { if (state !== "idle" || heldContact) navigator.sendBeacon("/api/hangup?all=1"); });
 
 $("hushBtn").onclick = () => interrupt();
 
